@@ -1,5 +1,5 @@
 ---
-source: timeline-core/src/sessions.rs
+source: timeline-core/tests/sessions.rs
 expression: out.blocks
 ---
 [

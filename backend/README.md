@@ -31,15 +31,42 @@ sudo apt install build-essential
 ```
 cd backend
 cargo build --workspace       # compiles the crate
-cargo test --workspace        # runs all 111 tests (unit, property, snapshot, regression)
+cargo test --workspace        # runs all 120 tests (unit, property, snapshot, regression)
 cargo clippy --workspace --all-targets   # lints; should be silent
 cargo fmt --all                # reformat, if you've edited anything
 ```
 
+## Tests live in `tests/`, not alongside the implementation
+
+Every test calls only `timeline-core`'s public API — nothing reaches into a
+private function directly. This is a deliberate project convention (see
+CLAUDE.md's "Test only through the public API"), not the Rust default: the
+usual idiom is `#[cfg(test)] mod tests` colocated in the same file as the
+code it tests, which *can* access private items. That's allowed here too,
+but only as temporary scaffolding while developing a specific mechanism —
+once a public-API test proves the same behavior from outside, the
+private-function test is removed (in a commit separate from the one that
+added the replacement, so git history keeps a record of what was directly
+verified). The `vader/algorithm.rs` module's private helpers (`negation_check`,
+`scalar_inc_dec`, `special_idioms_check`, ...) are the main example: every
+one of them is now proven through real sentences in `tests/vader_algorithm.rs`
+calling `polarity_scores` — the crate's only public entry point into VADER —
+rather than by calling those helpers directly.
+
+One structural change fell out of this: `negation_check` used to take a
+`start_i: usize` parameter that only ever legally took the values 0, 1, or 2,
+which meant its `match` needed a `_ => ...` wildcard arm to compile — an arm
+no real input could ever reach. It's now a 3-variant `Distance` enum instead,
+so the impossible case is unrepresentable and the wildcard is gone. That
+came directly out of trying to reach 100% coverage through public tests
+alone: a line only a privileged test could reach turned out to be a sign the
+*type* was wrong, not the test.
+
 ## Test coverage
 
-Per-project requirement: 100% test coverage. Measured with
-[`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov) (MIT/Apache-2.0):
+Per-project requirement: 100% test coverage, using only public-API tests.
+Measured with [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov)
+(MIT/Apache-2.0):
 
 ```
 cargo install cargo-llvm-cov --locked   # one-time setup
@@ -47,19 +74,9 @@ rustup component add llvm-tools-preview # one-time setup
 cargo llvm-cov --workspace --summary-only
 ```
 
-Current result: **100.00% line coverage and 100.00% function coverage across
-every file.** Region coverage (a finer-grained metric that also counts each
-side of short-circuit boolean operators and macro-internal branches
-separately) sits at 99.65% — the 8 remaining "missed regions" are all in
-`format.rs` and are the synthetic negative arm the `matches!(err, ExpectedVariant)`
-macro generates internally for each test assertion that confirms an error is
-a *specific* variant; since every such test already establishes which variant
-it is, that generated arm can never be taken in that test. It isn't a gap in
-tested production logic (line and function coverage there are both 100%,
-including the `Display` and `source()` implementations for every variant) —
-closing it would mean writing tests that assert an error *isn't* some other
-variant, which doesn't verify any additional behavior. Flagging this
-explicitly rather than silently rounding "very close to 100%" up to it.
+Current result: **100.00% line, function, and region coverage across every
+file** — no exceptions, and none of it reached via privileged access to a
+private function.
 
 ## What's deliberately different from `timeline.html`
 

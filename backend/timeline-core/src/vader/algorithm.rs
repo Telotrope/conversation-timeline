@@ -88,24 +88,48 @@ fn sentiment_valence(words: &[String], words_lower: &[String], i: usize, is_cap_
         }
     }
 
-    for start_i in 0..3usize {
-        if i > start_i && !LEXICON.contains_key(words_lower[i - (start_i + 1)].as_str()) {
-            let mut s = scalar_inc_dec(&words[i - (start_i + 1)], valence, is_cap_diff);
-            if start_i == 1 && s != 0.0 {
-                s *= 0.95;
-            }
-            if start_i == 2 && s != 0.0 {
-                s *= 0.9;
+    for distance in Distance::ALL {
+        let offset = distance.offset();
+        if i >= offset && !LEXICON.contains_key(words_lower[i - offset].as_str()) {
+            let mut s = scalar_inc_dec(&words[i - offset], valence, is_cap_diff);
+            match distance {
+                Distance::Two if s != 0.0 => s *= 0.95,
+                Distance::Three if s != 0.0 => s *= 0.9,
+                _ => {}
             }
             valence += s;
-            valence = negation_check(valence, words_lower, start_i, i);
-            if start_i == 2 {
+            valence = negation_check(valence, words_lower, distance, i);
+            if distance == Distance::Three {
                 valence = special_idioms_check(valence, words_lower, i);
             }
         }
     }
 
     least_check(valence, words_lower, i)
+}
+
+/// How many words back from the current lexicon word a modifier (booster,
+/// negation, idiom) is being checked. A closed, 3-value set — not a `usize`
+/// — so there is no "impossible" 4th case to match against: the type itself
+/// rules it out, rather than needing a wildcard match arm that could never
+/// actually be reached by any real input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Distance {
+    One,
+    Two,
+    Three,
+}
+
+impl Distance {
+    const ALL: [Distance; 3] = [Distance::One, Distance::Two, Distance::Three];
+
+    fn offset(self) -> usize {
+        match self {
+            Distance::One => 1,
+            Distance::Two => 2,
+            Distance::Three => 3,
+        }
+    }
 }
 
 /// Whether the preceding word(s) boost, dampen, negate, or leave `valence`
@@ -134,16 +158,16 @@ fn negated_single(word_lower: &str) -> bool {
     NEGATE.contains(word_lower) || word_lower.contains("n't")
 }
 
-fn negation_check(valence: f64, words_lower: &[String], start_i: usize, i: usize) -> f64 {
-    match start_i {
-        0 => {
+fn negation_check(valence: f64, words_lower: &[String], distance: Distance, i: usize) -> f64 {
+    match distance {
+        Distance::One => {
             if negated_single(&words_lower[i - 1]) {
                 valence * N_SCALAR
             } else {
                 valence
             }
         }
-        1 => {
+        Distance::Two => {
             if words_lower[i - 2] == "never"
                 && (words_lower[i - 1] == "so" || words_lower[i - 1] == "this")
             {
@@ -156,7 +180,7 @@ fn negation_check(valence: f64, words_lower: &[String], start_i: usize, i: usize
                 valence
             }
         }
-        2 => {
+        Distance::Three => {
             if (words_lower[i - 3] == "never"
                 && (words_lower[i - 2] == "so" || words_lower[i - 2] == "this"))
                 || words_lower[i - 1] == "so"
@@ -173,12 +197,11 @@ fn negation_check(valence: f64, words_lower: &[String], start_i: usize, i: usize
                 valence
             }
         }
-        _ => valence,
     }
 }
 
 /// Multi-word idioms/phrases (e.g. "the bomb", "kind of") whose meaning
-/// isn't the sum of their lexicon parts. Only reachable at `start_i == 2`
+/// isn't the sum of their lexicon parts. Only reachable at `Distance::Three`
 /// (so `i >= 3`), matching upstream.
 fn special_idioms_check(valence: f64, wl: &[String], i: usize) -> f64 {
     let onezero = format!("{} {}", wl[i - 1], wl[i]);
@@ -333,257 +356,4 @@ fn round3(x: f64) -> f64 {
 }
 fn round4(x: f64) -> f64 {
     (x * 10000.0).round() / 10000.0
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn compound(text: &str) -> f64 {
-        polarity_scores(text).compound
-    }
-
-    #[test]
-    fn plain_positive_and_negative_text() {
-        assert!(compound("This is great and wonderful.") > 0.5);
-        assert!(compound("This is horrible and awful.") < -0.5);
-    }
-
-    #[test]
-    fn neutral_text_is_near_zero() {
-        assert!(compound("The meeting is at 3pm.").abs() < 0.2);
-    }
-
-    #[test]
-    fn negation_flips_the_sign() {
-        assert!(compound("This is not good.") < compound("This is good."));
-    }
-
-    #[test]
-    fn booster_word_increases_magnitude() {
-        assert!(compound("This is very good.") > compound("This is good."));
-        assert!(compound("This is slightly good.") < compound("This is good."));
-    }
-
-    #[test]
-    fn all_caps_emphasis_increases_magnitude_when_mixed_with_lowercase() {
-        assert!(compound("this is GREAT") > compound("this is great"));
-    }
-
-    #[test]
-    fn all_caps_emphasis_does_not_apply_when_everything_is_caps() {
-        // No differential (every word is caps), so no extra boost versus the
-        // same all-lowercase sentence.
-        let all_caps = compound("THIS IS GREAT");
-        let all_lower = compound("this is great");
-        assert!((all_caps - all_lower).abs() < 1e-9);
-    }
-
-    #[test]
-    fn exclamation_marks_amplify_a_nonzero_score() {
-        assert!(compound("This is great!!!") > compound("This is great"));
-        assert!(compound("This is horrible!!!") < compound("This is horrible"));
-    }
-
-    #[test]
-    fn empty_text_scores_neutral() {
-        let s = polarity_scores("");
-        assert_eq!(
-            s,
-            PolarityScores {
-                neg: 0.0,
-                neu: 0.0,
-                pos: 0.0,
-                compound: 0.0
-            }
-        );
-    }
-
-    #[test]
-    fn but_check_weights_the_clause_after_but_more_heavily() {
-        // "but" should push the compound toward the second clause's polarity.
-        let praise_then_complaint = compound("It's fine but this is terrible");
-        let complaint_then_praise = compound("This is terrible but it's fine");
-        assert!(praise_then_complaint < complaint_then_praise);
-    }
-
-    #[test]
-    fn special_case_idiom_overrides_literal_word_meaning() {
-        // "the bomb" is strongly positive slang despite containing no
-        // individually-positive lexicon word on its own.
-        assert!(compound("this is the bomb") > 0.5);
-    }
-
-    #[test]
-    fn least_negates_unless_at_least_or_very_least() {
-        assert!(compound("this is the least good option") < 0.0);
-        assert!(compound("this is at least good") >= 0.0);
-    }
-
-    #[test]
-    fn kind_of_dampens_like_a_booster_not_like_a_standalone_word() {
-        // "kind" alone can carry positive valence; "kind of" should read as
-        // a hedge/dampener, not as praise.
-        assert!(compound("this is kind of good") < compound("this is good"));
-    }
-
-    // The tests below call the private helper functions directly with
-    // hand-constructed word lists, to reach specific branches precisely
-    // rather than hoping an English sentence happens to tokenize the right
-    // way. All of these mirror real (if sometimes awkward) VADER behavior —
-    // none are contrived to be impossible in real text.
-
-    fn words(strs: &[&str]) -> Vec<String> {
-        strs.iter().map(|s| s.to_string()).collect()
-    }
-
-    #[test]
-    fn no_immediately_before_a_lexicon_word_zeroes_its_own_valence() {
-        let w = words(&["no", "good"]);
-        // "no" itself, followed by another lexicon word ("good") — its own
-        // valence is zeroed so it acts as pure negation instead.
-        assert_eq!(sentiment_valence(&w, &w, 0, false), 0.0);
-    }
-
-    #[test]
-    fn no_one_word_back_negates_the_current_lexicon_word() {
-        let w = words(&["no", "good"]);
-        let expected = LEXICON["good"] * N_SCALAR;
-        assert!((sentiment_valence(&w, &w, 1, false) - expected).abs() < 1e-9);
-    }
-
-    #[test]
-    fn no_three_words_back_negates_only_via_the_or_nor_pattern() {
-        // The third `no_negates` disjunct only fires through "X or/nor no
-        // <word>" — distinct from (and only reachable when) the closer
-        // one-word-back and two-word-back checks are both false. "or" isn't
-        // itself a negation word, so this is the only source of negation in
-        // that case.
-        let expected_or = LEXICON["good"] * N_SCALAR;
-        let or_form = words(&["no", "x", "or", "good"]);
-        assert!((sentiment_valence(&or_form, &or_form, 3, false) - expected_or).abs() < 1e-9);
-
-        // "nor" is *also* a one-word-back negation word in its own right
-        // (see NEGATE), so it compounds: the explicit no-3-back rule negates
-        // once, and the generic distance-1 negation check negates again —
-        // a real interaction between two independent mechanisms, not a bug.
-        let expected_nor = LEXICON["good"] * N_SCALAR * N_SCALAR;
-        let nor_form = words(&["no", "x", "nor", "good"]);
-        assert!((sentiment_valence(&nor_form, &nor_form, 3, false) - expected_nor).abs() < 1e-9);
-    }
-
-    #[test]
-    fn stacked_booster_words_at_distance_two_and_three_both_apply_scaled() {
-        // "extremely" (distance 3), "really" (distance 2), "so" (distance 1)
-        // all boost "good" — exercises the 0.95x (distance 2) and 0.9x
-        // (distance 3) scaling branches, on top of the unscaled distance-1 case.
-        let w = words(&["extremely", "really", "so", "good"]);
-        let result = sentiment_valence(&w, &w, 3, false);
-        assert!(
-            result > 2.5,
-            "expected a heavily boosted valence, got {result}"
-        );
-    }
-
-    #[test]
-    fn sentiment_valence_all_caps_extends_a_negative_lexicon_word() {
-        let words = vec!["this".to_string(), "is".to_string(), "BAD".to_string()];
-        let words_lower = vec!["this".to_string(), "is".to_string(), "bad".to_string()];
-        let plain = sentiment_valence(&words_lower, &words_lower, 2, false);
-        let capped = sentiment_valence(&words, &words_lower, 2, true);
-        assert!((capped - (plain - C_INCR)).abs() < 1e-9);
-    }
-
-    #[test]
-    fn negation_check_out_of_range_start_i_is_a_documented_no_op() {
-        // start_i is always 0, 1, or 2 through the real call path (the
-        // enclosing loop is `for start_i in 0..3`); this pins the match's
-        // required-for-exhaustiveness catch-all to a stated behavior
-        // (leave valence untouched) rather than leaving it silently unverified.
-        let w = words(&["x", "y", "z", "w"]);
-        assert_eq!(negation_check(1.0, &w, 99, 3), 1.0);
-    }
-
-    #[test]
-    fn scalar_inc_dec_all_caps_boosts_a_positive_valence() {
-        let boosted = scalar_inc_dec("VERY", 1.9, true);
-        let plain = scalar_inc_dec("very", 1.9, true);
-        assert!((boosted - (plain + C_INCR)).abs() < 1e-9);
-    }
-
-    #[test]
-    fn scalar_inc_dec_all_caps_extends_a_negative_valence() {
-        let boosted = scalar_inc_dec("VERY", -1.9, true);
-        let plain = scalar_inc_dec("very", -1.9, true);
-        assert!((boosted - (plain - C_INCR)).abs() < 1e-9);
-    }
-
-    #[test]
-    fn negation_check_never_so_or_this_amplifies_instead_of_negating() {
-        let so_form = words(&["never", "so", "x"]);
-        assert_eq!(negation_check(1.0, &so_form, 1, 2), 1.25);
-        let this_form = words(&["never", "this", "x"]);
-        assert_eq!(negation_check(1.0, &this_form, 1, 2), 1.25);
-    }
-
-    #[test]
-    fn negation_check_never_so_or_this_at_distance_three_amplifies() {
-        let so_form = words(&["never", "so", "x", "y"]);
-        assert_eq!(negation_check(1.0, &so_form, 2, 3), 1.25);
-        let this_form = words(&["never", "this", "x", "y"]);
-        assert_eq!(negation_check(1.0, &this_form, 2, 3), 1.25);
-    }
-
-    #[test]
-    fn negation_check_without_doubt_at_distance_two_leaves_valence_alone() {
-        let w = words(&["without", "doubt", "x"]);
-        assert_eq!(negation_check(1.0, &w, 1, 2), 1.0);
-    }
-
-    #[test]
-    fn negation_check_plain_negation_at_distance_two() {
-        let w = words(&["not", "x", "y"]);
-        assert_eq!(negation_check(1.0, &w, 1, 2), N_SCALAR);
-    }
-
-    #[test]
-    fn negation_check_without_doubt_at_distance_three_leaves_valence_alone() {
-        let w = words(&["without", "x", "doubt", "y"]);
-        assert_eq!(negation_check(1.0, &w, 2, 3), 1.0);
-    }
-
-    #[test]
-    fn negation_check_plain_negation_at_distance_three() {
-        let w = words(&["rarely", "x", "y", "z"]);
-        assert_eq!(negation_check(1.0, &w, 2, 3), N_SCALAR);
-    }
-
-    #[test]
-    fn special_idioms_check_matches_a_bigram_immediately_after_the_word() {
-        let w = words(&["x", "y", "z", "bad", "ass"]);
-        assert_eq!(special_idioms_check(0.0, &w, 3), 1.5);
-    }
-
-    #[test]
-    fn special_idioms_check_matches_a_trigram_starting_at_the_word() {
-        let w = words(&["x", "y", "z", "kiss", "of", "death"]);
-        assert_eq!(special_idioms_check(0.0, &w, 3), -1.5);
-    }
-
-    #[test]
-    fn least_check_negates_when_least_is_the_very_first_token() {
-        let w = words(&["least", "good"]);
-        assert_eq!(least_check(1.0, &w, 1), N_SCALAR);
-    }
-
-    #[test]
-    fn amplify_question_four_or_more_marks_is_a_flat_amplifier() {
-        assert_eq!(amplify_question("????"), 0.96);
-    }
-
-    #[test]
-    fn amplify_question_two_or_three_marks_scales_with_count() {
-        assert_eq!(amplify_question("??"), 2.0 * 0.18);
-        assert_eq!(amplify_question("???"), 3.0 * 0.18);
-    }
 }
