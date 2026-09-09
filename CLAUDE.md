@@ -71,8 +71,7 @@ When a classification or enum has multiple entries that map to identical handlin
 
 # Designing
 
-- When the user asks for a design or plan, always change to plan mode.
-- During plan mode, write plans made for the user to `docs/plans/`.
+- When the user asks for a design or plan, write the plan doc directly to `docs/plans/` with normal file writes — do NOT invoke the `EnterPlanMode`/`ExitPlanMode` harness for this. That harness restricts writes to a single file outside the repo and gates every exit behind an approval prompt; for producing a `docs/plans/*.md` document (as opposed to planning a multi-file code change), that's pure friction with no benefit. Iterate by editing the file in place and committing each round (see "Commit plan edits as you iterate" below).
 - Consider whether to create a new plan document or modify an existing one. Prefer modifying an existing document if you're sure which one. If unsure, ask the user.
 - Always criticize your plans and modify according to the criticism before recommending a plan to the user.
 
@@ -86,7 +85,7 @@ When a classification or enum has multiple entries that map to identical handlin
 
 Decide the category based on **content**, not on what plan mode called it. A "plan" written during plan mode that turns out to be a status survey is an *analysis*, and belongs in `docs/analysis/`. Authorship test: did Claude write the prose with judgment, or did the code generate the artifact? Audience test: would a customer ever see this?
 
-The plan-mode harness mandates writes under `~/.claude/plans/<random-slug>.md` and refuses writes elsewhere during plan mode. Write there *only because you must*. Immediately after `ExitPlanMode`, copy or move the content to the correct `docs/` location with a `YYYY-MM-DD-<descriptive>.md` name and delete the harness original. Never leave duplicates. Never write to `/tmp`, the project root, or anywhere else.
+Never write to `/tmp`, the project root, or anywhere else — `docs/plans/`, `docs/analysis/`, or `docs/reports/` only, per the table above. If `EnterPlanMode` ever gets triggered anyway (the harness can invoke it automatically for large, multi-file *code* changes, as distinct from writing a design doc), the plan-mode harness mandates writes under `~/.claude/plans/<random-slug>.md` and refuses writes elsewhere until `ExitPlanMode` is approved. In that situation only: write there because there's no choice, then notify the user that you cannot write to `docs/plans` and do not call `ExitPlanMode`. Offer the user the option to change the mode and then request the content to be moved to the correct location, with an appropriate name. Never leave duplicates.
 
 ## Critique/resolution format
 
@@ -165,6 +164,55 @@ Order of preference for any primitive:
 3. **New code, only as a last resort.** Hand-rolling is reserved for cases where (a) no library fits, (b) the existing code is inappropriate for the use case, or (c) the dependency cost outweighs the integration cost.
 
 In plan documents, propose the library or existing function **by name**: "Use `tools/focus_group._click_by_dom_anchor`" or "use the `css-tree` library (BSD-3-Clause)". Don't write "we'll need a CSS parser" without naming the parser. Make the choice auditable. License check is mandatory: state the license alongside the recommendation. When extending existing code, link to the file:line.
+
+## Code organization and file size
+
+Applies to all new code in this repo, in any language (Rust, Python, JS/TS, etc.) — not just one
+component or one plan.
+
+- **One cohesive concern per file/module**, named after its primary export (a class, type, trait,
+  or tightly-related function family). No `utils.py`/`helpers.js`/`misc.rs` catch-alls — every
+  function lives in the module that owns its concern.
+- **Organize into small, separable packages by responsibility, not by layer-for-its-own-sake.**
+  Prefer units (a Rust crate, a Python package, a JS module directory) whose dependencies point
+  one direction: domain/business logic must never depend on infrastructure (I/O, SDKs, HTTP
+  clients, DB drivers); infrastructure adapters depend on domain interfaces ("ports"), never the
+  reverse. This is what makes a unit separable in *practice*, not just in name — verify it by
+  checking that domain code has zero imports of infra libraries, so an adapter could be swapped or
+  the unit pulled into its own repo without touching domain code or its tests.
+- **No cyclic dependencies between packages/modules, ever.** The domain-never-depends-on-infra
+  rule above is the most common instance of this, not the whole of it — two infra packages
+  depending on each other, or two modules within one package importing each other, is the same
+  problem and is just as forbidden. The dependency graph, between packages and (within a package)
+  between modules, must be a DAG (a graph with no cycles — nothing depends on itself even
+  indirectly through a chain of other things). A cycle means neither side can actually be
+  understood, tested, or shipped independently, no matter how the files are split.
+  **Enforcement differs by language**: Rust's crate boundary already rejects cyclic *crate*
+  dependencies at compile time (`cargo build` won't link a workspace with a crate cycle), so
+  nothing extra is needed at that level. The gap is *within* a crate (Rust modules are free to
+  import each other circularly) and in languages without that compiler guarantee (Python
+  packages, JS/TS modules) — for those, add an explicit cycle-detection check to the same
+  test-ratchet pattern as the file-size and exception-swallow checks (e.g. `madge --circular` for
+  JS/TS, MIT-licensed; for Python, verify current license terms on a tool such as `pydeps` or
+  `import-linter` before adopting, per the license-check rule above — don't assume without
+  checking).
+- **Soft target ~300–400 lines of implementation code per file. Hard ceiling: 1,000 lines**
+  (excluding inline test blocks and embedded data — a lookup table or lexicon isn't "code" for
+  this rule). A file over 1,000 lines of actual logic is suspicious and likely hard to read;
+  split it.
+- **Enforce the ceiling with a test, not just convention** — the same ratchet pattern already used
+  for silent-exception-swallow checks (`tests/test_no_unhandled_exceptions.py`, below): new
+  violations fail the test; pre-existing oversized files are allowlisted explicitly and paid down
+  opportunistically, never silently exempted. Add the equivalent check (e.g.
+  `tests/test_file_sizes.py`, or a per-language variant) whenever a new codebase area is started.
+- **Split by seam when a file grows, not by line count alone**: pull out one class/type/trait and
+  its methods, extract a large conditional/dispatch block into its own module, or split a
+  route/handler file by sub-resource. A long file that's genuinely one cohesive concern is a
+  smaller problem than a short file doing three unrelated things — the line-count rule exists to
+  force noticing the split, not as a goal in itself.
+- **Narrow public interface per package**: expose only what other packages actually need (Rust
+  `pub(crate)` by default, Python `_leading_underscore`/`__all__`, JS export only what's used
+  elsewhere). Keeps internal file layout free to change without breaking outside callers.
 
 ## Exception handling — no silent swallows
 
