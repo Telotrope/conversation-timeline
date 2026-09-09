@@ -155,6 +155,14 @@ After completing a round of plan edits to a `docs/plans/*.md` file, stage only t
 - Never modify a test that is already committed to fix errors. If you believe that the test itself has a bug, seek user approval to modify.
 - Recommend if any test has become obsolete when methods have become obsolete.
 
+### Test only through the public API
+
+- Tests call a crate/module's public interface — never a private function directly. A test that reaches into internals (e.g. a unit test with `use super::*` calling a non-`pub` function) can keep passing even when the public API is broken or unusable, because it never goes through the path a real caller uses.
+- **Exception, and it's temporary**: tests on private functions are fine *during development*, to verify a specific mechanism works in isolation before it's wired up. They're scaffolding, not permanent suite — once a public-API-only test independently proves the same behavior, the private-function test gets removed. This is a standing, pre-authorized exception to "never remove a test without user approval" above — no need to ask each time this specific pattern applies.
+- **Sequencing**: the version *with* the private-function test must already be committed (so git history keeps a record of what was directly verified) before a later, separate commit removes it. Never add the replacement and delete the original in the same commit.
+- **Removing a private-function test must not erase the reasoning it captured.** Two things carry that forward instead: (1) the doc comment on the private function/mechanism stays (or gets written, if thin) — that's the correct home for *why* the code behaves the way it does, not the test; (2) the replacement public-API test gets a comment naming which specific internal mechanism it's proving, so the link from observed behavior back to the implementation detail stays visible without needing privileged access.
+- **100% coverage (above) must be reached using only public-API tests.** If a line genuinely can't be reached that way, that's a real signal, not an obstacle to route around: dead/unreachable logic, a type that admits an impossible state (e.g. a `usize` parameter that only ever takes 3 values, forcing a wildcard match arm that can never fire — use a 3-variant enum instead), or a private helper that's been over-decomposed relative to what any caller can actually trigger. Fix the code; don't write a privileged test to force the number up.
+
 ## Reuse existing code or libraries
 
 Order of preference for any primitive:
