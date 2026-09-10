@@ -351,18 +351,41 @@ cross-origin `fetch()` calls. `tower_http` is a new dependency.
 `timeline.html` isn't guaranteed to be served from the API's own origin. Every new `fetch()` call
 in this increment uses `${API_BASE}/...`.
 
-**Explicitly deferred to a later increment**:
-- Wiring the review table's checkbox/"Approve" handlers
-  ([timeline.html:65382-65401](timeline.html#L65382-L65401)) to `PATCH
-  /conversations/{conversation_id}/messages/{message_id}/flags` — needs mapping the client's local
-  `id` (`convIndex|timestamp`) to the real `(conversation_id, message_id)` UUIDs (available via
-  `RAW_DATA[msg.conv].uuid` / `.chat_messages[msg.rawIndex].uuid`), plus a decision on what the UI
-  does on a failed `PATCH`. **Not a regression**: today's behavior for a non-artifact-hosted file
-  already loses overrides on reload (`window.storage` is artifact-only, gated by `hasStorage` at
-  [timeline.html:65306](timeline.html#L65306)), so deferring this doesn't make anything worse than
-  it already is outside the Claude-artifact context.
-- Real (non-dev-only) login, upload-status polling for async processing, and anything needing
-  LocalStack or real AWS.
+**Persistence — spelled out explicitly, not left implicit**: none of this is durable. Every store
+behind `timeline-api` in this increment (`InMemoryObjectStore`, `InMemoryUploadStore`,
+`InMemoryConversationStore`, `InMemoryMessageFlagsStore`) is an `Arc<Mutex<HashMap>>` living
+inside the `timeline-api` process. **Restarting `cargo run -p timeline-api` deletes every upload,
+conversation summary, and flag.** This is the deliberate consequence of staying container-free and
+AWS-free for routine testing (see C10 above for the real path to durable local storage, explicitly
+out of scope here) — not a bug, but a fact worth stating plainly rather than letting "wired to a
+backend" imply persistence it doesn't have.
+
+**Also in scope for this increment (moved back in after review): wiring the review table's flag
+overrides to the real backend.** Originally deferred with the justification "not a regression
+since overrides already don't persist outside the artifact context" — that's true but was a weak
+reason to skip real, readily-achievable functionality, since without it the "testable website"
+never actually completes its core workflow (review a message, confirm a flag, have it stick for
+the session). The actual complexity is low:
+- `setRowOverrides(id, changedType, changedValue)` ([timeline.html:65382](timeline.html#L65382))
+  already computes the full three-flag `values` object and updates local `OVERRIDES`/re-renders
+  optimistically, exactly as today.
+- The real `(conversation_id, message_id)` UUIDs the backend needs are already available in
+  existing client state: `RAW_DATA[msg.conv].uuid` and
+  `RAW_DATA[msg.conv].chat_messages[msg.rawIndex].uuid` (`rawIndex` is already stored on every
+  `HUMAN_MESSAGES` entry, from `parseUploadedConversations`).
+- After the existing optimistic local update, fire `PATCH
+  ${API_BASE}/conversations/{conversation_id}/messages/{message_id}/flags` with a
+  `FlagOverrides`-shaped body (only the changed field set, others omitted — matching what
+  `UserFlagWriter::set_user_flags` already expects). `saveOverrides()`'s call
+  ([timeline.html:65392](timeline.html#L65392)) is replaced by this, not left calling
+  `window.storage`.
+- On a failed `PATCH`: surface it via `setSaveStatus(...)` (e.g. "Could not save — check your
+  connection and try again"), matching the existing status-message pattern. The optimistic local
+  update stays (so the UI doesn't flicker back), but the failure is visible, not silent.
+
+**Still genuinely deferred** (blocked by lack of AWS access, not a scoping choice): real
+(non-dev-only) login, upload-status polling for async S3-triggered processing, and anything
+needing LocalStack or real AWS — see C10 above.
 
 **Testing**: this is a browser-facing UI change, verified with a real, **committed, repeatable**
 Playwright test — not a throwaway script. New top-level `e2e/` directory (`e2e/package.json`,
@@ -776,6 +799,28 @@ fixture at
 [backend/tests/fixtures/sample_conversations.json](backend/tests/fixtures/sample_conversations.json)
 — if different or fresher example data is ever needed (e.g. to investigate C8 further), you'll
 supply it again rather than me generating or requesting it independently.
+
+### C10 [OPEN]: Testing the real S3/DynamoDB adapters without a container
+V2a's in-memory adapters intentionally avoid AWS/containers for the routine upload-view-flag loop
+(see V2a above), but `timeline-storage/src/s3.rs` and `timeline-storage/src/dynamo/*.rs` have never
+run against anything real — confirmed directly, not from memory, before writing this:
+- **DynamoDB**: genuinely Docker-free. AWS publishes "DynamoDB Local" as a downloadable JAR
+  (needs JRE 17+, `openjdk-17-jre-headless` available via `apt` but not yet installed) — no Docker
+  required. `java -jar DynamoDBLocal.jar -sharedDb` on `localhost:8000`; the real
+  `aws-sdk-dynamodb` client just needs its endpoint pointed there with fake credentials. This would
+  exercise `DynamoConversationsTable`/`DynamoMessageFlagsStore`'s actual code, not a stand-in.
+- **S3**: no equally clean answer yet. MinIO was the obvious candidate, but its licensing has
+  visibly changed since — its docs now point to a commercial "AIStor" product under a proprietary
+  license, not the free server I'd have recalled from memory. Confirmed this by checking MinIO's
+  own current docs rather than asserting outdated information. No AWS-official S3-local equivalent
+  to DynamoDB Local exists. Other options (e.g. `s3rver`, Node-based, MIT-licensed) are unverified
+  candidates, not yet checked for current maintenance status or fidelity.
+
+**Mitigation in plan:** none yet — this is real, unstarted work.
+**Open:** research and, if viable, wire up DynamoDB Local (straightforward) and a real Docker-free
+S3-compatible option (needs more investigation) as a dedicated increment after V2a's read+write
+flow is committed. Explicitly **not part of V2a** — V2a stays in-memory-only, deliberately, per
+the container-free/AWS-free design already agreed for routine testing.
 
 ---
 
