@@ -105,6 +105,46 @@ test('uploading a real file renders conversations from the real backend', async 
   expect(consoleErrors, `console errors:\n${consoleErrors.join('\n')}`).toEqual([]);
 });
 
+test('a file bigger than axum\'s default 2MB body limit still uploads', async ({ page }) => {
+  // Regression test for a real bug: axum defaults every request body to a
+  // 2MB limit. Real conversations.json exports routinely exceed that (this
+  // project's own real export was 64.7MB) -- found by a user's actual load
+  // failing with an unhelpfully bare 413, reproduced with a 5MB test PUT,
+  // and fixed by disabling the limit on the local-dev upload route (it
+  // stands in for a direct-to-S3 upload, which in production never passes
+  // through this check at all -- see app.rs's build_dev_router).
+  const conversations = [{
+    uuid: '44444444-4444-4444-8444-444444444444',
+    name: 'Large upload test',
+    chat_messages: Array.from({ length: 4000 }, (_, i) => ({
+      uuid: `${String(i).padStart(8, '0')}-1111-4111-8111-111111111111`,
+      sender: i % 2 === 0 ? 'human' : 'assistant',
+      created_at: `2024-01-01T00:${String(i % 60).padStart(2, '0')}:00Z`,
+      // Varied text (not identical across messages) so dedup_chat_messages
+      // doesn't collapse this into a handful of "duplicate" messages.
+      content: [{ type: 'text', text: `message number ${i}: ${'x'.repeat(500)}` }],
+    })),
+  }];
+  const buffer = Buffer.from(JSON.stringify(conversations));
+  expect(buffer.byteLength).toBeGreaterThan(2 * 1024 * 1024); // actually over the old 2MB limit
+
+  const consoleErrors = [];
+  page.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
+
+  await page.goto(TIMELINE_HTML);
+  await page.setInputFiles('#loadConvFile', {
+    name: 'large-export.json',
+    mimeType: 'application/json',
+    buffer,
+  });
+  await page.click('#loadBtn');
+
+  await expect(page.locator('#mainContent')).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('#loadStatus')).not.toContainText('413');
+  await expect(page.locator('#convItems')).toContainText('Large upload test');
+  expect(consoleErrors, `console errors:\n${consoleErrors.join('\n')}`).toEqual([]);
+});
+
 test('confirming a flag in the review table persists through a reload', async ({ page }) => {
   await loadFixtureAndWaitForRender(page);
 

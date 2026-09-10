@@ -3,6 +3,7 @@
 //! `tower::ServiceExt::oneshot`) without going through either the local
 //! dev server or the Lambda runtime.
 
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post, put};
 use axum::Router;
 
@@ -31,7 +32,16 @@ pub fn build_dev_router(state: DevState) -> Router {
     Router::new()
         .route(
             "/_dev/local-storage/put/{*key}",
-            put(dev_local_storage::put_object),
+            // axum defaults every request body to a 2MB limit -- fine for
+            // API Gateway/Lambda traffic, but this route stands in for a
+            // direct-to-S3 upload (see module doc), which in production
+            // never passes through this size check at all. Without
+            // disabling it here, any real conversations.json export bigger
+            // than 2MB (routine -- the project's own real export was
+            // 64.7MB) fails with a bare, unhelpful 413. Reproduced and
+            // confirmed directly (a 5MB test PUT) before fixing, per
+            // CLAUDE.md's rule against fabricated explanations.
+            put(dev_local_storage::put_object).layer(DefaultBodyLimit::disable()),
         )
         .route(
             "/_dev/local-storage/get/{*key}",
