@@ -1,0 +1,158 @@
+//! Black-box test for `GET /export`: upload a real file through the
+//! `_dev`-only local flow, let it process, then export it back and confirm
+//! the flags computed during processing are embedded in the result -- and
+//! that the result re-parses as an already-processed upload, matching
+//! `timeline_core::unwrap_uploaded_json`'s two accepted shapes.
+
+use std::sync::Arc;
+
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
+use axum::Router;
+use http_body_util::BodyExt;
+use serde_json::{json, Value};
+use timeline_api::app::{build_dev_router, build_router};
+use timeline_api::dev_only::{DEV_ONLY_CLIENT_ID, DEV_ONLY_ISSUER, DEV_ONLY_JWKS_JSON};
+use timeline_api::dev_state::DevState;
+use timeline_api::state::AppState;
+use timeline_auth::cognito::CognitoVerifier;
+use timeline_core::ports::conversations::ConversationStore;
+use timeline_core::ports::object_store::ObjectStore;
+use timeline_core::ports::uploads::UploadStore;
+use timeline_core::unwrap_uploaded_json;
+use timeline_storage::memory::conversations::InMemoryConversationStore;
+use timeline_storage::memory::message_flags::InMemoryMessageFlagsStore;
+use timeline_storage::memory::object_store::InMemoryObjectStore;
+use timeline_storage::memory::uploads::InMemoryUploadStore;
+use tower::ServiceExt;
+
+fn test_router() -> Router {
+    let jwks = serde_json::from_str(DEV_ONLY_JWKS_JSON).unwrap();
+    let flags_store = Arc::new(InMemoryMessageFlagsStore::new());
+    let object_store: Arc<dyn ObjectStore> = Arc::new(InMemoryObjectStore::new());
+    let upload_store: Arc<dyn UploadStore> = Arc::new(InMemoryUploadStore::new());
+    let conversation_store: Arc<dyn ConversationStore> = Arc::new(InMemoryConversationStore::new());
+
+    let app_state = AppState {
+        object_store: object_store.clone(),
+        upload_store: upload_store.clone(),
+        conversation_store: conversation_store.clone(),
+        flags_reader: flags_store.clone(),
+        user_flag_writer: flags_store.clone(),
+        verifier: Arc::new(CognitoVerifier::new(
+            jwks,
+            DEV_ONLY_ISSUER,
+            DEV_ONLY_CLIENT_ID,
+        )),
+    };
+    let dev_state = DevState {
+        object_store,
+        upload_store,
+        conversation_store,
+        auto_flag_writer: flags_store,
+    };
+    build_router(app_state).merge(build_dev_router(dev_state))
+}
+
+async fn body_json(response: axum::response::Response) -> Value {
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+async fn body_bytes(response: axum::response::Response) -> Vec<u8> {
+    response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes()
+        .to_vec()
+}
+
+async fn dev_login(router: &Router, sub: &str) -> String {
+    let request = Request::builder()
+        .method("POST")
+        .uri("/_dev/login")
+        .header("content-type", "application/json")
+        .body(Body::from(json!({ "sub": sub }).to_string()))
+        .unwrap();
+    let response = router.clone().oneshot(request).await.unwrap();
+    body_json(response).await["token"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+#[tokio::test]
+async fn export_embeds_the_auto_flags_computed_during_processing() {
+    let router = test_router();
+    let token = dev_login(&router, "alice").await;
+
+    let create_request = Request::builder()
+        .method("POST")
+        .uri("/uploads")
+        .header("Authorization", format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+    let create_response = router.clone().oneshot(create_request).await.unwrap();
+    let upload_url = body_json(create_response).await["upload_url"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let raw = r#"[{"uuid":"11111111-1111-4111-8111-111111111111","name":"Hi","chat_messages":[
+        {"uuid":"22222222-2222-4222-8222-222222222222","sender":"human","created_at":"2024-01-01T00:00:00Z","content":[{"type":"text","text":"WRONG, you failed to fix it."}]},
+        {"uuid":"33333333-3333-4333-8333-333333333333","sender":"assistant","created_at":"2024-01-01T00:01:00Z","content":[{"type":"text","text":"Sorry, let me retry."}]}
+    ]}]"#;
+    let put_request = Request::builder()
+        .method("PUT")
+        .uri(&upload_url)
+        .body(Body::from(raw))
+        .unwrap();
+    let put_response = router.clone().oneshot(put_request).await.unwrap();
+    assert_eq!(put_response.status(), StatusCode::OK);
+
+    let export_request = Request::builder()
+        .method("GET")
+        .uri("/export")
+        .header("Authorization", format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+    let export_response = router.clone().oneshot(export_request).await.unwrap();
+    assert_eq!(export_response.status(), StatusCode::OK);
+    let export_url = body_json(export_response).await["export_url"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(export_url.starts_with("/_dev/local-storage/get/export/"));
+
+    let download_request = Request::builder()
+        .method("GET")
+        .uri(&export_url)
+        .body(Body::empty())
+        .unwrap();
+    let download_response = router.oneshot(download_request).await.unwrap();
+    assert_eq!(download_response.status(), StatusCode::OK);
+    let bytes = body_bytes(download_response).await;
+    let text = String::from_utf8(bytes).unwrap();
+
+    // Re-parses as an already-processed upload, per unwrap_uploaded_json's
+    // wrapped-object shape.
+    let reparsed = unwrap_uploaded_json(&text).unwrap();
+    assert!(reparsed.already_processed);
+    assert_eq!(reparsed.conversations.len(), 1);
+
+    let human = &reparsed.conversations[0].chat_messages[0];
+    let auto = human
+        .extra
+        .get("_claude_timeline_auto")
+        .expect("human message should carry embedded auto flags");
+    assert_eq!(auto["caps"], json!(true));
+    assert_eq!(auto["critical"], json!(true));
+
+    let assistant = &reparsed.conversations[0].chat_messages[1];
+    assert!(
+        !assistant.extra.contains_key("_claude_timeline_auto"),
+        "assistant messages should never carry auto flags"
+    );
+}
