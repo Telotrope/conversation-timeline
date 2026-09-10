@@ -116,11 +116,23 @@ impl<'de> Deserialize<'de> for PieceType {
 #[serde(transparent)]
 pub struct MessageId(pub uuid::Uuid);
 
+impl std::fmt::Display for MessageId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// A conversation's own identity — see [`MessageId`] for why this is a
 /// distinct type rather than reusing it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ConversationId(pub uuid::Uuid);
+
+impl std::fmt::Display for ConversationId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 /// A conversation's title. Freeform text a human or Claude chose, so there's
 /// nothing to validate or parse — but it identifies a conversation rather

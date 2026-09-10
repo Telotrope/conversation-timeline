@@ -8,6 +8,7 @@ pub mod dedup;
 pub mod flags;
 pub mod format;
 pub mod model;
+pub mod ports;
 pub mod sessions;
 pub mod vader;
 
