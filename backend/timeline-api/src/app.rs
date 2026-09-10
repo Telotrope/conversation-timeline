@@ -1,13 +1,17 @@
-//! Assembles the axum `Router`. Kept separate from `main.rs` so the same
-//! router can be exercised directly in tests (via `tower::ServiceExt::oneshot`)
-//! without going through either the local dev server or the Lambda runtime.
+//! Assembles the axum `Router`s. Kept separate from `main.rs` so the same
+//! routers can be exercised directly in tests (via
+//! `tower::ServiceExt::oneshot`) without going through either the local
+//! dev server or the Lambda runtime.
 
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::Router;
 
-use crate::routes::{conversations, flags, uploads};
+use crate::dev_state::DevState;
+use crate::routes::{conversations, dev_local_storage, dev_login, export, flags, uploads};
 use crate::state::AppState;
 
+/// The real, user-facing API -- every route Cognito gates in production,
+/// and the only router ever present in the Lambda build.
 pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/uploads", post(uploads::create_upload))
@@ -16,5 +20,26 @@ pub fn build_router(state: AppState) -> Router {
             "/conversations/{conversation_id}/messages/{message_id}/flags",
             get(flags::get_flags).patch(flags::patch_flags),
         )
+        .route("/export", get(export::export))
         .with_state(state)
+}
+
+/// The `_dev`-only local-testing surface -- see the migration plan's §V2a
+/// and `crate::dev_state`'s module doc. `main.rs` merges this into the main
+/// router only when running locally, never under Lambda.
+pub fn build_dev_router(state: DevState) -> Router {
+    Router::new()
+        .route(
+            "/_dev/local-storage/put/{*key}",
+            put(dev_local_storage::put_object),
+        )
+        .route(
+            "/_dev/local-storage/get/{*key}",
+            get(dev_local_storage::get_object),
+        )
+        .with_state(state)
+        // `/_dev/login` needs no state at all (see `routes::dev_login`), so
+        // it's merged in after `.with_state` resolves the router above --
+        // a stateless route works with any `Router<S>`.
+        .route("/_dev/login", post(dev_login::login))
 }

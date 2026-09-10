@@ -1,7 +1,11 @@
-//! In-memory `ObjectStore` -- real bytes in a `Mutex<HashMap>`, "presigned"
-//! URLs that are just the key itself prefixed with a fake scheme (nothing
-//! actually reads them as URLs in tests; they only need to be distinct,
-//! round-trippable strings).
+//! In-memory `ObjectStore` -- real bytes in a `Mutex<HashMap>`. Presigned
+//! URLs are real, relative HTTP paths under `/_dev/local-storage/...`, not
+//! an inert placeholder scheme -- see the migration plan's §V2a: a real
+//! browser needs an actual URL it can `PUT`/`GET`, and `timeline-api`'s
+//! `_dev`-namespaced routes are what serve that path in local dev, backed
+//! by this same adapter. A relative path (no scheme/host) resolves against
+//! whatever origin the page fetching it is served from, so it works the
+//! same whether the local dev server is on port 3000 or anything else.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -29,7 +33,7 @@ impl ObjectStore for InMemoryObjectStore {
         key: &str,
         _expires_in: Duration,
     ) -> Result<String, ObjectStoreError> {
-        Ok(format!("memory://put/{key}"))
+        Ok(format!("/_dev/local-storage/put/{key}"))
     }
 
     async fn presign_get(
@@ -37,7 +41,7 @@ impl ObjectStore for InMemoryObjectStore {
         key: &str,
         _expires_in: Duration,
     ) -> Result<String, ObjectStoreError> {
-        Ok(format!("memory://get/{key}"))
+        Ok(format!("/_dev/local-storage/get/{key}"))
     }
 
     async fn get(&self, key: &str) -> Result<Vec<u8>, ObjectStoreError> {

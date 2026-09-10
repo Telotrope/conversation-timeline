@@ -6,20 +6,30 @@
 //! no AWS access in this environment to build real S3/DynamoDB clients
 //! against, so this is genuinely "run the whole app with no AWS at all,"
 //! not a stand-in for hitting real infrastructure. It's real enough to
-//! exercise the full request/response/auth path end-to-end, which is worth
-//! having even though it isn't what V2's own test plan calls "done" (that
-//! needs LocalStack and a real Cognito pool -- see the migration plan's V2
-//! test list and this crate's README).
+//! exercise the full request/response/auth/upload-processing/export path
+//! end-to-end (see the migration plan's §V2a), which is worth having even
+//! though it isn't what V2's own test plan calls "done" (that needs
+//! LocalStack and a real Cognito pool -- see the migration plan's V2 test
+//! list and this crate's README).
 //!
-//! The signing key below is a fixed, checked-in, dev-only RSA keypair --
-//! never valid for anything real, and must never be used for an actual
-//! deployment. Its only purpose is letting `cargo run` here and a
-//! hand-crafted test JWT exercise the whole auth path locally.
+//! **The Lambda build never gets the `_dev` router.** Only `run_locally`
+//! ever calls `build_dev_router` -- the `lambda_http::run` branch is handed
+//! `build_router(app_state)` alone, so `AutoFlagWriter` and the
+//! `_dev/local-storage`/`_dev/login` routes are structurally absent from
+//! anything that could run in production, not just conventionally unused.
+//!
+//! The signing key in [`timeline_api::dev_only`] is a fixed, checked-in,
+//! dev-only RSA keypair -- never valid for anything real, and must never be
+//! used for an actual deployment. Its only purpose is letting `cargo run`
+//! here, `POST /_dev/login`, and the test suite exercise the whole auth
+//! path locally.
 
 use std::sync::Arc;
 
 use axum::Router;
-use timeline_api::app::build_router;
+use timeline_api::app::{build_dev_router, build_router};
+use timeline_api::dev_only::{DEV_ONLY_CLIENT_ID, DEV_ONLY_ISSUER, DEV_ONLY_JWKS_JSON};
+use timeline_api::dev_state::DevState;
 use timeline_api::state::AppState;
 use timeline_auth::cognito::CognitoVerifier;
 use timeline_storage::memory::conversations::InMemoryConversationStore;
@@ -27,31 +37,41 @@ use timeline_storage::memory::message_flags::InMemoryMessageFlagsStore;
 use timeline_storage::memory::object_store::InMemoryObjectStore;
 use timeline_storage::memory::uploads::InMemoryUploadStore;
 
-pub const DEV_ONLY_JWKS_JSON: &str = include_str!("../dev_only_test_jwks.json");
-pub const DEV_ONLY_ISSUER: &str = "https://dev-only.invalid/local-testing";
-pub const DEV_ONLY_CLIENT_ID: &str = "dev-only-local-client";
-
-fn build_local_state() -> AppState {
+/// Builds the in-memory stores once and exposes them as both `AppState`
+/// (the real, Cognito-gated API) and `DevState` (the `_dev`-only local
+/// testing surface) -- sharing the same underlying `Arc`s is what lets an
+/// upload PUT through `_dev/local-storage` show up in `GET /conversations`.
+fn build_local_state() -> (AppState, DevState) {
     let jwks =
         serde_json::from_str(DEV_ONLY_JWKS_JSON).expect("dev_only_test_jwks.json is well-formed");
     // Reader and writer must share the *same* underlying store -- two
     // separate `InMemoryMessageFlagsStore`s would each hold their own
     // Mutex<HashMap>, so a PATCH through one would never be visible to a
-    // GET through the other. One store, exposed as two differently-typed
+    // GET through the other. One store, exposed as differently-typed
     // trait-object handles.
     let flags_store = Arc::new(InMemoryMessageFlagsStore::new());
-    AppState {
-        object_store: Arc::new(InMemoryObjectStore::new()),
-        upload_store: Arc::new(InMemoryUploadStore::new()),
-        conversation_store: Arc::new(InMemoryConversationStore::new()),
+    let object_store: Arc<dyn timeline_core::ports::object_store::ObjectStore> =
+        Arc::new(InMemoryObjectStore::new());
+    let upload_store: Arc<dyn timeline_core::ports::uploads::UploadStore> =
+        Arc::new(InMemoryUploadStore::new());
+    let conversation_store: Arc<dyn timeline_core::ports::conversations::ConversationStore> =
+        Arc::new(InMemoryConversationStore::new());
+
+    let app_state = AppState {
+        object_store: object_store.clone(),
+        upload_store: upload_store.clone(),
+        conversation_store: conversation_store.clone(),
         flags_reader: flags_store.clone(),
-        user_flag_writer: flags_store,
-        verifier: Arc::new(CognitoVerifier::new(
-            jwks,
-            DEV_ONLY_ISSUER,
-            DEV_ONLY_CLIENT_ID,
-        )),
-    }
+        user_flag_writer: flags_store.clone(),
+        verifier: Arc::new(CognitoVerifier::new(jwks, DEV_ONLY_ISSUER, DEV_ONLY_CLIENT_ID)),
+    };
+    let dev_state = DevState {
+        object_store,
+        upload_store,
+        conversation_store,
+        auto_flag_writer: flags_store,
+    };
+    (app_state, dev_state)
 }
 
 async fn run_locally(router: Router) {
@@ -61,6 +81,7 @@ async fn run_locally(router: Router) {
         .await
         .expect("binding the local dev listener");
     println!("timeline-api (local dev, in-memory storage) listening on http://{addr}");
+    println!("_dev-only routes active: POST /_dev/login, /_dev/local-storage/{{put,get}}/*key");
     axum::serve(listener, router)
         .await
         .expect("local dev server");
@@ -68,11 +89,18 @@ async fn run_locally(router: Router) {
 
 #[tokio::main]
 async fn main() {
-    let router = build_router(build_local_state());
-
     if std::env::var("AWS_LAMBDA_RUNTIME_API").is_ok() {
+        // `dev_state` is built but deliberately dropped unused here -- the
+        // Lambda branch only ever passes `app_state` to `build_router`, so
+        // the `_dev` router (and the `AutoFlagWriter` capability it needs)
+        // is never wired into anything that could run in production.
+        let (app_state, dev_state) = build_local_state();
+        drop(dev_state);
+        let router = build_router(app_state);
         lambda_http::run(router).await.expect("lambda runtime");
     } else {
+        let (app_state, dev_state) = build_local_state();
+        let router = build_router(app_state).merge(build_dev_router(dev_state));
         run_locally(router).await;
     }
 }

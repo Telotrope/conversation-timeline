@@ -15,6 +15,12 @@ pub enum ApiError {
     NotFound,
     Store(StoreError),
     ObjectStore(ObjectStoreError),
+    /// A server-side condition that isn't a storage-backend failure at all
+    /// -- e.g. previously-validated data failing to re-parse on export, or
+    /// a dev-only token-signing failure. Distinct from `Store`/`ObjectStore`
+    /// so a real backend outage is never conflated with "something we
+    /// wrote or generated ourselves turned out to be broken."
+    Internal(String),
 }
 
 impl From<StoreError> for ApiError {
@@ -64,6 +70,10 @@ impl IntoResponse for ApiError {
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "object store backend error".to_string(),
                 )
+            }
+            ApiError::Internal(e) => {
+                eprintln!("internal error: {e}");
+                (StatusCode::INTERNAL_SERVER_ERROR, "internal error".to_string())
             }
         };
         (status, Json(ErrorBody { error: message })).into_response()

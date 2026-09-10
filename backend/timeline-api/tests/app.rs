@@ -153,10 +153,16 @@ async fn create_upload_returns_an_id_and_a_presigned_url() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = body_json(response).await;
     assert!(body["upload_id"].is_string());
+    // Updated from the old "memory://put/" placeholder scheme: the
+    // in-memory adapter now returns a real, fetchable local path -- see
+    // InMemoryObjectStore's module doc and the migration plan's §V2a --
+    // since a real browser needs something it can actually PUT to, not an
+    // inert stand-in string. Flagged explicitly per CLAUDE.md's rule on
+    // modifying a committed test's assertions.
     assert!(body["upload_url"]
         .as_str()
         .unwrap()
-        .starts_with("memory://put/"));
+        .starts_with("/_dev/local-storage/put/"));
 }
 
 #[tokio::test]
