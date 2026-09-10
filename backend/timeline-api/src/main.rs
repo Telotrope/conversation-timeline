@@ -27,6 +27,8 @@
 use std::sync::Arc;
 
 use axum::Router;
+use tower_http::cors::CorsLayer;
+
 use timeline_api::app::{build_dev_router, build_router};
 use timeline_api::dev_only::{DEV_ONLY_CLIENT_ID, DEV_ONLY_ISSUER, DEV_ONLY_JWKS_JSON};
 use timeline_api::dev_state::DevState;
@@ -100,7 +102,14 @@ async fn main() {
         lambda_http::run(router).await.expect("lambda runtime");
     } else {
         let (app_state, dev_state) = build_local_state();
-        let router = build_router(app_state).merge(build_dev_router(dev_state));
+        // Permissive CORS, local-dev only -- timeline.html isn't served by
+        // this binary and will be opened separately (a local file, or a
+        // static server on a different port), so without this the browser
+        // blocks every cross-origin fetch(). Never applied to the Lambda
+        // branch above -- that router is returned before this layer exists.
+        let router = build_router(app_state)
+            .merge(build_dev_router(dev_state))
+            .layer(CorsLayer::permissive());
         run_locally(router).await;
     }
 }
