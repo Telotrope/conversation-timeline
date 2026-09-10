@@ -318,6 +318,29 @@ stay untouched.
 6. Feed that text into the existing, unmodified `parseUploadedConversations(text, runAutoDetect,
    refreshAutoDetect)`. Everything downstream is unchanged.
 
+**Also retired in this increment** (moved out of "deferred" after review — see below): the three
+`window.storage`-backed load-time recovery calls in `handleLoadClick()`
+([timeline.html:65086](timeline.html#L65086) and
+[timeline.html:65102](timeline.html#L65102)) and one save call in `setRowOverrides()`
+([timeline.html:65392](timeline.html#L65392)):
+- `loadAutoClassificationsFromStorage()` and the recovery-merge block that follows it — removed
+  outright, not just left uncalled. Merging cached LLM-classification results from an unrelated
+  previous run on top of freshly-fetched backend data is exactly the kind of thing that could
+  silently paper over a broken or incomplete server-side pipeline: if `process_upload` had a bug
+  and produced wrong flags, stale cached data could make the UI look correct anyway.
+- `loadOverrides()` and its call — same risk, for user overrides instead of auto flags.
+- `saveOverrides()`'s call in `setRowOverrides()` — replaced with an honest
+  `setSaveStatus('Not yet saved to the server — coming in a later increment.')`, since silently
+  doing nothing while implying (via the old status text) that a save mechanism exists would be its
+  own small dishonesty.
+
+`saveAutoClassificationsToStorage()` (used only inside `classifyWithAI`'s batch loop, lines
+65592-65612) is explicitly **not** touched — that function is gated to only run "while running as
+a rendered Claude artifact" per its own comment, a distinct, still-legitimate feature this
+increment doesn't build or exercise, and it can't mask anything about the upload/view flow above
+(it's a checkpoint for a different, not-yet-backend-ported code path, not something that runs
+during a normal load).
+
 **Backend addition needed**: a permissive CORS layer (`tower_http::cors::CorsLayer`, MIT license,
 same `tower` family already used) on the local-dev merged router only (`main.rs`'s local branch),
 since `timeline.html` isn't served by `timeline-api` and will be opened separately (e.g. as a
@@ -338,20 +361,25 @@ in this increment uses `${API_BASE}/...`.
   already loses overrides on reload (`window.storage` is artifact-only, gated by `hasStorage` at
   [timeline.html:65306](timeline.html#L65306)), so deferring this doesn't make anything worse than
   it already is outside the Claude-artifact context.
-- Retiring the `window.storage` auto-save/recovery calls — already safely inert outside the
-  artifact-hosting context, so leaving them causes no bug, just some now-redundant code.
 - Real (non-dev-only) login, upload-status polling for async processing, and anything needing
   LocalStack or real AWS.
 
-**Testing**: this is a browser-facing UI change, verified with real Playwright driving the
-machine's already-installed Chrome (`executablePath: '/usr/bin/google-chrome'`, `--no-sandbox` —
-no `sudo`, no bundled-Chromium download needed; confirmed working directly before committing to
-this approach). `cargo run -p timeline-api` in the background, `timeline.html` opened in the
-driven browser, a real file selected via the file input, the load button clicked, and the
-rendered conversation list/review table read back from the DOM — not a hand-wave "should work,"
-an actual driven session. The script that does this is a one-off verification aid, not a permanent
-addition to `cargo test`, and will be reported as exactly that: genuinely driven, not merely
-inspected.
+**Testing**: this is a browser-facing UI change, verified with a real, **committed, repeatable**
+Playwright test — not a throwaway script. New top-level `e2e/` directory (`e2e/package.json`,
+`@playwright/test` as a dependency — MIT license, the standard way to write this rather than a
+bespoke script), driving the machine's already-installed Chrome
+(`executablePath: '/usr/bin/google-chrome'`, `--no-sandbox` — no `sudo`, no bundled-Chromium
+download needed; confirmed working directly before committing to this approach, see the earlier
+smoke test). The test: starts `cargo run -p timeline-api` in the background (polling the port,
+not sleeping), opens `timeline.html` in the driven browser, selects the test fixture via the real
+file input, clicks the load button, and asserts against the rendered DOM (conversation list
+populated, review table shows the expected flags) — not a hand-wave "should work," an actual
+driven session with real assertions. `e2e/README.md` documents how to run it
+(`npm test` inside `e2e/`) and that it needs Node ≥20 (installed via `nvm`, not the distro's
+apt package, which was too old) plus the system Chrome already on this machine. Not wired into
+`cargo test --workspace` (different toolchain entirely), but documented as a required manual step
+before calling this increment done, the same way the plan already treats LocalStack/real-AWS
+verification for other pieces.
 
 ### V3 — Bedrock-based classification
 **Adds**: server-side port of `classifyBatchWithAI`/`classifyBatchWithRetry`
