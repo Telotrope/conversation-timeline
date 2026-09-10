@@ -1,151 +1,167 @@
-# timeline-core (V1)
+# Backend workspace (V1 + V2)
 
-Pure Rust port of the non-presentation logic from `timeline.html`, per
+Rust backend for the conversation-timeline tool, per
 [docs/plans/2026-09-09-rust-aws-backend-migration.md](../docs/plans/2026-09-09-rust-aws-backend-migration.md).
-This is **V1** of that plan: a tested library crate with no I/O, no AWS SDK,
-no HTTP server yet — that starts in V2. Right now there is nothing to deploy
-or run as a service; this is code you build and test.
+Four crates:
 
-## What's in this crate
-
-- `dedup` — removes retried duplicate human messages (port of `dedupChatMessages`).
-- `format` — accepts a raw export or an already-processed file (port of `unwrapUploadedJSON`).
-- `sessions` — splits a conversation into session blocks on 15-minute-plus gaps (port of `buildBlocks`, gap-only — see the module doc for what's deliberately different from the original and why).
-- `flags::caps` — ALL-CAPS emphasis detection (dictionary-based).
-- `flags::criticism` — criticism-of-Claude keyword detection.
-- `flags::anger` — anger detection, now backed by a Rust port of VADER instead of AFINN (license reasons — see the plan's C2).
-- `flags::matrix` — the four-visibility-state auto/user flag logic.
-- `vader` — the VADER sentiment algorithm itself (lexicon, boosters, negation, punctuation emphasis, compound score), used by `flags::anger`.
+- **`timeline-core`** (V1) — pure domain logic, no I/O: dedup, session
+  splitting, flag heuristics, VADER sentiment, the export schema types, and
+  the storage/auth "ports" (traits) the other crates implement.
+- **`timeline-storage`** (V2) — adapters for those ports: real S3/DynamoDB
+  clients, and in-memory fakes used for local dev and tests.
+- **`timeline-auth`** (V2) — Cognito access-token verification.
+- **`timeline-api`** (V2) — the axum app (5 routes so far), and the
+  Lambda/local-dev entrypoint.
 
 ## Prerequisites
 
-You need the Rust toolchain (`rustc`/`cargo`, via [rustup](https://rustup.rs))
-**and** a C linker — `rustup` does not install one. On Debian/Ubuntu:
+Rust toolchain (`rustc`/`cargo`, via [rustup](https://rustup.rs)) **and** a
+C linker — `rustup` does not install one:
 
 ```
 sudo apt install build-essential
 ```
 
-## Building and testing
+## Building, testing, running
 
 ```
 cd backend
-cargo build --workspace       # compiles the crate
-cargo test --workspace        # runs all 114 tests (unit, property, snapshot, regression)
-cargo clippy --workspace --all-targets   # lints; should be silent
-cargo fmt --all                # reformat, if you've edited anything
+cargo build --workspace
+cargo test --workspace        # 163 tests
+cargo clippy --workspace --all-targets   # should be silent
+cargo fmt --all
+
+# Run the API locally, in-memory storage only, no AWS needed:
+cargo run -p timeline-api
+# -> listening on http://127.0.0.1:3000
 ```
 
-## Tests live in `tests/`, not alongside the implementation
+The local server is genuinely runnable and was exercised by hand with real
+HTTP requests (`curl`) during development, not just compiled — see
+"What's actually been verified" below for exactly what that covered. It
+uses a fixed, checked-in, dev-only test RSA keypair for auth
+(`timeline-api/dev_only_test_jwks.json`) — never valid for anything real,
+and not a substitute for a real Cognito user pool.
 
-Every test calls only `timeline-core`'s public API — nothing reaches into a
-private function directly. This is a deliberate project convention (see
-CLAUDE.md's "Test only through the public API"), not the Rust default: the
-usual idiom is `#[cfg(test)] mod tests` colocated in the same file as the
-code it tests, which *can* access private items. That's allowed here too,
-but only as temporary scaffolding while developing a specific mechanism —
-once a public-API test proves the same behavior from outside, the
-private-function test is removed (in a commit separate from the one that
-added the replacement, so git history keeps a record of what was directly
-verified). The `vader/algorithm.rs` module's private helpers (`negation_check`,
-`scalar_inc_dec`, `special_idioms_check`, ...) are the main example: every
-one of them is now proven through real sentences in `tests/vader_algorithm.rs`
-calling `polarity_scores` — the crate's only public entry point into VADER —
-rather than by calling those helpers directly.
+## What's actually been verified, and what hasn't
 
-One structural change fell out of this: `negation_check` used to take a
-`start_i: usize` parameter that only ever legally took the values 0, 1, or 2,
-which meant its `match` needed a `_ => ...` wildcard arm to compile — an arm
-no real input could ever reach. It's now a 3-variant `Distance` enum instead,
-so the impossible case is unrepresentable and the wildcard is gone. That
-came directly out of trying to reach 100% coverage through public tests
-alone: a line only a privileged test could reach turned out to be a sign the
-*type* was wrong, not the test.
+Per this project's own rule against confusing "compiles"/"unit tests pass"
+with "actually works": here's the honest split.
+
+**Verified by running the actual code, not just by reading it:**
+- The full local server (`cargo run -p timeline-api`), by hand, via `curl`:
+  unauthenticated requests rejected (401), a garbage bearer token rejected
+  (401), `POST /uploads` returning a real presigned-URL-shaped response,
+  `GET /conversations` returning `[]` for a new user, and a `PATCH` then
+  `GET` on a message's flags round-tripping correctly through real HTTP
+  requests — all captured as committed tests in `timeline-api/tests/app.rs`
+  (`tower::ServiceExt::oneshot` against the real `Router`, not a mock).
+- `timeline-auth`'s Cognito access-token verification, including the
+  security-relevant rejection paths (wrong `client_id`, wrong `token_use`,
+  unknown signing key, wrong issuer, expired token, garbage input) — against
+  a real, self-signed RSA keypair and real `jsonwebtoken` signing/verification,
+  not a stub.
+- The in-memory storage adapters, including that the auto/user flag
+  separation from the migration plan's section 4.1 holds through the real
+  public trait methods, not just by inspection.
+
+**Not verified, because there is no AWS access in this environment (no
+credentials, no Docker for LocalStack, no SAM CLI, no `cargo-lambda`):**
+- `timeline-storage/src/s3.rs` and `timeline-storage/src/dynamo/*` — the
+  real AWS SDK adapters compile and their pure request-building logic is
+  unit-tested (see `dynamo/message_flags_table.rs`'s temporary private-function
+  tests for the auto/user DynamoDB-expression separation specifically), but
+  no `send()` call in either file has ever actually reached AWS or LocalStack.
+- `infra/template.yaml` (the SAM template) has never been run through `sam
+  validate` or `sam deploy` — no SAM CLI in this environment.
+- Nothing has been verified against a real Cognito user pool's actual
+  tokens — only against a self-signed test keypair standing in for one.
+- `cargo lambda build`/deploying to real Lambda — untested; `lambda_http`
+  compiles into the binary but the Lambda code path has never actually run
+  inside Lambda.
+
+This is exactly the gap the migration plan's V2 test list already expected
+("also run the full suite once against real... AWS S3+DynamoDB before
+calling V2 done" / "verified against a real test Cognito user pool") — it's
+tracked, not hidden.
 
 ## Test coverage
 
-Per-project requirement: 100% test coverage, using only public-API tests.
-Measured with [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov)
-(MIT/Apache-2.0):
+`timeline-core` stays at 100% line/function/region coverage (unchanged from
+V1). The new V2 crates do not, and the shortfall is concentrated exactly
+where you'd expect given the paragraph above: the real S3/DynamoDB
+`send()` calls in `timeline-storage`, which cannot be exercised without
+live AWS or LocalStack. Everything reachable without a live AWS connection
+(request/expression building, the axum app end-to-end, auth verification,
+error-mapping) is tested. Measure with
+[`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov) (MIT/Apache-2.0):
 
 ```
-cargo install cargo-llvm-cov --locked   # one-time setup
-rustup component add llvm-tools-preview # one-time setup
+cargo install cargo-llvm-cov --locked
+rustup component add llvm-tools-preview
 cargo llvm-cov --workspace --summary-only
 ```
 
-Current result: **100.00% line, function, and region coverage across every
-file** — no exceptions, and none of it reached via privileged access to a
-private function.
+## Structural enforcement of the auto/user flag separation
 
-## Structured fields are typed, not bare strings
+The migration plan's section 4.1 requires that automatic (heuristic/Bedrock)
+flag writes and the user's own overrides can never cross-contaminate. This
+is enforced at three layers, not just documented:
 
-Per CLAUDE.md's "Type your data — avoid primitive obsession": `src/model.rs`
-types anything with real structure or identity, not just anything textual.
+1. **Trait level** (`timeline-core::ports::message_flags`): `AutoFlagWriter`
+   and `UserFlagWriter` are separate traits; neither has a method that could
+   touch the other's data.
+2. **Wiring level** (`timeline-api::state`): `AppState` exposes each
+   capability as its own `FromRef` impl, so a route handler's function
+   signature only ever names the one trait object it needs. The
+   `PATCH .../flags` handler's source code has no `Arc<dyn AutoFlagWriter>`
+   in scope at all — not "doesn't use it," genuinely not a parameter.
+3. **DynamoDB level** (`timeline-storage::dynamo::message_flags_table`):
+   auto and user flags live in disjoint attribute names (`auto_*`/`user_*`),
+   and the UpdateExpression-building functions are unit-tested to prove
+   each one only ever references its own half.
 
-- `ChatMessage.sender` is a `Sender` enum (`Human` / `Assistant` / `Other(String)`
-  catchall), not a string compared with `== "human"`.
-- `ContentPiece.piece_type` is a `PieceType` enum (`Text` / `Other(String)`
-  catchall — only `Text` is ever handled differently today; see the type's
-  doc comment for why it isn't fully enumerated).
-- `ChatMessage.uuid`/`Conversation.uuid` are `MessageId`/`ConversationId` —
-  distinct newtypes around `uuid::Uuid` (parsed and validated at
-  deserialization), so a message's id and a conversation's id can't be
-  swapped at a call site that takes both, and a malformed UUID is rejected
-  where it enters the crate rather than passed through as an opaque string.
-- `Conversation.name` is a `ConversationName` newtype — nothing to validate
-  (it's freeform prose), but it *identifies* a conversation rather than
-  being content that gets read, so it's still a distinct type from any other
-  string-shaped field, per the same "newtype pattern" reasoning as the ids.
-- `ChatMessage.created_at` is `DateTime<Utc>`, not a string parsed lazily by
-  whichever function happens to need it first. This is the concrete
-  "parse, don't validate" change: an earlier version stored `created_at` as
-  a raw `String` and validated it only inside `sessions::build_blocks`,
-  skipping-and-counting whatever didn't parse. Now a message with an
-  unparseable timestamp fails deserialization outright, at the one place raw
-  JSON enters the crate (surfaced as `FormatError::InvalidConversation`) —
-  `build_blocks` no longer has an "invalid timestamp" case to handle at all,
-  because by the time it runs, that case can't exist.
-  **This is a real behavior change, made deliberately**: if a real export
-  ever has a message with a malformed timestamp, the *entire upload* now
-  fails, where it previously would have silently dropped just that one
-  message and kept going. If that turns out to be too strict in practice —
-  if malformed timestamps are common in real files — the fix belongs at this
-  same parse-time boundary (e.g. substituting a fallback value), not as a
-  second, looser check further downstream. Nothing like that is built yet;
-  there's no evidence yet that it's needed.
-- `ChatMessage.text`/`ContentPiece.text` stay plain `String` — genuine
-  content that gets read/scored, not a label. Same for the VADER lexicon's
-  individual words: a `String`/`&str` is the right type for "arbitrary text
-  I'm about to process," never for a value that identifies, categorizes, or
-  has its own structure.
+## Repository layout note: `dev_only_test_jwks.json`
+
+`timeline-api/dev_only_test_jwks.json` and the matching private key embedded
+in `main.rs`'s doc comment and the test files are a fixed, throwaway RSA
+keypair generated solely for local development and tests. It is not a
+secret in any meaningful sense (never used for anything real), but it also
+must never be mistaken for production configuration — a real deployment
+needs a real Cognito user pool's real JWKS, fetched from its
+`.well-known/jwks.json` endpoint (not built yet — see "What's not built"
+below).
 
 ## What's deliberately different from `timeline.html`
 
 - **Session/day bucketing**: `sessions::build_blocks` only does gap-based
-  splitting (UTC in, UTC out). The original `buildBlocks` also bucketed by
-  the viewer's local calendar day before splitting — that part stays a
-  client-side concern in later versions, since a backend has no idea what
-  timezone the viewer is in. See the module doc in `src/sessions.rs` and the
-  plan's §4.3 for why, including the real bug this avoids reintroducing.
-- **Anger detection**: uses a full Rust port of VADER instead of the
-  original's AFINN lexicon (AFINN is ODbL-licensed, not on this project's
-  approved license list). The anger-specific phrase list and
-  exclamation-mark-burst logic are unchanged; only the underlying sentiment
-  score changed, along with its threshold (recalibrated — VADER's compound
-  score is normalized to `[-1, 1]`, AFINN's wasn't). See `src/flags/anger.rs`.
+  splitting (UTC in, UTC out) — day-bucketing stays a client-side concern.
+  See `timeline-core/src/sessions.rs`'s module doc and the plan's §4.3.
+- **Anger detection**: a full Rust port of VADER instead of the original's
+  AFINN lexicon (license reasons — see the plan's C2).
+- **`created_at` is validated at parse time, not lazily at first use** — see
+  `timeline-core/src/model.rs`'s module doc for the deliberate trade-off
+  this makes (one bad timestamp now fails the whole upload).
+
+## What's not built yet
+
+- The S3-triggered upload-processing Lambda (parses the raw upload, runs
+  dedup/heuristics, writes conversation summaries and auto flags). `POST
+  /uploads` issues a presigned URL and a pending record, but nothing yet
+  turns an uploaded file into conversations and flags.
+- `GET /export` (generate and serve the annotated `conversations.json`).
+- Fetching/caching a real Cognito user pool's JWKS over HTTP (`CognitoVerifier`
+  takes an already-loaded `JwkSet` today — see `timeline-auth/src/lib.rs`'s
+  module doc).
+- `timeline.html` itself — still 100% unmodified, still using its own
+  client-side JS for everything. Nothing in the browser calls this backend
+  yet.
+- Real-AWS/LocalStack integration tests, a real Cognito user pool, and an
+  actual deployment — all blocked on AWS account access (see above).
 
 ## Test fixture provenance
 
-`tests/fixtures/sample_conversations.json` is a trimmed, format-preserving
-excerpt of a real Anthropic `conversations.json` export you supplied,
-selected specifically because 3 of its 6 conversations contain a genuine
-resend-after-empty-assistant-reply duplicate. See the plan's C1/C8/C9 for
-how it was built and a real discrepancy it surfaced against
-`timeline-project-decisions.md`'s dedup statistic.
-
-## Not yet built (later versions per the plan)
-
-No server, no AWS resources, no Bedrock, no payments, no persistence. Those
-start at V2. This crate isn't runnable as anything other than a tested
-library right now.
+`timeline-core/tests/fixtures/sample_conversations.json` is a trimmed,
+format-preserving excerpt of a real Anthropic `conversations.json` export,
+selected because 3 of its 6 conversations contain a genuine
+resend-after-empty-assistant-reply duplicate. See the plan's C1/C8/C9.
