@@ -278,6 +278,78 @@ public-API tests against the in-memory fakes (a real upload → real processed c
 flags, through the actual port methods, not by inspection). The `_dev/*` endpoints get their own
 `tower::ServiceExt::oneshot` tests, same style as `timeline-api/tests/app.rs`.
 
+**Status as of this section landing**: the backend half above is built, tested, and committed
+(`ConversationStore::create`, `process_upload`, the `_dev`-only routes, `GET /export`). The
+`timeline.html` half is not started. The rest of this section is the concrete plan for that
+remaining piece, written and committed *before* touching `timeline.html`, per this repo's
+Workflow rule in [CLAUDE.md](../../CLAUDE.md) (plan → user approval → code).
+
+#### Implementation plan: wiring `timeline.html` (read-path increment)
+
+**Scope of this increment**: upload a file through the real backend and see it rendered — the
+minimum slice that makes "test the website in a browser" literally true. Deliberately not in
+scope (see "Explicitly deferred" below): persisting the review table's flag overrides back to the
+backend, and retiring the already-inert `window.storage` calls.
+
+**Why no rewrite of the parsing/rendering code is needed**: `GET /export` already returns exactly
+the `{"conversations": [...]}` wrapped shape `parseUploadedConversations`
+([timeline.html:64963](timeline.html#L64963)) already knows how to consume — flags embedded as
+`_claude_timeline_auto`/`_claude_timeline_user`, exactly the fields it already reads. So the only
+thing that changes is *how the raw text reaches `parseUploadedConversations`*, not what happens to
+it afterward. `CONVERSATIONS`/`MESSAGES`/`HUMAN_MESSAGES`/`BLOCKS` and every rendering function
+stay untouched.
+
+**New `handleLoadClick()` flow** ([timeline.html:65047](timeline.html#L65047) onward):
+1. Read the chosen file's raw bytes client-side (same as today — needed to `PUT` them).
+2. If no auth token is cached yet, call `POST /_dev/login` with a display name typed into one new
+   text input (`id="devLoginSub"`, placed next to the existing file picker at
+   [timeline.html:747-748](timeline.html#L747-L748)) to get one. Dev-only, matching the rest of
+   this section.
+3. `POST /uploads` (`Authorization: Bearer <token>`) → `{upload_id, upload_url}`.
+4. `PUT` the raw bytes to `upload_url`.
+5. `GET /export` (`Authorization: Bearer <token>`) → `{export_url}`, then `GET export_url` → the
+   annotated JSON text.
+   - **No polling needed for this increment**: the local-dev `_dev/local-storage` `PUT` handler
+     (`timeline-api/src/routes/dev_local_storage.rs`) runs `process_upload` synchronously before
+     its response returns, so by the time step 4 resolves, processing has already finished. This
+     is a simplification specific to the local-dev trigger, not a general guarantee — real
+     S3-event-triggered processing is asynchronous, so a production version needs an upload-status
+     endpoint to poll first (not built; noted as a gap, not solved here).
+6. Feed that text into the existing, unmodified `parseUploadedConversations(text, runAutoDetect,
+   refreshAutoDetect)`. Everything downstream is unchanged.
+
+**Backend addition needed**: a permissive CORS layer (`tower_http::cors::CorsLayer`, MIT license,
+same `tower` family already used) on the local-dev merged router only (`main.rs`'s local branch),
+since `timeline.html` isn't served by `timeline-api` and will be opened separately (e.g. as a
+local file or via a static server on a different port) — without it the browser blocks the
+cross-origin `fetch()` calls. `tower_http` is a new dependency.
+
+**Base URL**: a `const API_BASE = 'http://127.0.0.1:3000'` JS constant, not a relative path, since
+`timeline.html` isn't guaranteed to be served from the API's own origin. Every new `fetch()` call
+in this increment uses `${API_BASE}/...`.
+
+**Explicitly deferred to a later increment**:
+- Wiring the review table's checkbox/"Approve" handlers
+  ([timeline.html:65382-65401](timeline.html#L65382-L65401)) to `PATCH
+  /conversations/{conversation_id}/messages/{message_id}/flags` — needs mapping the client's local
+  `id` (`convIndex|timestamp`) to the real `(conversation_id, message_id)` UUIDs (available via
+  `RAW_DATA[msg.conv].uuid` / `.chat_messages[msg.rawIndex].uuid`), plus a decision on what the UI
+  does on a failed `PATCH`. **Not a regression**: today's behavior for a non-artifact-hosted file
+  already loses overrides on reload (`window.storage` is artifact-only, gated by `hasStorage` at
+  [timeline.html:65306](timeline.html#L65306)), so deferring this doesn't make anything worse than
+  it already is outside the Claude-artifact context.
+- Retiring the `window.storage` auto-save/recovery calls — already safely inert outside the
+  artifact-hosting context, so leaving them causes no bug, just some now-redundant code.
+- Real (non-dev-only) login, upload-status polling for async processing, and anything needing
+  LocalStack or real AWS.
+
+**Testing**: this is a browser-facing UI change. Per CLAUDE.md, verified by hand in a real browser
+(`cargo run -p timeline-api`, `timeline.html` opened separately) — upload the test fixture,
+confirm conversations render, confirm flags show correctly in the review table. This is inherently
+a manual verification step; it will be reported honestly as "used by hand in a browser," not
+dressed up as an automated test, since a script driving a file input and cross-origin fetches
+isn't equivalent to CLAUDE.md's "use the feature in a browser" bar.
+
 ### V3 — Bedrock-based classification
 **Adds**: server-side port of `classifyBatchWithAI`/`classifyBatchWithRetry`
 ([timeline.html:65417-65531](timeline.html#L65417)) calling `aws-sdk-bedrockruntime`'s `converse`
