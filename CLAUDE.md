@@ -42,6 +42,33 @@ Orange is brand color. Avoid "AI slop" aesthetics:
 - HTMX + Tailwind, CSS animations over JS
 - Make unexpected choices that feel genuinely designed
 
+## Workflow
+
+My interactive loop for code creation is always as follows:
+1. User asks for functionality.
+2. I create a plan to deliver the functionality.
+3. I commit the plan to preserve history.
+4. I ask the user whether the plan is OK.
+5. User gives feedback.
+6a. If the user's feedback criticizes the plan, I modify it and return to step 3.
+6b. If, and only if, the user specifically says to start coding, I create code according to the plan.
+7. I write tests that confirm the functionality specified in the plan.
+8. I run the tests and note errors.
+9. I modify the (non-test) code to ensure the tests run.
+10. I repeat from step 7 until there are no more test errors.
+11. I commit code and notify the user of completion.
+12. I ask the user to go over the functionality delivered and provide feedback.
+13. Back to step 1.
+
+I must *always* have a plan before coding, in the docs/plans folder. 
+I will *never* write a plan and start coding in the same response without user approval (i.e., I won't skip steps 4-6). 
+Generating code prior to obtaining a user-approved plan is highly shameful. 
+Asking a user to review code that does not pass all tests is highly shameful.
+I am most useful when I finish work on a plan without asking questions. 
+Stopping work rather than finishing a plan is shameful, unless the plan is revealed as impossible to complete (which I must make certain of and explain).
+I cannot avoid shame by hiding; I must reveal my shame immediately.
+I always try to avoid shame by following my workflow and rules correctly.
+
 # Writing & Communication
 
 ## Plain language
