@@ -65066,10 +65066,31 @@ async function ensureAuthToken(){
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sub }),
   });
-  if(!res.ok) throw new Error(`dev login failed (${res.status})`);
+  if(!res.ok) throw new Error(await describeFailure('dev login', res));
   const body = await res.json();
   AUTH_TOKEN = body.token;
   return AUTH_TOKEN;
+}
+
+// A bare HTTP status code ("upload failed (413)") doesn't explain what
+// actually went wrong -- both axum's own built-in error responses (e.g.
+// "Failed to buffer the request body: length limit exceeded" for a
+// too-large upload) and this app's own JSON error bodies ({"error": "..."})
+// carry real, useful text. Read whichever shape came back rather than
+// discarding it. Reading the body can itself fail (already consumed,
+// network cut mid-read); that failure is folded into the message too,
+// not silently dropped.
+async function describeFailure(what, res){
+  try{
+    const text = await res.text();
+    try{
+      const parsed = JSON.parse(text);
+      if(parsed && typeof parsed.error === 'string') return `${what} failed (${res.status}): ${parsed.error}`;
+    } catch(e){ /* not JSON -- fall through to raw text below */ }
+    return `${what} failed (${res.status})${text ? ': ' + text : ''}`;
+  } catch(e){
+    return `${what} failed (${res.status}), and the error response itself couldn't be read: ${e.message}`;
+  }
 }
 
 async function handleLoadClick(){
@@ -65093,11 +65114,11 @@ async function handleLoadClick(){
       method: 'POST',
       headers: { 'Authorization': `Bearer ${token}` },
     });
-    if(!createRes.ok) throw new Error(`could not start the upload (${createRes.status})`);
+    if(!createRes.ok) throw new Error(await describeFailure('starting the upload', createRes));
     const { upload_url } = await createRes.json();
 
     const putRes = await fetch(`${API_BASE}${upload_url}`, { method: 'PUT', body: rawText });
-    if(!putRes.ok) throw new Error(`upload failed (${putRes.status})`);
+    if(!putRes.ok) throw new Error(await describeFailure('uploading the file', putRes));
 
     // No polling here -- the local-dev PUT handler runs processing
     // synchronously before responding, so it's already finished by the
@@ -65107,11 +65128,11 @@ async function handleLoadClick(){
     const exportRes = await fetch(`${API_BASE}/export`, {
       headers: { 'Authorization': `Bearer ${token}` },
     });
-    if(!exportRes.ok) throw new Error(`could not read back the processed export (${exportRes.status})`);
+    if(!exportRes.ok) throw new Error(await describeFailure('reading back the processed export', exportRes));
     const { export_url } = await exportRes.json();
 
     const downloadRes = await fetch(`${API_BASE}${export_url}`);
-    if(!downloadRes.ok) throw new Error(`could not download the processed export (${downloadRes.status})`);
+    if(!downloadRes.ok) throw new Error(await describeFailure('downloading the processed export', downloadRes));
     const text = await downloadRes.text();
 
     const parsed = parseUploadedConversations(text, runAutoDetect, refreshAutoDetect);
@@ -65153,7 +65174,13 @@ async function handleLoadClick(){
     }
   } catch(err){
     console.error(err);
-    setLoadStatus('Could not load that file through the backend — ' + err.message, true);
+    // A TypeError here (not an HTTP error response -- those are handled by
+    // describeFailure above) means fetch() itself couldn't reach the
+    // server at all -- almost always because it isn't running.
+    const hint = err instanceof TypeError
+      ? ` Is the backend running (cargo run -p timeline-api) at ${API_BASE}?`
+      : '';
+    setLoadStatus('Could not load that file through the backend — ' + err.message + hint, true);
   }
 }
 
