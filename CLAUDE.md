@@ -173,6 +173,34 @@ Order of preference for any primitive:
 
 In plan documents, propose the library or existing function **by name**: "Use `tools/focus_group._click_by_dom_anchor`" or "use the `css-tree` library (BSD-3-Clause)". Don't write "we'll need a CSS parser" without naming the parser. Make the choice auditable. License check is mandatory: state the license alongside the recommendation. When extending existing code, link to the file:line.
 
+## Type your data — avoid primitive obsession
+
+Applies to all new code, any language.
+
+- A bare `String`/generic primitive is the right type only for genuine content —
+  prose that gets read, scored, or processed (message text, search input). The
+  moment a value *identifies or labels* something rather than being read, or has
+  its own structure distinct from "any text," a bare string is primitive
+  obsession (refactoring.guru/smells/primitive-obsession) — use a dedicated type.
+- A closed, small set of legal values compared by string equality is an enum
+  waiting to happen. Name only the values your code actually treats differently;
+  catch-all the rest, per "catchall over enumeration" above.
+- Even unparsed, wrap it. A single-field wrapper (Rust: the newtype pattern,
+  e.g. `struct ConversationName(String)`) costs nothing at runtime and stops
+  the type-checker from accepting a value in the wrong argument slot — this is
+  what prevents two same-typed, differently-meant string parameters from being
+  silently swapped at a call site.
+- Validate/parse once, at the boundary, into a type that makes the invalid
+  case unrepresentable — not repeatedly, wherever the value gets used
+  ("parse, don't validate" — lexi-lambda.github.io/blog/2019/11/05). A raw
+  string that *might* be a valid timestamp/UUID/email forces every downstream
+  reader to re-derive its own answer to "is this actually valid," and it's
+  easy for one reader to check and another not to.
+- State the trade-off when boundary-parsing has a cost: rejecting a whole
+  input over one bad field, vs. needing to keep a raw form alongside the
+  parsed one for byte-exact round-tripping. Neither is automatically right —
+  say which you chose and why.
+
 ## Code organization and file size
 
 Applies to all new code in this repo, in any language (Rust, Python, JS/TS, etc.) — not just one
