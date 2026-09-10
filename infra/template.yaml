@@ -1,0 +1,193 @@
+# AWS SAM template for V2 of the migration plan
+# (docs/plans/2026-09-09-rust-aws-backend-migration.md). Declares the
+# resources listed in that plan's V2 section: S3, three DynamoDB tables,
+# one Lambda (running the whole axum app from timeline-api -- lambda_http
+# routes internally, so one function behind one API Gateway catch-all
+# integration, not one function per route), API Gateway, and a Cognito user
+# pool.
+#
+# NOT included yet, deliberately (not built in code yet either -- see
+# backend/README.md and docs/plans/2026-09-09-rust-aws-backend-migration.md
+# for what V2 still needs): the S3-triggered upload-processing Lambda, and
+# the GET /export route's resources.
+#
+# This template has never been deployed or validated with `sam validate` /
+# `sam deploy` -- no AWS credentials or SAM CLI were available in the
+# environment this was written in. Treat it as a documented starting point,
+# not a proven one.
+
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Conversation timeline backend (V2) -- S3 + DynamoDB storage, Cognito auth,
+  one Lambda running the full axum app behind API Gateway.
+
+Parameters:
+  Stage:
+    Type: String
+    Default: dev
+    Description: Deployment stage name (dev/staging/prod), used to namespace resources.
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 512
+    Architectures: [arm64]
+    Runtime: provided.al2023
+
+Resources:
+  # --- Storage -------------------------------------------------------------
+
+  RawUploadsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "timeline-uploads-${Stage}-${AWS::AccountId}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      CorsConfiguration:
+        CorsRules:
+          # Presigned PUT/GET URLs are used directly by the browser -- see
+          # the migration plan section 1.6. Tighten AllowedOrigins to the
+          # real frontend origin before this is ever deployed for real.
+          - AllowedMethods: [PUT, GET]
+            AllowedOrigins: ["*"]
+            AllowedHeaders: ["*"]
+
+  ConversationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "timeline-conversations-${Stage}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+
+  MessageFlagsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "timeline-message-flags-${Stage}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "timeline-users-${Stage}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+
+  # --- Auth ------------------------------------------------------------------
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "timeline-users-${Stage}"
+      AutoVerifiedAttributes: [email]
+      UsernameAttributes: [email]
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub "timeline-web-${Stage}"
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      AccessTokenValidity: 1
+      TokenValidityUnits:
+        AccessToken: hours
+
+  # --- Compute / API -----------------------------------------------------
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "timeline-api-${Stage}"
+      # Built via `cargo lambda build --release --arm64` from backend/timeline-api;
+      # this path is where that build's output bootstrap binary/zip is expected.
+      CodeUri: ../backend/target/lambda/timeline-api/
+      Handler: bootstrap
+      Environment:
+        Variables:
+          TIMELINE_UPLOADS_BUCKET: !Ref RawUploadsBucket
+          TIMELINE_CONVERSATIONS_TABLE: !Ref ConversationsTable
+          TIMELINE_MESSAGE_FLAGS_TABLE: !Ref MessageFlagsTable
+          TIMELINE_USERS_TABLE: !Ref UsersTable
+          TIMELINE_COGNITO_USER_POOL_ID: !Ref UserPool
+          TIMELINE_COGNITO_CLIENT_ID: !Ref UserPoolClient
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref RawUploadsBucket
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConversationsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MessageFlagsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UsersTable
+      Events:
+        AnyRequest:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /{proxy+}
+            Method: ANY
+
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: !Ref Stage
+      Auth:
+        Authorizers:
+          CognitoAuthorizer:
+            JwtConfiguration:
+              issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}"
+              audience:
+                - !Ref UserPoolClient
+            IdentitySource: "$request.header.Authorization"
+        DefaultAuthorizer: CognitoAuthorizer
+
+Outputs:
+  ApiUrl:
+    Description: Base URL of the deployed HTTP API.
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/"
+  UserPoolId:
+    Value: !Ref UserPool
+  UserPoolClientId:
+    Value: !Ref UserPoolClient
+  RawUploadsBucketName:
+    Value: !Ref RawUploadsBucket
