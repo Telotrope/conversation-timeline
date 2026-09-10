@@ -404,6 +404,129 @@ apt package, which was too old) plus the system Chrome already on this machine. 
 before calling this increment done, the same way the plan already treats LocalStack/real-AWS
 verification for other pieces.
 
+### V2a-revision: what each store actually persists, and why — a design review found real problems
+
+A design-review conversation after V2a landed surfaced that the storage ports' shapes were only
+explicable by reciting AWS-specific constraints (DynamoDB's 400KB item cap, Lambda's
+statelessness between invocations) — which is itself evidence the ports weren't actually hiding
+infrastructure from `timeline-core` the way the crate's own stated principle requires. This
+section is the write-up of that review and the resulting design, **not yet applied to code** —
+per this repo's Workflow rule, plan first, approval, then code.
+
+#### The one fact that actually justifies durable storage here
+
+**A Lambda deployment gives no guarantee that two HTTP calls — even from the same user, seconds
+apart — run in the same process.** Each invocation may reuse a "warm" execution environment from
+an earlier one or start a fresh one; which happens is decided by AWS's internal scheduling,
+invisible to the application, and explicitly not something AWS's own documentation says to rely
+on. `POST /uploads`, the browser's direct `PUT` to S3, the S3-event-triggered processing Lambda,
+and a later `GET /export` are four separate invocations with no shared memory to assume. That's
+the actual reason any durable storage is needed at all — not "does it need to survive a server
+restart," which was the framing this plan used until now, and which is the wrong question for a
+serverless deployment: there is no persistent process for in-memory state to survive *as*. If the
+deployment target were instead one long-running process with sticky sessions, none of this would
+be necessary. It isn't — Lambda was chosen for elastic, pay-per-use scaling (§1.1) — so it is.
+
+This single fact should be stated in the ports' own documentation, in infrastructure-neutral
+terms ("this data must be readable by a process other than the one that wrote it, at an
+unpredictable later time"), rather than requiring a reader to already know Lambda's execution
+model to understand why a port exists at all.
+
+#### Duration is not the axis that distinguishes the stores — access pattern is
+
+| Store | Duration needed | Actual reason for its own technology |
+|---|---|---|
+| `ObjectStore` | Indefinite — written once, read by any number of later, unrelated invocations | Cheap, durable, arbitrary-size blob storage; no query capability needed |
+| `ConversationStore` (data now called `ConversationSummary`) | **Also indefinite** — not shorter than `ObjectStore`'s | Not about duration — about access pattern: cheap point-reads on small records, so listing conversations or checking a flag never means fetching and parsing a potentially 60MB blob |
+| `UploadStatus` | Short — useful only until the client has seen the final outcome | The one place a smaller mechanism suffices — see below |
+
+`ObjectStore` and `ConversationStore` were being discussed as if they persisted for different
+lengths of time. They don't. They differ in *shape of access* (opaque blob vs. small indexed
+record), not durability. Conversation-addressability's concrete payoff, stated plainly instead of
+abstractly: without a per-conversation index, `GET /conversations` for a user with a long upload
+history means fetching and parsing *every upload blob they've ever submitted* — potentially
+hundreds of MB — just to render a name-and-count list. The index turns that into O(number of
+conversations) instead of O(total historical upload bytes). Not hypothetical at this tool's
+documented scale (§7: up to 60MB single uploads, ~2,200 messages/user).
+
+#### Concrete simplification: drop what nothing needs
+
+Checked against actual call sites (`grep`, not assumed) before proposing this:
+
+1. **`UploadStatus::Pending`/`Processing` are never read by anything.** No `GET /uploads/{id}`
+   route exists; `process_upload` doesn't branch on status either. They exist to support a future
+   client-facing "still processing…" message — legitimate in the target async design, but nothing
+   currently reads them, and the intermediate states don't need to be *persisted values* even once
+   that endpoint exists: a client can poll "does a terminal outcome exist yet?" (absent = not
+   done) without the pipeline ever writing a distinct `Processing` record.
+2. **`raw_object_key` doesn't need to be stored at all.** It's `format!("raw/{user_id}/{upload_id}.json")`
+   ([timeline-api/src/routes/uploads.rs:38](../../backend/timeline-api/src/routes/uploads.rs#L38))
+   — a pure function of `(user_id, upload_id)`, computed once when issuing the presigned URL and
+   currently *also* round-tripped through `UploadStore` so `export.rs` can read it back
+   ([timeline-api/src/routes/export.rs:66](../../backend/timeline-api/src/routes/export.rs#L66))
+   — when it could just recompute the same format string locally instead.
+3. **`create_pending`/`mark_processing` have no reason to exist once (1) and (2) are dropped.**
+   There is nothing left to "register" before processing starts — an S3 event notification is
+   self-describing (bucket + key), and the key itself already encodes `user_id`/`upload_id` by
+   convention (exactly how the local-dev `_dev/local-storage` PUT handler already parses it,
+   [timeline-api/src/routes/dev_local_storage.rs](../../backend/timeline-api/src/routes/dev_local_storage.rs)).
+
+**Proposed replacement shape** for `timeline-core/src/ports/uploads.rs`:
+
+```rust
+pub enum UploadOutcome {
+    Ready { conversation_ids: Vec<ConversationId> },
+    Failed { reason: String },
+}
+
+#[async_trait]
+pub trait UploadOutcomeStore: Send + Sync {
+    /// Written once, when processing finishes -- there is no earlier,
+    /// pending write. `POST /uploads` never touches this store at all.
+    async fn record_outcome(
+        &self, user_id: &UserId, upload_id: UploadId, outcome: UploadOutcome,
+    ) -> Result<(), StoreError>;
+
+    /// `None` means "not finished yet" -- the only status a polling client
+    /// needs, without a separate persisted `Pending`/`Processing` value.
+    async fn get_outcome(
+        &self, user_id: &UserId, upload_id: UploadId,
+    ) -> Result<Option<UploadOutcome>, StoreError>;
+}
+```
+
+This removes `UploadRecord`, the 4-variant `UploadStatus`, `create_pending`, and `mark_processing`
+entirely — not a rename, a real reduction in what this port's contract promises to do.
+
+#### Naming, consolidated with the rest of this session's findings
+
+- `ConversationStore` → **`ConversationSummaryStore`**: it stores `ConversationSummary` records
+  (name, message count, a foreign key) — never the conversation's actual messages, which are
+  never persisted as a separate structured thing at all (only reconstructed on demand by
+  re-parsing the raw upload blob). "Store" without qualification claims more than that.
+- `UploadStore` → **`UploadOutcomeStore`**, per the simplified shape above.
+- `ObjectStore` keeps its name and revised module doc (already applied,
+  [timeline-core/src/ports/object_store.rs](../../backend/timeline-core/src/ports/object_store.rs))
+  — it's the one port that actually stores content, so "Store" is accurate there.
+- `ConversationStore::create` → `put` (already applied, uncommitted in the working tree as of
+  this write-up) is compatible with this revision and doesn't need to change again — `put` still
+  correctly names an upsert regardless of the trait's own rename.
+
+#### What this doesn't solve, stated honestly
+
+Even after this simplification, `timeline-core`'s ports still encode a real infrastructure
+requirement (durable, cross-process-readable storage) in their existence — that's unavoidable,
+because the application genuinely cannot function without it, and *that* is a legitimate
+domain-level fact (how the data will be read, not which AWS service backs it). What this revision
+removes is the *AWS-Lambda-specific* residue riding along with it (an unused status lifecycle, a
+value that's actually just a naming convention) — not the fact that a port exists to request
+durable, indexed storage at all. A single, unified "persistent conversation storage" port
+(replacing `ConversationSummaryStore` + `ObjectStore`'s `raw`-prefix usage with one contract) was
+considered and rejected for now: it would still need to expose *some* way to distinguish
+cheap-indexed-record access from bulk-blob access, or every adapter would have to fake one side of
+that distinction the way the in-memory `ObjectStore` fake already does for presigned URLs — this
+doesn't remove the two-shape reality, only its visibility.
+
 ### V3 — Bedrock-based classification
 **Adds**: server-side port of `classifyBatchWithAI`/`classifyBatchWithRetry`
 ([timeline.html:65417-65531](timeline.html#L65417)) calling `aws-sdk-bedrockruntime`'s `converse`
@@ -821,6 +944,47 @@ run against anything real — confirmed directly, not from memory, before writin
 S3-compatible option (needs more investigation) as a dedicated increment after V2a's read+write
 flow is committed. Explicitly **not part of V2a** — V2a stays in-memory-only, deliberately, per
 the container-free/AWS-free design already agreed for routine testing.
+
+### C11 [OPEN, plan drafted — code not yet applied]: `UploadStatus`'s `Pending`/`Processing` are persisted but never read
+Confirmed by `grep`, not assumed: no route reads `UploadRecord.status`, and `process_upload`
+doesn't branch on it either. Written by `create_pending`/`mark_processing`, read by nothing.
+**Mitigation in plan:** [§V2a-revision above](#v2a-revision-what-each-store-actually-persists-and-why--a-design-review-found-real-problems)
+redesigns `UploadStore` into `UploadOutcomeStore`, dropping both variants and the methods that
+wrote them. **Open:** apply to code — needs its own approved plan-to-code cycle before any file
+changes, per this repo's Workflow rule.
+
+### C12 [OPEN, plan drafted — code not yet applied]: `raw_object_key` is stored despite being a pure function of `(user_id, upload_id)`
+`create_upload` computes it as `format!("raw/{user_id}/{upload_id}.json")`
+([timeline-api/src/routes/uploads.rs:38](../../backend/timeline-api/src/routes/uploads.rs#L38)),
+then it's written to `UploadStore` and read back by `export.rs`
+([timeline-api/src/routes/export.rs:66](../../backend/timeline-api/src/routes/export.rs#L66))
+instead of being recomputed. **Mitigation in plan:** dropped entirely in the
+`UploadOutcomeStore` redesign above — callers recompute the key from the same format string.
+**Open:** same as C11, needs its own approved implementation pass.
+
+### C13 [OPEN, plan drafted — code not yet applied]: Port names overclaim what they persist
+`ConversationStore` stores `ConversationSummary` (name, count, a foreign key) — never a
+conversation's actual messages, which are never persisted as a structured thing at all, only
+reconstructed by re-parsing the raw upload blob on demand. `UploadStore` doesn't store an upload's
+content either — that's in `ObjectStore`; it stores a status/outcome record pointing at where the
+content is. **Mitigation in plan:** renamed to `ConversationSummaryStore` and
+`UploadOutcomeStore` above, alongside C11/C12's structural simplification (not a rename alone —
+`UploadOutcomeStore`'s contract is genuinely smaller). **Open:** apply to code, same gate as C11.
+
+### C14 [RESOLVED]: The ports' own shape was only explicable via AWS-specific reasoning, not domain terms
+Original concern: explaining why three separate storage ports exist, and what each one's
+persistence duration is for, required reciting DynamoDB's 400KB item cap and Lambda's
+statelessness between invocations — meaning `timeline-core`'s ports weren't actually hiding
+infrastructure from the domain layer the way the crate's own stated principle requires, even
+though they contain zero AWS SDK imports (the letter of that rule was satisfied; the spirit
+wasn't). **Resolution:** [§V2a-revision above](#v2a-revision-what-each-store-actually-persists-and-why--a-design-review-found-real-problems)
+identifies the one fact that actually justifies durable storage here (cross-invocation memory
+isn't guaranteed, stated in infrastructure-neutral terms: "readable by a process other than the
+one that wrote it, at an unpredictable later time") and states plainly, rather than papering over,
+what this repo's port design still doesn't fully solve: the ports still encode a real
+infrastructure *requirement* (that's unavoidable — the domain genuinely needs durable, indexed
+storage), just no longer the AWS-Lambda-specific residue (an unused status lifecycle, a
+recomputable value stored as if it weren't) that was riding along with it.
 
 ---
 
