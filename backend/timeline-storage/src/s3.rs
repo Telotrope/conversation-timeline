@@ -1,8 +1,11 @@
-//! Real S3-backed `ObjectStore`. Compiles and is unit-testable for its own
-//! key-naming logic, but has not been run against real or LocalStack S3 in
-//! this environment -- no AWS credentials or Docker were available. See the
-//! migration plan V2 test list: running this against real S3 is one of the
-//! steps still needed before V2 can be called done.
+//! Real S3-backed `ObjectStore`. Compiles, but has zero test coverage --
+//! not even private-function tests, since this file has no logic of its
+//! own to unit-test (keys are passed in by the caller; there's no
+//! key-naming logic here to verify in isolation). Has not been run
+//! against real or LocalStack S3 in this environment -- no AWS
+//! credentials or Docker were available. See the migration plan V2 test
+//! list: running this against real S3 is one of the steps still needed
+//! before V2 can be called done.
 
 use std::time::Duration;
 

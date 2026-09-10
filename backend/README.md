@@ -4,14 +4,21 @@ Rust backend for the conversation-timeline tool, per
 [docs/plans/2026-09-09-rust-aws-backend-migration.md](../docs/plans/2026-09-09-rust-aws-backend-migration.md).
 Four crates:
 
-- **`timeline-core`** (V1) — pure domain logic, no I/O: dedup, session
-  splitting, flag heuristics, VADER sentiment, the export schema types, and
-  the storage/auth "ports" (traits) the other crates implement.
-- **`timeline-storage`** (V2) — adapters for those ports: real S3/DynamoDB
-  clients, and in-memory fakes used for local dev and tests.
-- **`timeline-auth`** (V2) — Cognito access-token verification.
-- **`timeline-api`** (V2) — the axum app (5 routes so far), and the
+- **[`timeline-core`](timeline-core/README.md)** (V1) — pure domain logic, no
+  I/O: dedup, session splitting, flag heuristics, VADER sentiment, the
+  export schema types, and the storage/auth "ports" (traits) the other
+  crates implement.
+- **[`timeline-storage`](timeline-storage/README.md)** (V2) — adapters for
+  those ports: real S3/DynamoDB clients, and in-memory fakes used for
+  local dev and tests.
+- **[`timeline-auth`](timeline-auth/README.md)** (V2) — Cognito
+  access-token verification.
+- **[`timeline-api`](timeline-api/README.md)** (V2) — the axum app (6
+  routes plus the `_dev`-only local-testing surface), and the
   Lambda/local-dev entrypoint.
+
+Each crate's own README documents its full interface (types, traits, routes) and includes a UML
+class diagram.
 
 ## Prerequisites
 
