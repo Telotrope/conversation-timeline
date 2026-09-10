@@ -343,12 +343,15 @@ in this increment uses `${API_BASE}/...`.
 - Real (non-dev-only) login, upload-status polling for async processing, and anything needing
   LocalStack or real AWS.
 
-**Testing**: this is a browser-facing UI change. Per CLAUDE.md, verified by hand in a real browser
-(`cargo run -p timeline-api`, `timeline.html` opened separately) — upload the test fixture,
-confirm conversations render, confirm flags show correctly in the review table. This is inherently
-a manual verification step; it will be reported honestly as "used by hand in a browser," not
-dressed up as an automated test, since a script driving a file input and cross-origin fetches
-isn't equivalent to CLAUDE.md's "use the feature in a browser" bar.
+**Testing**: this is a browser-facing UI change, verified with real Playwright driving the
+machine's already-installed Chrome (`executablePath: '/usr/bin/google-chrome'`, `--no-sandbox` —
+no `sudo`, no bundled-Chromium download needed; confirmed working directly before committing to
+this approach). `cargo run -p timeline-api` in the background, `timeline.html` opened in the
+driven browser, a real file selected via the file input, the load button clicked, and the
+rendered conversation list/review table read back from the DOM — not a hand-wave "should work,"
+an actual driven session. The script that does this is a one-off verification aid, not a permanent
+addition to `cargo test`, and will be reported as exactly that: genuinely driven, not merely
+inspected.
 
 ### V3 — Bedrock-based classification
 **Adds**: server-side port of `classifyBatchWithAI`/`classifyBatchWithRetry`
