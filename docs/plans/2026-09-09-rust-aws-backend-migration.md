@@ -214,6 +214,70 @@ per-function least-privilege IAM roles.
 - Also run the full suite once against real (low-volume) AWS S3+DynamoDB before calling V2 done,
   since LocalStack fidelity is the main risk in this version.
 
+### V2a — Container-free local dev harness (added after V2's backend landed with no frontend wiring)
+
+**Why this exists**: after V2's backend crates landed, `timeline.html` was still 100% unwired to
+them — genuinely testable-in-a-browser was never actually reached, which is the whole point of
+V2. Closing that gap exposed a second issue: the presigned-URL upload design is inherently
+S3-shaped (the browser `PUT`s bytes directly to a signed HTTPS URL, and a real S3 event then
+triggers a separate processing Lambda) — neither half of that has a meaning for the in-memory
+adapters as written, so there was no way for a real browser to drive the in-memory backend
+end-to-end at all, container or not. This section is the fix: a design that keeps every piece of
+*logic* container-free and testable via the in-memory adapters, and confines any actual AWS/
+container dependency to deployment-time verification of the adapters themselves — never to the
+routine "does the website work" loop.
+
+**The pure logic needs no new code.** `unwrap_uploaded_json`, `dedup_chat_messages`/
+`dedup_conversations`, `build_blocks`, and the per-message heuristics (`has_emphasis_caps`,
+`detect_critical`, `detect_angry`) already exist in `timeline-core` and are already 100%-covered
+by public-API tests from V1 — see [§3 V1](#v1--rust-core-logic-no-aws-yet-pure-port--parity-proof)
+above. What V2 never added was the thin orchestration that calls them and writes the results
+through the storage ports.
+
+**`process_upload(user_id, upload_id)`** (new, `timeline-api`): reads the raw bytes via
+`ObjectStore::get`, calls the existing parse/dedup/heuristic functions in sequence, writes one
+`ConversationSummary` per conversation via `ConversationStore` and one `FlagSet` per message via
+`AutoFlagWriter`, then marks the `UploadRecord` `Ready` (or `Failed` on a parse error). It depends
+only on the port traits, so it's testable against the in-memory fakes with no container and no
+AWS — the same pattern already used for every other V2 handler test.
+
+**Two callers of that one function**:
+- **Production**: a separate Lambda, triggered by a real S3 `ObjectCreated` event, using the real
+  `timeline-storage` S3/DynamoDB adapters — this is the only path that ever touches AWS or
+  LocalStack, and only to verify the *trigger wiring* and the *real adapters*, which is deployment
+  verification, not routine testing (the orchestration logic itself is already proven above).
+- **Local dev**: a `_dev`-namespaced axum route on the same `timeline-api` binary, called directly
+  after bytes land in the in-memory `ObjectStore` — no event system involved, just a direct call.
+
+**Local-only HTTP endpoints, standing in for S3-specific mechanisms** (never present when running
+against the real AWS adapters; clearly namespaced `_dev/...`, same spirit as
+`dev_only_test_jwks.json`):
+- `PUT /_dev/local-storage/{key}` / `GET /_dev/local-storage/{key}` — what `InMemoryObjectStore`'s
+  `presign_put`/`presign_get` return instead of the current placeholder `memory://...` string,
+  since a real browser needs an actual URL it can `PUT`/`GET` against. The `PUT` handler stores the
+  bytes, then calls `process_upload` directly — the local substitute for the S3-event trigger.
+- `POST /_dev/login` — mints a bearer token from the same throwaway RSA keypair already checked in
+  for `timeline-auth`/`timeline-api` tests, since there is no real Cognito pool to log in against
+  locally. Takes just a display name/sub, no password — it is not an auth mechanism, it's a stand-
+  in for one, and must never exist in the Lambda/production build.
+
+**`GET /export`** follows the same shape the plan already specifies (§1, "Annotated export... S3,
+generated on demand... served back via presigned GET"): read conversations + flags via the
+existing ports, serialize the annotated export JSON, `ObjectStore::put` it, return a presigned GET
+URL — against the in-memory adapter, that URL is a `/_dev/local-storage/...` link like uploads
+use. No new algorithmic logic, no container.
+
+**`timeline.html`**: the upload/load code (currently local `FileReader`-based, plan §V2 already
+calls for this to become `fetch()`-based) is rewritten to `POST /uploads`, `PUT` the file to the
+returned `upload_url`, poll until the upload's status is `Ready`, then `fetch()` `/conversations`
+and message flags — plus a minimal dev-only login screen that calls `POST /_dev/login` to obtain a
+token in local testing. All of this only needs `cargo run -p timeline-api`; no container, no AWS.
+
+**Tests**: `process_upload` gets black-box coverage the same way every other V2 handler does —
+public-API tests against the in-memory fakes (a real upload → real processed conversations → real
+flags, through the actual port methods, not by inspection). The `_dev/*` endpoints get their own
+`tower::ServiceExt::oneshot` tests, same style as `timeline-api/tests/app.rs`.
+
 ### V3 — Bedrock-based classification
 **Adds**: server-side port of `classifyBatchWithAI`/`classifyBatchWithRetry`
 ([timeline.html:65417-65531](timeline.html#L65417)) calling `aws-sdk-bedrockruntime`'s `converse`
