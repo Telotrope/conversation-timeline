@@ -19,10 +19,10 @@ impl InMemoryConversationStore {
         Self::default()
     }
 
-    /// Not part of the `ConversationStore` trait — this is how the upload
-    /// processing step (or a test standing in for it) populates summaries
-    /// once an upload has been parsed, the same way a real adapter would
-    /// batch-write conversation-summary items to DynamoDB.
+    /// Test-only convenience: populates a summary directly, without going
+    /// through the async trait method. `ConversationStore::create` (below)
+    /// delegates here; this inherent method exists so synchronous test setup
+    /// doesn't need a runtime just to seed a store.
     pub fn insert(&self, user_id: UserId, summary: ConversationSummary) {
         self.summaries
             .lock()
@@ -58,5 +58,14 @@ impl ConversationStore for InMemoryConversationStore {
             .expect("in-memory store mutex poisoned")
             .get(&(user_id.clone(), conversation_id))
             .cloned())
+    }
+
+    async fn create(
+        &self,
+        user_id: &UserId,
+        summary: ConversationSummary,
+    ) -> Result<(), StoreError> {
+        self.insert(user_id.clone(), summary);
+        Ok(())
     }
 }

@@ -312,4 +312,29 @@ impl ConversationStore for DynamoConversationsTable {
             .map(|item| conversation_summary_from_item(conversation_id, &item))
             .transpose()
     }
+
+    async fn create(
+        &self,
+        user_id: &UserId,
+        summary: ConversationSummary,
+    ) -> Result<(), StoreError> {
+        self.client
+            .put_item()
+            .table_name(&self.table_name)
+            .item("pk", AttributeValue::S(user_id.to_string()))
+            .item(
+                "sk",
+                AttributeValue::S(conversation_sort_key(summary.conversation_id)),
+            )
+            .item("upload_id", AttributeValue::S(summary.upload_id.to_string()))
+            .item("name", AttributeValue::S(summary.name.0))
+            .item(
+                "message_count",
+                AttributeValue::N(summary.message_count.to_string()),
+            )
+            .send()
+            .await
+            .map_err(backend_error)?;
+        Ok(())
+    }
 }

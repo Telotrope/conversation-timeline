@@ -70,3 +70,18 @@ async fn get_does_not_leak_across_users() {
         None
     );
 }
+
+#[tokio::test]
+async fn create_through_the_trait_method_is_visible_to_list_and_get() {
+    let store = InMemoryConversationStore::new();
+    let s = summary(1, "alice's chat");
+    ConversationStore::create(&store, &user("alice"), s.clone())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        store.get(&user("alice"), s.conversation_id).await.unwrap(),
+        Some(s.clone())
+    );
+    assert_eq!(store.list_for_user(&user("alice")).await.unwrap(), vec![s]);
+}

@@ -1,5 +1,13 @@
-//! Read access to conversation summaries — powers `GET /conversations`
-//! without ever touching the raw S3 blob, per the migration plan §1.3.
+//! Conversation summary storage — read access powers `GET /conversations`
+//! without ever touching the raw S3 blob, per the migration plan §1.3; the
+//! one write method (`create`) is used exclusively by the upload-processing
+//! pipeline (see the migration plan §V2a and `timeline-api::processing`),
+//! the same "one trait, read+write, only the processing path ever calls the
+//! write half" shape [`crate::ports::uploads::UploadStore`] already uses —
+//! unlike the flag ports, there's no per-actor security boundary here to
+//! enforce structurally (only the pipeline ever produces conversation
+//! summaries), so a stricter reader/writer split would be ceremony without
+//! a corresponding guarantee.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -26,4 +34,9 @@ pub trait ConversationStore: Send + Sync {
         user_id: &UserId,
         conversation_id: ConversationId,
     ) -> Result<Option<ConversationSummary>, StoreError>;
+
+    /// Writes one conversation's summary — called once per conversation by
+    /// the upload-processing pipeline, never by a user-facing route.
+    async fn create(&self, user_id: &UserId, summary: ConversationSummary)
+        -> Result<(), StoreError>;
 }
