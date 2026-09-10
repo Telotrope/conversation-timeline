@@ -72,6 +72,11 @@ cargo run -p timeline-api
 # -> listening on http://127.0.0.1:3000
 ```
 
+**This server alone doesn't get you a usable page.** `timeline.html` (at the repo root, not in
+this directory) needs to be served separately and opened over `http://`, not as a local
+`file://` page — see the [top-level README](../README.md#running-this-locally) for the full
+walkthrough (a one-line `python3 -m http.server` from the repo root is enough).
+
 The local server is genuinely runnable and was exercised by hand with real
 HTTP requests (`curl`) during development, not just compiled — see
 "What's actually been verified" below for exactly what that covered. It
