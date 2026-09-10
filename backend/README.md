@@ -22,6 +22,35 @@ C linker — `rustup` does not install one:
 sudo apt install build-essential
 ```
 
+## Building and running the real Lambda binary (`cargo-lambda`)
+
+Optional — only needed to build/verify the actual Lambda artifact, not for
+`cargo build`/`cargo test`/`cargo run` above. Install:
+
+```
+curl -fsSL https://cargo-lambda.info/install.sh | sh
+```
+
+`cargo-lambda` cross-compiles with [Zig](https://ziglang.org) as its linker
+— **not Docker**. If `zig` isn't already on `PATH`, download a prebuilt
+release for your platform from ziglang.org/download and add it to `PATH`;
+there's no official system package on most distros. Then:
+
+```
+# Cross-compile the real Lambda artifact (ARM64, matching template.yaml):
+cargo lambda build --release --arm64 -p timeline-api
+# -> target/lambda/timeline-api/bootstrap
+
+# Locally emulate the real AWS Lambda Runtime API and send it a test event:
+cargo lambda watch -p timeline-api &
+cargo lambda invoke -A '{"version":"2.0","routeKey":"GET /conversations", ...}'
+```
+
+This was run by hand during development against genuine
+API-Gateway-HTTP-API-shaped events (see "What's actually been verified"
+above) — it isn't part of `cargo test --workspace` because it would mean
+shelling out to an external binary from the test suite.
+
 ## Building, testing, running
 
 ```
@@ -65,8 +94,30 @@ with "actually works": here's the honest split.
   separation from the migration plan's section 4.1 holds through the real
   public trait methods, not just by inspection.
 
+**Also verified by running the actual code — the Lambda runtime path
+specifically:**
+- `cargo lambda build --release --arm64 -p timeline-api` produces a real
+  ARM64 `bootstrap` binary (confirmed with `file`: `ELF 64-bit LSB pie
+  executable, ARM aarch64` — genuine cross-compilation, the build host is
+  x86_64). `cargo-lambda` needs [Zig](https://ziglang.org) as its
+  cross-compilation linker, not Docker; Zig isn't preinstalled here and was
+  fetched directly from ziglang.org (see "Installing cargo-lambda" below).
+- `cargo lambda watch -p timeline-api` was run to start a local emulation of
+  the real AWS Lambda Runtime API, and `cargo lambda invoke` was used to send
+  genuine API-Gateway-HTTP-API-shaped events at it — not just `cargo run` +
+  `curl` against a plain TCP listener, but the actual code path Lambda uses
+  to hand a function its event and collect its response. Three requests were
+  sent this way and all came back correct: an authenticated `GET
+  /conversations` (200, `[]`), an unauthenticated request (401, `missing
+  Authorization header`), a garbage-token request (401, `invalid or expired
+  token`), and an authenticated `POST /uploads` (200, a real `upload_id` +
+  presigned-URL-shaped response). This is a manual verification session, the
+  same as the earlier `curl` one — it isn't captured as a committed,
+  automated test, because doing so would mean shelling out to `cargo lambda`
+  from the test suite, which is out of scope for now.
+
 **Not verified, because there is no AWS access in this environment (no
-credentials, no Docker for LocalStack, no SAM CLI, no `cargo-lambda`):**
+credentials, no LocalStack, no SAM CLI):**
 - `timeline-storage/src/s3.rs` and `timeline-storage/src/dynamo/*` — the
   real AWS SDK adapters compile and their pure request-building logic is
   unit-tested (see `dynamo/message_flags_table.rs`'s temporary private-function
@@ -76,9 +127,9 @@ credentials, no Docker for LocalStack, no SAM CLI, no `cargo-lambda`):**
   validate` or `sam deploy` — no SAM CLI in this environment.
 - Nothing has been verified against a real Cognito user pool's actual
   tokens — only against a self-signed test keypair standing in for one.
-- `cargo lambda build`/deploying to real Lambda — untested; `lambda_http`
-  compiles into the binary but the Lambda code path has never actually run
-  inside Lambda.
+- Deploying the built Lambda binary to real AWS Lambda — untested; the
+  binary now has confirmed local-emulator behavior (above), but that's
+  `cargo-lambda`'s emulation of the Runtime API, not the real service.
 
 This is exactly the gap the migration plan's V2 test list already expected
 ("also run the full suite once against real... AWS S3+DynamoDB before
