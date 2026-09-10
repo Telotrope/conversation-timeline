@@ -12,7 +12,7 @@ use axum::Router;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use timeline_api::app::{build_dev_router, build_router};
-use timeline_api::dev_only::{DEV_ONLY_CLIENT_ID, DEV_ONLY_ISSUER, DEV_ONLY_JWKS_JSON};
+use timeline_api::dev_only::{DEV_KEYPAIR, DEV_ONLY_CLIENT_ID, DEV_ONLY_ISSUER};
 use timeline_api::dev_state::DevState;
 use timeline_api::state::AppState;
 use timeline_auth::cognito::CognitoVerifier;
@@ -27,7 +27,7 @@ use timeline_storage::memory::uploads::InMemoryUploadStore;
 use tower::ServiceExt;
 
 fn test_router() -> Router {
-    let jwks = serde_json::from_str(DEV_ONLY_JWKS_JSON).unwrap();
+    let (_, jwks) = &*DEV_KEYPAIR;
     let flags_store = Arc::new(InMemoryMessageFlagsStore::new());
     let object_store: Arc<dyn ObjectStore> = Arc::new(InMemoryObjectStore::new());
     let upload_store: Arc<dyn UploadStore> = Arc::new(InMemoryUploadStore::new());
@@ -40,7 +40,7 @@ fn test_router() -> Router {
         flags_reader: flags_store.clone(),
         user_flag_writer: flags_store.clone(),
         verifier: Arc::new(CognitoVerifier::new(
-            jwks,
+            jwks.clone(),
             DEV_ONLY_ISSUER,
             DEV_ONLY_CLIENT_ID,
         )),

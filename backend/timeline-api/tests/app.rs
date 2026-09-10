@@ -7,7 +7,7 @@
 //! `cargo run` + `curl` session used during development to confirm the
 //! same behavior against a real running server.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -17,6 +17,7 @@ use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use serde::Serialize;
 use serde_json::{json, Value};
 use timeline_api::app::build_router;
+use timeline_api::dev_only::generate_dev_keypair;
 use timeline_api::state::AppState;
 use timeline_auth::cognito::CognitoVerifier;
 use timeline_storage::memory::conversations::InMemoryConversationStore;
@@ -25,46 +26,18 @@ use timeline_storage::memory::object_store::InMemoryObjectStore;
 use timeline_storage::memory::uploads::InMemoryUploadStore;
 use tower::ServiceExt;
 
-// Same throwaway test keypair as timeline-auth/tests/cognito.rs -- see that
-// file's comment. Never used for anything real.
-const TEST_KEY_PEM: &str = "-----BEGIN PRIVATE KEY-----
-MIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQCj31aKAeOwf1pk
-K2LN/lopW9mSXmYnNPxFpG2RyEu4MPXJWSuGkXfiBGdU1hqjrg9rZuuFvSPOnyQJ
-/sPJhPx71BtWe9vy7gg5tPIoK6/leV0WCEZOuZfpNEy1gAabSOkrOaiyDfEjw11Q
-uadi8+eg/SktgGJhyk2K+RM0AfgLCxZU+e011xshkDZ7JsvskSR65NWrxS7hBWWx
-f0IcMRE1XrrDHm9Xt2xNPZZZPkHFkITxlVajZC/6/0yPeQtjiTeclL6CNDblKbAl
-VGIIoUIRXtN8vTSe6/PxaELaAPqrGK73ClE13k7ZO8+IlrO9Ww9t9BHq9p+hWNx4
-bGQ1mQJfAgMBAAECggEAAVDQtQLcpmpuRt50QuTSsnLu6llC915rRRL7mWyd8u02
-U8uQmCnn5Vf9N/OvlJRPoBfWg3NZQniJsN6WGlHrPWMY7c2sPb1Wy9WAkWDXtEqp
-6ZjWyc2ZcKK6dchH5JZMhFR19YR0j5QwxRMmvKty3rnYjLOBtf6pxUAYHbst9cyi
-5adyJ4s+t0HRED4kupDR8WpXqzz3MS7O6GD9p8AVmSC1ZZY8VOnITcY7Dpb2PR06
-RwehMXbdK9b69BVd/rf6IOGAsJefKMJMjiwb87PkhRhJqfRd7p5asrdm27nn8lhQ
-ZUVzlkqRmiJ2Ig7d3WMfO8egGFePV9dQAicvfxa6MQKBgQDV7z1E/4vs13PmV7bl
-djag5oU/PWGlYakJJtOwLP8mJqLkeum2vdyQaaFd5PIC0ne6FEu8SkIbWxqwmYhR
-TVOaVUTb8C17LeIb0tKfFOxI2sX1WStB6PikD5mmAJ4mNOQOWcPXdhKWld83ctr0
-xZCXUjLRSMIuth8ZjtYTGcdWxQKBgQDEGCLxUKnqn5EeSgKNsvIbN+cBtu30p+0b
-p+7NZ+Td0W7yxIvswo9BTW9QpBkdPrFLvqCdg3c0oYGDI25zYSt+SRz/acNjlpFC
-fG+PGp5EyFBXVB8TGVJ8JK7cMpmhrQYfZlbyJNpTARkg4azR8Bw03/WDKcdaRI60
-5qY6rnJm0wKBgQCFpsvBQmE5WrTGj7/shLjGNp3CD2fkeSmwVPhlFQdl3zdexEck
-amLUOZmdXj2vc6tmre1OuZmpG3aGI7TdDhEP1vuI5/iR/u1GcqQwzFJ9hWesysNS
-juhfHnvgEHy848giCwRlpBciyojETFXsG00krC6hPvJJWm/9eJXXIwC8/QKBgQCG
-dzae231o0fqlFoMhv6+dUnwqBNKvjeddq45pc/DQ2qiF+JkqxU+OrBbE6YH/N9pD
-4ngpCtlXUdiJoGZA4ET+2Av2aQP+6mS5frLRIqOc7u+IsrqMUjTpxA3UGS6YWxlz
-tq2wZe0ANiSRE696VnhBGcI1KxT0pUZmbjNW0gDI2QKBgQCztwMys0ILsuhfWrZk
-Ee6K5exfbmGTTyuZJY6bOpT/Gn/iPb1oh4cPvQAeMMo+t9WJNUumjUpWv7XPNFom
-sLk3FL95Owdyct1cu33lfcm/9/qriAzucNEZ3z4cRA3ivgn4JTxhVJh5K6XLXsl6
-yxaADll3PS6Ln8CszrSkfm54Pg==
------END PRIVATE KEY-----";
-const TEST_KEY_N: &str = "o99WigHjsH9aZCtizf5aKVvZkl5mJzT8RaRtkchLuDD1yVkrhpF34gRnVNYao64Pa2brhb0jzp8kCf7DyYT8e9QbVnvb8u4IObTyKCuv5XldFghGTrmX6TRMtYAGm0jpKzmosg3xI8NdULmnYvPnoP0pLYBiYcpNivkTNAH4CwsWVPntNdcbIZA2eybL7JEkeuTVq8Uu4QVlsX9CHDERNV66wx5vV7dsTT2WWT5BxZCE8ZVWo2Qv-v9Mj3kLY4k3nJS-gjQ25SmwJVRiCKFCEV7TfL00nuvz8WhC2gD6qxiu9wpRNd5O2TvPiJazvVsPbfQR6vafoVjceGxkNZkCXw";
-const TEST_KID: &str = "test-key-1";
+// A throwaway RSA keypair generated once for this whole test binary --
+// never written to disk, never checked into git. See
+// timeline_api::dev_only's module doc for why a checked-in key (the
+// previous design) was a bad idea even though it was never valid for
+// anything real.
+static TEST_KEYPAIR: LazyLock<(String, JwkSet)> = LazyLock::new(generate_dev_keypair);
+const TEST_KID: &str = "dev-only-key-1"; // matches generate_dev_keypair's fixed kid
 const ISSUER: &str = "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_testpool";
 const CLIENT_ID: &str = "test-client-id";
 
 fn test_state() -> AppState {
-    let jwks: JwkSet = serde_json::from_value(json!({
-        "keys": [{"kty": "RSA", "kid": TEST_KID, "use": "sig", "alg": "RS256", "n": TEST_KEY_N, "e": "AQAB"}]
-    }))
-    .unwrap();
+    let (_, jwks) = &*TEST_KEYPAIR;
     let flags_store = Arc::new(InMemoryMessageFlagsStore::new());
     AppState {
         object_store: Arc::new(InMemoryObjectStore::new()),
@@ -72,7 +45,7 @@ fn test_state() -> AppState {
         conversation_store: Arc::new(InMemoryConversationStore::new()),
         flags_reader: flags_store.clone(),
         user_flag_writer: flags_store,
-        verifier: Arc::new(CognitoVerifier::new(jwks, ISSUER, CLIENT_ID)),
+        verifier: Arc::new(CognitoVerifier::new(jwks.clone(), ISSUER, CLIENT_ID)),
     }
 }
 
@@ -86,6 +59,7 @@ struct Claims<'a> {
 }
 
 fn test_token(sub: &str) -> String {
+    let (pem, _) = &*TEST_KEYPAIR;
     let mut header = Header::new(Algorithm::RS256);
     header.kid = Some(TEST_KID.to_string());
     let claims = Claims {
@@ -95,7 +69,7 @@ fn test_token(sub: &str) -> String {
         token_use: "access",
         exp: 9_999_999_999,
     };
-    let key = EncodingKey::from_rsa_pem(TEST_KEY_PEM.as_bytes()).unwrap();
+    let key = EncodingKey::from_rsa_pem(pem.as_bytes()).unwrap();
     encode(&header, &claims, &key).unwrap()
 }
 

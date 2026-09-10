@@ -18,11 +18,11 @@
 //! `_dev/local-storage`/`_dev/login` routes are structurally absent from
 //! anything that could run in production, not just conventionally unused.
 //!
-//! The signing key in [`timeline_api::dev_only`] is a fixed, checked-in,
-//! dev-only RSA keypair -- never valid for anything real, and must never be
-//! used for an actual deployment. Its only purpose is letting `cargo run`
-//! here, `POST /_dev/login`, and the test suite exercise the whole auth
-//! path locally.
+//! The signing key in [`timeline_api::dev_only::DEV_KEYPAIR`] is generated
+//! fresh, in memory, once per process -- never written to disk, never valid
+//! for anything real, and must never be used for an actual deployment. Its
+//! only purpose is letting `cargo run` here, `POST /_dev/login`, and the
+//! test suite exercise the whole auth path locally.
 
 use std::sync::Arc;
 
@@ -30,7 +30,7 @@ use axum::Router;
 use tower_http::cors::CorsLayer;
 
 use timeline_api::app::{build_dev_router, build_router};
-use timeline_api::dev_only::{DEV_ONLY_CLIENT_ID, DEV_ONLY_ISSUER, DEV_ONLY_JWKS_JSON};
+use timeline_api::dev_only::{DEV_KEYPAIR, DEV_ONLY_CLIENT_ID, DEV_ONLY_ISSUER};
 use timeline_api::dev_state::DevState;
 use timeline_api::state::AppState;
 use timeline_auth::cognito::CognitoVerifier;
@@ -44,8 +44,10 @@ use timeline_storage::memory::uploads::InMemoryUploadStore;
 /// testing surface) -- sharing the same underlying `Arc`s is what lets an
 /// upload PUT through `_dev/local-storage` show up in `GET /conversations`.
 fn build_local_state() -> (AppState, DevState) {
-    let jwks =
-        serde_json::from_str(DEV_ONLY_JWKS_JSON).expect("dev_only_test_jwks.json is well-formed");
+    // Forces DEV_KEYPAIR's generation to happen here, up front, rather than
+    // lazily on the first login/verification -- so a slow key-generation
+    // hiccup shows up at startup, not on some later request.
+    let (_, jwks) = &*DEV_KEYPAIR;
     // Reader and writer must share the *same* underlying store -- two
     // separate `InMemoryMessageFlagsStore`s would each hold their own
     // Mutex<HashMap>, so a PATCH through one would never be visible to a
@@ -65,7 +67,7 @@ fn build_local_state() -> (AppState, DevState) {
         conversation_store: conversation_store.clone(),
         flags_reader: flags_store.clone(),
         user_flag_writer: flags_store.clone(),
-        verifier: Arc::new(CognitoVerifier::new(jwks, DEV_ONLY_ISSUER, DEV_ONLY_CLIENT_ID)),
+        verifier: Arc::new(CognitoVerifier::new(jwks.clone(), DEV_ONLY_ISSUER, DEV_ONLY_CLIENT_ID)),
     };
     let dev_state = DevState {
         object_store,

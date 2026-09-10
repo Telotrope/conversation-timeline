@@ -68,9 +68,13 @@ cargo run -p timeline-api
 The local server is genuinely runnable and was exercised by hand with real
 HTTP requests (`curl`) during development, not just compiled — see
 "What's actually been verified" below for exactly what that covered. It
-uses a fixed, checked-in, dev-only test RSA keypair for auth
-(`timeline-api/dev_only_test_jwks.json`) — never valid for anything real,
-and not a substitute for a real Cognito user pool.
+uses a throwaway RSA keypair for auth, generated fresh in memory once per
+process (`timeline_api::dev_only::DEV_KEYPAIR`) — never written to disk,
+never checked into git, never valid for anything real, and not a
+substitute for a real Cognito user pool. An earlier version of this
+checked a PEM file and JWKS into git; that was changed after review, since
+committing any private key, even a throwaway one that was never valid for
+anything real, trains a bad habit and trips automated secret-scanners.
 
 ## What's actually been verified, and what hasn't
 
@@ -172,16 +176,19 @@ is enforced at three layers, not just documented:
    and the UpdateExpression-building functions are unit-tested to prove
    each one only ever references its own half.
 
-## Repository layout note: `dev_only_test_jwks.json`
+## Dev-only signing key: generated, not checked in
 
-`timeline-api/dev_only_test_jwks.json` and the matching private key embedded
-in `main.rs`'s doc comment and the test files are a fixed, throwaway RSA
-keypair generated solely for local development and tests. It is not a
-secret in any meaningful sense (never used for anything real), but it also
-must never be mistaken for production configuration — a real deployment
-needs a real Cognito user pool's real JWKS, fetched from its
-`.well-known/jwks.json` endpoint (not built yet — see "What's not built"
-below).
+`timeline_api::dev_only::DEV_KEYPAIR` (and the equivalent private, per-file
+generators in the test suites) is a throwaway RSA keypair generated fresh,
+in memory, at process/test-binary start — never written to disk, never
+checked into git. It's not a secret in any meaningful sense (never used
+for anything real), but it also must never be mistaken for production
+configuration — a real deployment needs a real Cognito user pool's real
+JWKS, fetched from its `.well-known/jwks.json` endpoint (not built yet —
+see "What's not built" below). Generating it at runtime instead of
+checking in a PEM file (the original design) removes even the appearance
+of a leaked credential, at a small cost: 2048-bit RSA generation in pure
+Rust isn't free, adding a few seconds to the test binaries that need one.
 
 ## What's deliberately different from `timeline.html`
 

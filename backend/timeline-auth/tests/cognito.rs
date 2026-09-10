@@ -5,62 +5,57 @@
 //! user pool's actual tokens is still needed before V2 can be called done
 //! (see the migration plan's V2 test list).
 
+use std::sync::LazyLock;
+
+use base64::Engine;
 use jsonwebtoken::jwk::JwkSet;
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+use rsa::pkcs8::{EncodePrivateKey, LineEnding};
+use rsa::traits::PublicKeyParts;
+use rsa::RsaPrivateKey;
 use serde::Serialize;
 use serde_json::json;
 use timeline_auth::cognito::{AuthError, CognitoVerifier};
 
-// A throwaway RSA keypair generated solely for this test file -- never
-// used for anything real.
-const TEST_KEY_PEM: &str = "-----BEGIN PRIVATE KEY-----
-MIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQCj31aKAeOwf1pk
-K2LN/lopW9mSXmYnNPxFpG2RyEu4MPXJWSuGkXfiBGdU1hqjrg9rZuuFvSPOnyQJ
-/sPJhPx71BtWe9vy7gg5tPIoK6/leV0WCEZOuZfpNEy1gAabSOkrOaiyDfEjw11Q
-uadi8+eg/SktgGJhyk2K+RM0AfgLCxZU+e011xshkDZ7JsvskSR65NWrxS7hBWWx
-f0IcMRE1XrrDHm9Xt2xNPZZZPkHFkITxlVajZC/6/0yPeQtjiTeclL6CNDblKbAl
-VGIIoUIRXtN8vTSe6/PxaELaAPqrGK73ClE13k7ZO8+IlrO9Ww9t9BHq9p+hWNx4
-bGQ1mQJfAgMBAAECggEAAVDQtQLcpmpuRt50QuTSsnLu6llC915rRRL7mWyd8u02
-U8uQmCnn5Vf9N/OvlJRPoBfWg3NZQniJsN6WGlHrPWMY7c2sPb1Wy9WAkWDXtEqp
-6ZjWyc2ZcKK6dchH5JZMhFR19YR0j5QwxRMmvKty3rnYjLOBtf6pxUAYHbst9cyi
-5adyJ4s+t0HRED4kupDR8WpXqzz3MS7O6GD9p8AVmSC1ZZY8VOnITcY7Dpb2PR06
-RwehMXbdK9b69BVd/rf6IOGAsJefKMJMjiwb87PkhRhJqfRd7p5asrdm27nn8lhQ
-ZUVzlkqRmiJ2Ig7d3WMfO8egGFePV9dQAicvfxa6MQKBgQDV7z1E/4vs13PmV7bl
-djag5oU/PWGlYakJJtOwLP8mJqLkeum2vdyQaaFd5PIC0ne6FEu8SkIbWxqwmYhR
-TVOaVUTb8C17LeIb0tKfFOxI2sX1WStB6PikD5mmAJ4mNOQOWcPXdhKWld83ctr0
-xZCXUjLRSMIuth8ZjtYTGcdWxQKBgQDEGCLxUKnqn5EeSgKNsvIbN+cBtu30p+0b
-p+7NZ+Td0W7yxIvswo9BTW9QpBkdPrFLvqCdg3c0oYGDI25zYSt+SRz/acNjlpFC
-fG+PGp5EyFBXVB8TGVJ8JK7cMpmhrQYfZlbyJNpTARkg4azR8Bw03/WDKcdaRI60
-5qY6rnJm0wKBgQCFpsvBQmE5WrTGj7/shLjGNp3CD2fkeSmwVPhlFQdl3zdexEck
-amLUOZmdXj2vc6tmre1OuZmpG3aGI7TdDhEP1vuI5/iR/u1GcqQwzFJ9hWesysNS
-juhfHnvgEHy848giCwRlpBciyojETFXsG00krC6hPvJJWm/9eJXXIwC8/QKBgQCG
-dzae231o0fqlFoMhv6+dUnwqBNKvjeddq45pc/DQ2qiF+JkqxU+OrBbE6YH/N9pD
-4ngpCtlXUdiJoGZA4ET+2Av2aQP+6mS5frLRIqOc7u+IsrqMUjTpxA3UGS6YWxlz
-tq2wZe0ANiSRE696VnhBGcI1KxT0pUZmbjNW0gDI2QKBgQCztwMys0ILsuhfWrZk
-Ee6K5exfbmGTTyuZJY6bOpT/Gn/iPb1oh4cPvQAeMMo+t9WJNUumjUpWv7XPNFom
-sLk3FL95Owdyct1cu33lfcm/9/qriAzucNEZ3z4cRA3ivgn4JTxhVJh5K6XLXsl6
-yxaADll3PS6Ln8CszrSkfm54Pg==
------END PRIVATE KEY-----";
-
-const TEST_KEY_N: &str = "o99WigHjsH9aZCtizf5aKVvZkl5mJzT8RaRtkchLuDD1yVkrhpF34gRnVNYao64Pa2brhb0jzp8kCf7DyYT8e9QbVnvb8u4IObTyKCuv5XldFghGTrmX6TRMtYAGm0jpKzmosg3xI8NdULmnYvPnoP0pLYBiYcpNivkTNAH4CwsWVPntNdcbIZA2eybL7JEkeuTVq8Uu4QVlsX9CHDERNV66wx5vV7dsTT2WWT5BxZCE8ZVWo2Qv-v9Mj3kLY4k3nJS-gjQ25SmwJVRiCKFCEV7TfL00nuvz8WhC2gD6qxiu9wpRNd5O2TvPiJazvVsPbfQR6vafoVjceGxkNZkCXw";
-const TEST_KEY_E: &str = "AQAB";
+// A throwaway RSA keypair generated once for this whole test binary --
+// never written to disk, never checked into git. Committing any private
+// key to source control, even one that was never valid for anything real,
+// trains a bad habit and trips automated secret-scanners into flagging an
+// apparent leaked credential -- generating it at runtime removes the
+// concern entirely.
+static TEST_KEYPAIR: LazyLock<(String, JwkSet)> = LazyLock::new(generate_test_keypair);
 const TEST_KID: &str = "test-key-1";
+// A fixed RSA public exponent (65537, the universal default -- not part of
+// the generated key, and not a secret), used only by the malformed-JWK
+// test below to build a syntactically-plausible-but-corrupt JWK.
+const TEST_KEY_E: &str = "AQAB";
 
 const ISSUER: &str = "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_testpool";
 const CLIENT_ID: &str = "test-client-id";
 
-fn test_jwks() -> JwkSet {
-    serde_json::from_value(json!({
-        "keys": [{
-            "kty": "RSA",
-            "kid": TEST_KID,
-            "use": "sig",
-            "alg": "RS256",
-            "n": TEST_KEY_N,
-            "e": TEST_KEY_E,
-        }]
+fn generate_test_keypair() -> (String, JwkSet) {
+    let mut rng = rand::rngs::OsRng;
+    let private_key =
+        RsaPrivateKey::new(&mut rng, 2048).expect("RSA key generation should not fail");
+    let pem = private_key
+        .to_pkcs8_pem(LineEnding::LF)
+        .expect("PKCS#8 PEM encoding should not fail")
+        .to_string();
+
+    let public_key = private_key.to_public_key();
+    let n = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(public_key.n().to_bytes_be());
+    let e = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(public_key.e().to_bytes_be());
+
+    let jwks: JwkSet = serde_json::from_value(json!({
+        "keys": [{"kty": "RSA", "kid": TEST_KID, "use": "sig", "alg": "RS256", "n": n, "e": e}]
     }))
-    .expect("test JWK is well-formed")
+    .expect("hand-built JWKS is always well-formed");
+
+    (pem, jwks)
+}
+
+fn test_jwks() -> JwkSet {
+    TEST_KEYPAIR.1.clone()
 }
 
 fn verifier() -> CognitoVerifier {
@@ -79,7 +74,7 @@ struct TestClaims<'a> {
 fn sign(claims: &TestClaims, kid: &str) -> String {
     let mut header = Header::new(Algorithm::RS256);
     header.kid = Some(kid.to_string());
-    let key = EncodingKey::from_rsa_pem(TEST_KEY_PEM.as_bytes()).expect("test PEM is valid");
+    let key = EncodingKey::from_rsa_pem(TEST_KEYPAIR.0.as_bytes()).expect("test PEM is valid");
     encode(&header, claims, &key).expect("signing a well-formed token must succeed")
 }
 

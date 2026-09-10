@@ -1,16 +1,16 @@
-//! `POST /_dev/login` -- mints a bearer token signed with the checked-in
-//! throwaway keypair from [`crate::dev_only`], since there is no real
-//! Cognito pool to log in against locally. Takes only a display name, no
-//! password: this is not an authentication mechanism, it's a stand-in for
-//! one, and it must never be reachable in the Lambda/production build (see
-//! `main.rs`).
+//! `POST /_dev/login` -- mints a bearer token signed with the throwaway
+//! keypair generated once per process at [`crate::dev_only::DEV_KEYPAIR`],
+//! since there is no real Cognito pool to log in against locally. Takes
+//! only a display name, no password: this is not an authentication
+//! mechanism, it's a stand-in for one, and it must never be reachable in
+//! the Lambda/production build (see `main.rs`).
 
 use axum::http::StatusCode;
 use axum::Json;
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use serde::{Deserialize, Serialize};
 
-use crate::dev_only::{DEV_ONLY_CLIENT_ID, DEV_ONLY_ISSUER, DEV_ONLY_KID, DEV_ONLY_PRIVATE_KEY_PEM};
+use crate::dev_only::{DEV_KEYPAIR, DEV_ONLY_CLIENT_ID, DEV_ONLY_ISSUER, DEV_ONLY_KID};
 
 /// Far enough out that a local testing session never has to log in twice;
 /// meaningless as a real security boundary, same as the rest of this file.
@@ -41,6 +41,7 @@ pub async fn login(
     if req.sub.trim().is_empty() {
         return Err((StatusCode::BAD_REQUEST, "sub must not be empty".to_string()));
     }
+    let (pem, _jwks) = &*DEV_KEYPAIR;
     let mut header = Header::new(Algorithm::RS256);
     header.kid = Some(DEV_ONLY_KID.to_string());
     let claims = Claims {
@@ -50,8 +51,8 @@ pub async fn login(
         token_use: "access",
         exp: DEV_ONLY_TOKEN_EXPIRY,
     };
-    let key = EncodingKey::from_rsa_pem(DEV_ONLY_PRIVATE_KEY_PEM.as_bytes())
-        .expect("the checked-in dev-only private key is always well-formed");
+    let key = EncodingKey::from_rsa_pem(pem.as_bytes())
+        .expect("the generated dev-only private key is always well-formed");
     let token = encode(&header, &claims, &key).map_err(|e| {
         eprintln!("failed to sign dev-only token: {e}");
         (
