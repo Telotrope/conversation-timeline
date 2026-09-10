@@ -9,11 +9,11 @@ use timeline_core::{unwrap_uploaded_json, FormatError};
 fn bare_array_is_not_already_processed_and_gets_deduped() {
     let raw = serde_json::json!([
         {
-            "uuid": "c0",
+            "uuid": "3f846bbc-6941-49df-b8cf-9864e7d7dcea",
             "name": "conv",
             "chat_messages": [
-                {"uuid": "m0", "content": [{"type": "text", "text": "hi"}], "sender": "human", "created_at": "t0"},
-                {"uuid": "m1", "content": [{"type": "text", "text": "hi"}], "sender": "human", "created_at": "t1"},
+                {"uuid": "11111111-1111-4111-8111-111111111111", "content": [{"type": "text", "text": "hi"}], "sender": "human", "created_at": "2026-01-01T00:00:00Z"},
+                {"uuid": "22222222-2222-4222-8222-222222222222", "content": [{"type": "text", "text": "hi"}], "sender": "human", "created_at": "2026-01-01T00:01:00Z"},
             ]
         }
     ])
@@ -33,11 +33,11 @@ fn wrapped_object_is_already_processed_and_not_deduped_again() {
         "claude_timeline_format_version": "2",
         "conversations": [
             {
-                "uuid": "c0",
+                "uuid": "3f846bbc-6941-49df-b8cf-9864e7d7dcea",
                 "name": "conv",
                 "chat_messages": [
-                    {"uuid": "m0", "content": [{"type": "text", "text": "hi"}], "sender": "human", "created_at": "t0"},
-                    {"uuid": "m1", "content": [{"type": "text", "text": "hi"}], "sender": "human", "created_at": "t1"},
+                    {"uuid": "11111111-1111-4111-8111-111111111111", "content": [{"type": "text", "text": "hi"}], "sender": "human", "created_at": "2026-01-01T00:00:00Z"},
+                    {"uuid": "22222222-2222-4222-8222-222222222222", "content": [{"type": "text", "text": "hi"}], "sender": "human", "created_at": "2026-01-01T00:01:00Z"},
                 ]
             }
         ]

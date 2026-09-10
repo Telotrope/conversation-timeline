@@ -13,5 +13,8 @@ pub mod vader;
 
 pub use dedup::{dedup_chat_messages, dedup_conversations, extract_text};
 pub use format::{unwrap_uploaded_json, unwrap_uploaded_value, FormatError, UnwrapResult};
-pub use model::{ChatMessage, ContentPiece, Conversation};
-pub use sessions::{build_blocks, BuildBlocksOutput, SessionBlock};
+pub use model::{
+    ChatMessage, ContentPiece, Conversation, ConversationId, ConversationName, MessageId,
+    PieceType, Sender,
+};
+pub use sessions::{build_blocks, SessionBlock};

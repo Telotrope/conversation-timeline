@@ -9,14 +9,14 @@
 //! Faithful port of `dedupChatMessages` at
 //! [timeline.html:64906-64940](../../../timeline.html#L64906).
 
-use crate::model::ChatMessage;
+use crate::model::{ChatMessage, PieceType, Sender};
 
 /// Concatenates every `content` piece of type `"text"`, matching
 /// `extractMessageText` at [timeline.html:64891-64897](../../../timeline.html#L64891).
 pub fn extract_text(message: &ChatMessage) -> String {
     let mut text = String::new();
     for piece in &message.content {
-        if piece.piece_type == "text" {
+        if piece.piece_type == PieceType::Text {
             text.push_str(&piece.text);
         }
     }
@@ -31,7 +31,7 @@ pub fn dedup_chat_messages(chat_messages: &[ChatMessage]) -> Vec<ChatMessage> {
     let mut i = 0usize;
     while i < n {
         let m = &chat_messages[i];
-        if m.sender != "human" {
+        if m.sender != Sender::Human {
             result.push(m.clone());
             i += 1;
             continue;
@@ -40,7 +40,7 @@ pub fn dedup_chat_messages(chat_messages: &[ChatMessage]) -> Vec<ChatMessage> {
         let mut last_dup_index = i;
         let mut k = i + 1;
         while k < n {
-            if chat_messages[k].sender == "human" {
+            if chat_messages[k].sender == Sender::Human {
                 if extract_text(&chat_messages[k]) == text {
                     last_dup_index = k;
                     k += 1;

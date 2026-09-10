@@ -15,6 +15,14 @@
 //! and returns UTC session boundaries out, with **no day bucketing at all** —
 //! a session spanning local midnight is one block here, same as it would be
 //! for any other sub-15-minute gap.
+//!
+//! Every message's `created_at` is already a validated `DateTime<Utc>` by
+//! the time it reaches this function — parsing happens once, at
+//! deserialization ([`crate::model::ChatMessage`]), not here. An earlier
+//! version of this function parsed `created_at` itself (from a raw string)
+//! and skipped-and-counted whatever didn't parse; that handling moved to the
+//! parse boundary, so the "what if it's invalid" case this function used to
+//! carry doesn't exist anymore — there's no `String` left to be invalid.
 
 use chrono::{DateTime, Utc};
 
@@ -32,29 +40,16 @@ pub struct SessionBlock {
     pub count: usize,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct BuildBlocksOutput {
-    pub blocks: Vec<SessionBlock>,
-    /// Messages with a `created_at` that didn't parse as RFC 3339 — excluded
-    /// from block-building but counted rather than silently dropped, so a
-    /// caller can decide whether that's acceptable for their data.
-    pub skipped_invalid_timestamps: usize,
-}
-
 /// Builds session blocks across every conversation in `conversations`. Every
-/// message with a parseable `created_at` counts toward gap detection,
-/// regardless of sender — an assistant reply keeps a session "warm" just as
-/// much as a human message does, matching the original's `MESSAGES` list.
-pub fn build_blocks(conversations: &[Conversation]) -> BuildBlocksOutput {
-    let mut skipped = 0usize;
+/// message counts toward gap detection, regardless of sender — an assistant
+/// reply keeps a session "warm" just as much as a human message does,
+/// matching the original's `MESSAGES` list.
+pub fn build_blocks(conversations: &[Conversation]) -> Vec<SessionBlock> {
     let mut by_conv: Vec<Vec<DateTime<Utc>>> = vec![Vec::new(); conversations.len()];
 
     for (conv_idx, conv) in conversations.iter().enumerate() {
         for m in &conv.chat_messages {
-            match DateTime::parse_from_rfc3339(&m.created_at) {
-                Ok(ts) => by_conv[conv_idx].push(ts.with_timezone(&Utc)),
-                Err(_) => skipped += 1,
-            }
+            by_conv[conv_idx].push(m.created_at);
         }
     }
 
@@ -88,8 +83,5 @@ pub fn build_blocks(conversations: &[Conversation]) -> BuildBlocksOutput {
         }
     }
 
-    BuildBlocksOutput {
-        blocks,
-        skipped_invalid_timestamps: skipped,
-    }
+    blocks
 }

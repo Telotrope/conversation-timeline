@@ -3,30 +3,52 @@
 //! for why this crate's tests live in `tests/` rather than as unit tests
 //! colocated with the implementation.
 
+use std::hash::{Hash, Hasher};
+
+use chrono::{DateTime, Utc};
 use timeline_core::{
-    dedup_chat_messages, dedup_conversations, extract_text, ChatMessage, ContentPiece, Conversation,
+    dedup_chat_messages, dedup_conversations, extract_text, ChatMessage, ContentPiece,
+    Conversation, ConversationId, ConversationName, MessageId, PieceType, Sender,
 };
 
-fn msg(sender: &str, text: &str, ts: &str) -> ChatMessage {
+/// Deterministic, collision-free-enough-for-tests UUID from any seed string
+/// — the exact value never matters here, only that distinct seeds produce
+/// distinct, validly-formed ids.
+fn uuid_from(seed: &str) -> uuid::Uuid {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    seed.hash(&mut hasher);
+    uuid::Uuid::from_u128(hasher.finish() as u128)
+}
+
+/// Turns a short tag like `"t1"` or `"ts003"` into a real, order-preserving
+/// timestamp — the tests only care about relative ordering between tags,
+/// never the actual instant.
+fn ts(tag: &str) -> DateTime<Utc> {
+    let digits: String = tag.chars().filter(char::is_ascii_digit).collect();
+    let offset_secs: i64 = digits.parse().unwrap_or(0);
+    DateTime::from_timestamp(1_700_000_000 + offset_secs, 0).expect("valid timestamp")
+}
+
+fn msg(sender: &str, text: &str, tag: &str) -> ChatMessage {
     ChatMessage {
-        uuid: format!("{sender}-{ts}"),
+        uuid: MessageId(uuid_from(&format!("{sender}-{tag}"))),
         text: text.to_string(),
         content: vec![ContentPiece {
-            piece_type: "text".to_string(),
+            piece_type: PieceType::Text,
             text: text.to_string(),
             extra: Default::default(),
         }],
-        sender: sender.to_string(),
-        created_at: ts.to_string(),
+        sender: Sender::from(sender.to_string()),
+        created_at: ts(tag),
         extra: Default::default(),
     }
 }
 
-fn human(text: &str, ts: &str) -> ChatMessage {
-    msg("human", text, ts)
+fn human(text: &str, tag: &str) -> ChatMessage {
+    msg("human", text, tag)
 }
-fn assistant(text: &str, ts: &str) -> ChatMessage {
-    msg("assistant", text, ts)
+fn assistant(text: &str, tag: &str) -> ChatMessage {
+    msg("assistant", text, tag)
 }
 
 fn texts(msgs: &[ChatMessage]) -> Vec<String> {
@@ -39,27 +61,27 @@ fn texts(msgs: &[ChatMessage]) -> Vec<String> {
 #[test]
 fn extract_text_ignores_non_text_pieces() {
     let m = ChatMessage {
-        uuid: "u".into(),
+        uuid: MessageId(uuid_from("u")),
         text: "ignored top-level field".into(),
         content: vec![
             ContentPiece {
-                piece_type: "tool_use".into(),
+                piece_type: PieceType::Other("tool_use".into()),
                 text: "should not appear".into(),
                 extra: Default::default(),
             },
             ContentPiece {
-                piece_type: "text".into(),
+                piece_type: PieceType::Text,
                 text: "hello ".into(),
                 extra: Default::default(),
             },
             ContentPiece {
-                piece_type: "text".into(),
+                piece_type: PieceType::Text,
                 text: "world".into(),
                 extra: Default::default(),
             },
         ],
-        sender: "human".into(),
-        created_at: "t".into(),
+        sender: Sender::Human,
+        created_at: ts("t0"),
         extra: Default::default(),
     };
     assert_eq!(extract_text(&m), "hello world");
@@ -72,7 +94,8 @@ fn simple_chain_keeps_last() {
     let out = dedup_chat_messages(&msgs);
     assert_eq!(texts(&out), vec!["hi", "hey"]);
     assert_eq!(
-        out[0].created_at, "t1",
+        out[0].created_at,
+        ts("t1"),
         "kept human message must be the later resend"
     );
 }
@@ -90,7 +113,7 @@ fn stray_reply_to_early_attempt_is_dropped() {
     ];
     let out = dedup_chat_messages(&msgs);
     assert_eq!(texts(&out), vec!["please help", "real reply"]);
-    assert_eq!(out[0].created_at, "t2");
+    assert_eq!(out[0].created_at, ts("t2"));
 }
 
 /// Case 3 — no duplicates: a plain alternating conversation is untouched.
@@ -120,7 +143,7 @@ fn mid_conversation_duplicates_are_collapsed() {
     ];
     let out = dedup_chat_messages(&msgs);
     assert_eq!(texts(&out), vec!["q1", "a1", "q2", "a2", "q3", "a3"]);
-    assert_eq!(out[2].created_at, "t3");
+    assert_eq!(out[2].created_at, ts("t3"));
 }
 
 /// Case 5 — a 5-way chain with a stray reply sandwiched partway through:
@@ -140,7 +163,8 @@ fn five_way_chain_with_stray_reply_keeps_only_the_last() {
     let out = dedup_chat_messages(&msgs);
     assert_eq!(texts(&out), vec!["retry me", "finally, a real reply"]);
     assert_eq!(
-        out[0].created_at, "t5",
+        out[0].created_at,
+        ts("t5"),
         "only the last of the 5 resends survives"
     );
 }
@@ -173,21 +197,21 @@ fn different_human_message_breaks_the_run() {
     let msgs = vec![human("a", "t0"), human("a", "t1"), human("different", "t2")];
     let out = dedup_chat_messages(&msgs);
     assert_eq!(texts(&out), vec!["a", "different"]);
-    assert_eq!(out[0].created_at, "t1");
+    assert_eq!(out[0].created_at, ts("t1"));
 }
 
 #[test]
 fn dedup_conversations_runs_on_every_conversation() {
     let mut convs = vec![
         Conversation {
-            uuid: "c0".into(),
-            name: "conv 0".into(),
+            uuid: ConversationId(uuid_from("c0")),
+            name: ConversationName("conv 0".into()),
             chat_messages: vec![human("a", "t0"), human("a", "t1")],
             extra: Default::default(),
         },
         Conversation {
-            uuid: "c1".into(),
-            name: "conv 1".into(),
+            uuid: ConversationId(uuid_from("c1")),
+            name: ConversationName("conv 1".into()),
             chat_messages: vec![human("b", "t0"), assistant("reply", "t1")],
             extra: Default::default(),
         },
@@ -230,7 +254,7 @@ mod proptests {
         #[test]
         fn no_adjacent_identical_human_messages_survive(msgs in arb_message_seq()) {
             let out = dedup_chat_messages(&msgs);
-            let human_texts: Vec<String> = out.iter().filter(|m| m.sender == "human").map(extract_text).collect();
+            let human_texts: Vec<String> = out.iter().filter(|m| m.sender == Sender::Human).map(extract_text).collect();
             for pair in human_texts.windows(2) {
                 prop_assert_ne!(&pair[0], &pair[1]);
             }

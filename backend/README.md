@@ -31,7 +31,7 @@ sudo apt install build-essential
 ```
 cd backend
 cargo build --workspace       # compiles the crate
-cargo test --workspace        # runs all 120 tests (unit, property, snapshot, regression)
+cargo test --workspace        # runs all 114 tests (unit, property, snapshot, regression)
 cargo clippy --workspace --all-targets   # lints; should be silent
 cargo fmt --all                # reformat, if you've edited anything
 ```
@@ -77,6 +77,48 @@ cargo llvm-cov --workspace --summary-only
 Current result: **100.00% line, function, and region coverage across every
 file** — no exceptions, and none of it reached via privileged access to a
 private function.
+
+## Structured fields are typed, not bare strings
+
+Per CLAUDE.md's "Type your data — avoid primitive obsession": `src/model.rs`
+types anything with real structure or identity, not just anything textual.
+
+- `ChatMessage.sender` is a `Sender` enum (`Human` / `Assistant` / `Other(String)`
+  catchall), not a string compared with `== "human"`.
+- `ContentPiece.piece_type` is a `PieceType` enum (`Text` / `Other(String)`
+  catchall — only `Text` is ever handled differently today; see the type's
+  doc comment for why it isn't fully enumerated).
+- `ChatMessage.uuid`/`Conversation.uuid` are `MessageId`/`ConversationId` —
+  distinct newtypes around `uuid::Uuid` (parsed and validated at
+  deserialization), so a message's id and a conversation's id can't be
+  swapped at a call site that takes both, and a malformed UUID is rejected
+  where it enters the crate rather than passed through as an opaque string.
+- `Conversation.name` is a `ConversationName` newtype — nothing to validate
+  (it's freeform prose), but it *identifies* a conversation rather than
+  being content that gets read, so it's still a distinct type from any other
+  string-shaped field, per the same "newtype pattern" reasoning as the ids.
+- `ChatMessage.created_at` is `DateTime<Utc>`, not a string parsed lazily by
+  whichever function happens to need it first. This is the concrete
+  "parse, don't validate" change: an earlier version stored `created_at` as
+  a raw `String` and validated it only inside `sessions::build_blocks`,
+  skipping-and-counting whatever didn't parse. Now a message with an
+  unparseable timestamp fails deserialization outright, at the one place raw
+  JSON enters the crate (surfaced as `FormatError::InvalidConversation`) —
+  `build_blocks` no longer has an "invalid timestamp" case to handle at all,
+  because by the time it runs, that case can't exist.
+  **This is a real behavior change, made deliberately**: if a real export
+  ever has a message with a malformed timestamp, the *entire upload* now
+  fails, where it previously would have silently dropped just that one
+  message and kept going. If that turns out to be too strict in practice —
+  if malformed timestamps are common in real files — the fix belongs at this
+  same parse-time boundary (e.g. substituting a fallback value), not as a
+  second, looser check further downstream. Nothing like that is built yet;
+  there's no evidence yet that it's needed.
+- `ChatMessage.text`/`ContentPiece.text` stay plain `String` — genuine
+  content that gets read/scored, not a label. Same for the VADER lexicon's
+  individual words: a `String`/`&str` is the right type for "arbitrary text
+  I'm about to process," never for a value that identifies, categorizes, or
+  has its own structure.
 
 ## What's deliberately different from `timeline.html`
 
