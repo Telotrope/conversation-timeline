@@ -747,6 +747,10 @@
         <label for="loadConvFile">Conversations export <span class="req">(required)</span></label>
         <input type="file" id="loadConvFile" accept="application/json">
       </div>
+      <div class="load-field">
+        <label for="devLoginSub">Dev login name <span class="req">(required — no real login yet, see the migration plan's V2a)</span></label>
+        <input type="text" id="devLoginSub" placeholder="e.g. alice" value="alice">
+      </div>
       <div class="load-field load-checkbox-field">
         <label style="display:flex; align-items:flex-start; gap:9px; cursor:pointer;">
           <input type="checkbox" id="autoDetectCheckbox" checked style="margin-top:3px;">
@@ -65043,6 +65047,31 @@ function setLoadStatus(msg, isError){
   el.style.color = isError ? '#B0392F' : 'var(--ink-faint)';
 }
 
+// Not a relative path: timeline.html isn't served by timeline-api and is
+// opened separately, so relative fetch()es would resolve against the
+// wrong origin. See the migration plan's V2a.
+const API_BASE = 'http://127.0.0.1:3000';
+let AUTH_TOKEN = null;
+
+// Dev-only: mints a bearer token from timeline-api's checked-in throwaway
+// keypair, since there's no real Cognito pool to log in against locally.
+// Never a real authentication mechanism -- see timeline-api's dev_only
+// module and the migration plan's V2a.
+async function ensureAuthToken(){
+  if(AUTH_TOKEN) return AUTH_TOKEN;
+  const sub = document.getElementById('devLoginSub').value.trim();
+  if(!sub) throw new Error('enter a dev login name first');
+  const res = await fetch(`${API_BASE}/_dev/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sub }),
+  });
+  if(!res.ok) throw new Error(`dev login failed (${res.status})`);
+  const body = await res.json();
+  AUTH_TOKEN = body.token;
+  return AUTH_TOKEN;
+}
+
 async function handleLoadClick(){
   const convInput = document.getElementById('loadConvFile');
   const convFile = convInput.files[0];
@@ -65054,9 +65083,37 @@ async function handleLoadClick(){
     return;
   }
 
-  setLoadStatus(runAutoDetect ? 'Reading your conversation export and scanning for flags…' : 'Reading your conversation export…');
   try{
-    const text = await convFile.text();
+    setLoadStatus('Logging in…');
+    const token = await ensureAuthToken();
+
+    setLoadStatus('Uploading your conversation export…');
+    const rawText = await convFile.text();
+    const createRes = await fetch(`${API_BASE}/uploads`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    if(!createRes.ok) throw new Error(`could not start the upload (${createRes.status})`);
+    const { upload_url } = await createRes.json();
+
+    const putRes = await fetch(`${API_BASE}${upload_url}`, { method: 'PUT', body: rawText });
+    if(!putRes.ok) throw new Error(`upload failed (${putRes.status})`);
+
+    // No polling here -- the local-dev PUT handler runs processing
+    // synchronously before responding, so it's already finished by the
+    // time putRes resolves. Real S3-triggered processing is asynchronous;
+    // that gap isn't solved here, see the migration plan's V2a.
+    setLoadStatus(runAutoDetect ? 'Processing your export and scanning for flags…' : 'Processing your export…');
+    const exportRes = await fetch(`${API_BASE}/export`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    if(!exportRes.ok) throw new Error(`could not read back the processed export (${exportRes.status})`);
+    const { export_url } = await exportRes.json();
+
+    const downloadRes = await fetch(`${API_BASE}${export_url}`);
+    if(!downloadRes.ok) throw new Error(`could not download the processed export (${downloadRes.status})`);
+    const text = await downloadRes.text();
+
     const parsed = parseUploadedConversations(text, runAutoDetect, refreshAutoDetect);
     if(parsed.conversations.length === 0){
       setLoadStatus('That file parsed, but contained no conversations — is it the right export?', true);
@@ -65070,42 +65127,17 @@ async function handleLoadClick(){
     BLOCKS = buildBlocks();
     RAW_DATA = parsed.rawData;
 
-    // Your confirmed flags can come from two places (later wins): flags
-    // embedded inline in the file itself (from a previous "Download
-    // annotated conversations.json"), or window.storage if this page is
-    // running as a Claude artifact. Automatic tags are computed fresh or
-    // read from the file per the checkboxes above — see parseUploadedConversations.
+    // Your confirmed flags come from whatever the server's export embedded
+    // (overrides you PATCHed to the backend in an earlier session against
+    // the same in-memory server -- see patchFlagsToBackend). There's no
+    // other recovery mechanism now that this page talks to a real backend
+    // instead of window.storage; see the migration plan's V2a.
     OVERRIDES = { ...parsed.embeddedOverrides };
     const embeddedCount = Object.keys(parsed.embeddedOverrides).length;
 
-    // Recover any LLM classification progress that was auto-saved during a
-    // previous run but never made it into an exported file (e.g. the run
-    // was interrupted before you clicked "Download annotated conversations.json").
-    // Only fills in messages that don't already have LLM-sourced results
-    // from the file itself — never overwrites the file's own data.
-    const recoveredAuto = await loadAutoClassificationsFromStorage();
-    let recoveredCount = 0;
-    Object.keys(recoveredAuto).forEach(id => {
-      const msg = HUMAN_BY_ID.get(id);
-      if(msg && msg.auto_source !== 'llm'){
-        const r = recoveredAuto[id];
-        msg.default_caps = !!r.caps;
-        msg.default_critical = !!r.critical;
-        msg.default_angry = !!r.angry;
-        msg.auto_source = 'llm';
-        recoveredCount++;
-      }
-    });
-
     attachFlags();
-    if(embeddedCount === 0){
-      await loadOverrides();
-      attachFlags();
-    } else {
-      setSaveStatus(`Loaded ${embeddedCount} of your confirmed flag${embeddedCount===1?'':'s'} embedded in this file.`);
-    }
-    if(recoveredCount > 0){
-      setSaveStatus(`Recovered ${recoveredCount} AI classification${recoveredCount===1?'':'s'} from a previous run that wasn't exported yet.` + (embeddedCount ? ` (Plus ${embeddedCount} confirmed flags from the file.)` : ''));
+    if(embeddedCount > 0){
+      setSaveStatus(`Loaded ${embeddedCount} of your confirmed flag${embeddedCount===1?'':'s'} from the server.`);
     }
 
     document.getElementById('loadScreen').style.display = 'none';
@@ -65121,7 +65153,7 @@ async function handleLoadClick(){
     }
   } catch(err){
     console.error(err);
-    setLoadStatus('Could not read that file — is it a conversations.json export from Claude? (' + err.message + ')', true);
+    setLoadStatus('Could not load that file through the backend — ' + err.message, true);
   }
 }
 
@@ -65296,21 +65328,26 @@ function attachFlags(){
 attachFlags();
 
 // --- Persistence ---
-// If this page is running inside a Claude artifact, window.storage lets
-// overrides persist automatically between visits. If it's opened as a
-// plain downloaded file (e.g. double-clicked later), that API won't exist,
-// so we fall back to manual export/import of a small JSON file alongside
-// this HTML file.
-const STORAGE_KEY = 'conversation-timeline-flag-overrides';
+// Your confirmed flags are saved to the real backend now (see
+// patchFlagsToBackend, called from setRowOverrides below) -- window.storage
+// is no longer used for that. It's still used for one distinct, narrower
+// purpose: checkpointing an in-progress AI classification run (see
+// saveAutoClassificationsToStorage below), which only ever runs while this
+// page is hosted as a Claude artifact in the first place -- see the
+// migration plan's V2a for why the two were separated.
 const AUTO_CACHE_KEY = 'conversation-timeline-llm-classification-cache';
 const hasStorage = typeof window.storage !== 'undefined';
 
 // Classifying with AI costs real tokens, so a classified message's result
-// gets persisted incrementally as the run progresses — not only when the
-// person remembers to click "Download annotated conversations.json." If
-// the tab crashes, the artifact resets, or anything else interrupts the
-// run, whatever finished before that point is still recoverable on the
-// next load rather than silently gone.
+// gets persisted incrementally as the run progresses. Note this checkpoint
+// is no longer recovered automatically on the next load -- the load-time
+// recovery step was retired along with the rest of window.storage-based
+// flag persistence (see the migration plan's V2a); within a single running
+// session this still works exactly as before (classified messages update
+// HUMAN_MESSAGES directly), it just isn't durable across a reload/crash
+// anymore. classifyWithAI is a client-side, artifact-only feature slated
+// for full replacement by V3's Bedrock-based batch/checkpoint design
+// anyway, so this durability gap isn't being separately fixed here.
 async function saveAutoClassificationsToStorage(){
   if(!hasStorage) return;
   try{
@@ -65327,45 +65364,34 @@ async function saveAutoClassificationsToStorage(){
   }
 }
 
-async function loadAutoClassificationsFromStorage(){
-  if(!hasStorage) return {};
-  try{
-    const res = await window.storage.get(AUTO_CACHE_KEY, false);
-    if(res && res.value) return JSON.parse(res.value);
-  } catch(e){
-    // no cache saved yet — fine, nothing to recover
+// Persists your confirmed flags to the real backend -- replaces the old
+// window.storage-based saveOverrides(). setRowOverrides (below) already
+// updates OVERRIDES and re-renders optimistically before calling this; a
+// failed PATCH is surfaced via setSaveStatus, not silently swallowed, but
+// doesn't roll back the optimistic local update. See the migration plan's
+// V2a: this only persists for as long as the in-memory local-dev backend
+// stays running -- there is no database behind it yet.
+async function patchFlagsToBackend(msg, values){
+  if(!AUTH_TOKEN){
+    setSaveStatus('Not saved to the server — log in first.');
+    return;
   }
-  return {};
-}
-
-async function loadOverrides(){
-  if(!hasStorage){
-    setSaveStatus('Storage isn\'t available in this browser context — use "Download annotated conversations.json" to carry your edits between sessions.');
+  const conv = RAW_DATA && RAW_DATA[msg.conv];
+  const rawMsg = conv && conv.chat_messages && conv.chat_messages[msg.rawIndex];
+  if(!conv || !rawMsg){
+    setSaveStatus("Could not save — couldn't find this message's server-side id.");
     return;
   }
   try{
-    const res = await window.storage.get(STORAGE_KEY, false);
-    if(res && res.value){
-      OVERRIDES = JSON.parse(res.value);
-      setSaveStatus('Loaded your saved flag overrides.');
-    } else {
-      setSaveStatus('No saved overrides yet — changes you make will auto-save here.');
-    }
-  } catch(e){
-    setSaveStatus('No saved overrides yet — changes you make will auto-save here.');
-  }
-}
-
-async function saveOverrides(){
-  if(!hasStorage){
-    setSaveStatus('Storage isn\'t available here — remember to click "Download annotated conversations.json" to keep your edits.');
-    return;
-  }
-  try{
-    await window.storage.set(STORAGE_KEY, JSON.stringify(OVERRIDES), false);
+    const res = await fetch(`${API_BASE}/conversations/${conv.uuid}/messages/${rawMsg.uuid}/flags`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AUTH_TOKEN}` },
+      body: JSON.stringify(values),
+    });
+    if(!res.ok) throw new Error(`server returned ${res.status}`);
     setSaveStatus('Saved.');
   } catch(e){
-    setSaveStatus('Could not auto-save — use "Download annotated conversations.json" instead.');
+    setSaveStatus('Could not save to the server: ' + e.message);
   }
 }
 
@@ -65389,7 +65415,7 @@ function setRowOverrides(id, changedType, changedValue){
   };
   OVERRIDES[id] = values;
   attachFlags();
-  saveOverrides();
+  patchFlagsToBackend(msg, values);
   renderCalendar();
   renderConvList(document.getElementById('convSearch').value);
   if(currentConv !== null) selectConversation(currentConv);
