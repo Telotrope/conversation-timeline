@@ -11,11 +11,11 @@ use std::sync::Arc;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use timeline_core::ports::conversations::ConversationStore;
+use timeline_core::ports::conversations::ConversationSummaryStore;
 use timeline_core::ports::ids::{UploadId, UserId};
 use timeline_core::ports::message_flags::AutoFlagWriter;
 use timeline_core::ports::object_store::ObjectStore;
-use timeline_core::ports::uploads::UploadStore;
+use timeline_core::ports::uploads::UploadOutcomeStore;
 
 use crate::error::ApiError;
 use crate::processing::process_upload;
@@ -40,8 +40,8 @@ fn parse_raw_upload_key(key: &str) -> Option<(UserId, UploadId)> {
 pub async fn put_object(
     Path(key): Path<String>,
     State(object_store): State<Arc<dyn ObjectStore>>,
-    State(upload_store): State<Arc<dyn UploadStore>>,
-    State(conversation_store): State<Arc<dyn ConversationStore>>,
+    State(upload_outcome_store): State<Arc<dyn UploadOutcomeStore>>,
+    State(conversation_summary_store): State<Arc<dyn ConversationSummaryStore>>,
     State(auto_flag_writer): State<Arc<dyn AutoFlagWriter>>,
     body: Bytes,
 ) -> Result<StatusCode, ApiError> {
@@ -56,8 +56,8 @@ pub async fn put_object(
         // file upload succeeding.
         if let Err(e) = process_upload(
             object_store.as_ref(),
-            upload_store.as_ref(),
-            conversation_store.as_ref(),
+            upload_outcome_store.as_ref(),
+            conversation_summary_store.as_ref(),
             auto_flag_writer.as_ref(),
             &user_id,
             upload_id,

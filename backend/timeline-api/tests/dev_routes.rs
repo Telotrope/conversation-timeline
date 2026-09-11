@@ -18,13 +18,12 @@ use timeline_api::dev_only::{DEV_KEYPAIR, DEV_ONLY_CLIENT_ID, DEV_ONLY_ISSUER};
 use timeline_api::dev_state::DevState;
 use timeline_api::state::AppState;
 use timeline_auth::cognito::CognitoVerifier;
-use timeline_core::ports::conversations::ConversationStore;
+use timeline_core::ports::conversations::ConversationSummaryStore;
 use timeline_core::ports::object_store::ObjectStore;
-use timeline_core::ports::uploads::UploadStore;
-use timeline_storage::memory::conversations::InMemoryConversationStore;
+use timeline_storage::memory::conversations::InMemoryConversationSummaryStore;
 use timeline_storage::memory::message_flags::InMemoryMessageFlagsStore;
 use timeline_storage::memory::object_store::InMemoryObjectStore;
-use timeline_storage::memory::uploads::InMemoryUploadStore;
+use timeline_storage::memory::uploads::InMemoryUploadOutcomeStore;
 use tower::ServiceExt;
 
 /// Mirrors `main.rs::build_local_state` exactly: the same process-wide
@@ -36,13 +35,12 @@ fn test_router() -> Router {
     let (_, jwks) = &*DEV_KEYPAIR;
     let flags_store = Arc::new(InMemoryMessageFlagsStore::new());
     let object_store: Arc<dyn ObjectStore> = Arc::new(InMemoryObjectStore::new());
-    let upload_store: Arc<dyn UploadStore> = Arc::new(InMemoryUploadStore::new());
-    let conversation_store: Arc<dyn ConversationStore> = Arc::new(InMemoryConversationStore::new());
+    let conversation_summary_store: Arc<dyn ConversationSummaryStore> =
+        Arc::new(InMemoryConversationSummaryStore::new());
 
     let app_state = AppState {
         object_store: object_store.clone(),
-        upload_store: upload_store.clone(),
-        conversation_store: conversation_store.clone(),
+        conversation_summary_store: conversation_summary_store.clone(),
         flags_reader: flags_store.clone(),
         user_flag_writer: flags_store.clone(),
         verifier: Arc::new(CognitoVerifier::new(
@@ -53,8 +51,8 @@ fn test_router() -> Router {
     };
     let dev_state = DevState {
         object_store,
-        upload_store,
-        conversation_store,
+        upload_outcome_store: Arc::new(InMemoryUploadOutcomeStore::new()),
+        conversation_summary_store,
         auto_flag_writer: flags_store,
     };
     build_router(app_state).merge(build_dev_router(dev_state))

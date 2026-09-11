@@ -1,11 +1,13 @@
 //! Real DynamoDB `Conversations` table adapter, implementing both
-//! `UploadStore` and `ConversationStore` against one table -- the plan's
-//! section 1.3 lists this table as holding "conversation/upload metadata";
-//! section 1.6 separately describes writing an "Uploads metadata row." This
-//! adapter reconciles the two by keeping both shapes in the same table,
-//! distinguished by sort-key prefix: `UPLOAD#<upload_id>` for an upload's
-//! own status row, `CONV#<conversation_id>` for each conversation summary
-//! it eventually produces.
+//! `UploadOutcomeStore` and `ConversationSummaryStore` against one table --
+//! the plan's section 1.3 lists this table as holding "conversation/upload
+//! metadata"; section 1.6 separately describes writing an "Uploads metadata
+//! row." This adapter reconciles the two by keeping both shapes in the same
+//! table, distinguished by sort-key prefix: `UPLOAD#<upload_id>` for an
+//! upload's own terminal-outcome row (written once, by
+//! `record_outcome` -- see the migration plan's §V2a-revision for why there
+//! is no earlier, pending row), `CONV#<conversation_id>` for each
+//! conversation summary it eventually produces.
 
 use std::collections::HashMap;
 
@@ -13,10 +15,10 @@ use async_trait::async_trait;
 use aws_sdk_dynamodb::types::AttributeValue;
 use aws_sdk_dynamodb::Client;
 use timeline_core::model::{ConversationId, ConversationName};
-use timeline_core::ports::conversations::{ConversationStore, ConversationSummary};
+use timeline_core::ports::conversations::{ConversationSummary, ConversationSummaryStore};
 use timeline_core::ports::errors::StoreError;
 use timeline_core::ports::ids::{UploadId, UserId};
-use timeline_core::ports::uploads::{UploadRecord, UploadStatus, UploadStore};
+use timeline_core::ports::uploads::{UploadOutcome, UploadOutcomeStore};
 
 pub struct DynamoConversationsTable {
     client: Client,
@@ -53,22 +55,12 @@ fn conversation_sort_key(conversation_id: ConversationId) -> String {
 
 const CONVERSATION_SORT_PREFIX: &str = "CONV#";
 
-fn upload_record_from_item(
-    upload_id: UploadId,
-    item: &HashMap<String, AttributeValue>,
-) -> Result<UploadRecord, StoreError> {
-    let raw_object_key = item
-        .get("raw_object_key")
-        .and_then(|v| v.as_s().ok())
-        .ok_or_else(|| invalid_data("upload item is missing raw_object_key"))?
-        .clone();
+fn upload_outcome_from_item(item: &HashMap<String, AttributeValue>) -> Result<UploadOutcome, StoreError> {
     let status_name = item
         .get("status")
         .and_then(|v| v.as_s().ok())
         .ok_or_else(|| invalid_data("upload item is missing status"))?;
-    let status = match status_name.as_str() {
-        "pending" => UploadStatus::Pending,
-        "processing" => UploadStatus::Processing,
+    match status_name.as_str() {
         "ready" => {
             let ids = item
                 .get("conversation_ids")
@@ -81,9 +73,9 @@ fn upload_record_from_item(
                         .collect()
                 })
                 .unwrap_or_default();
-            UploadStatus::Ready {
+            Ok(UploadOutcome::Ready {
                 conversation_ids: ids,
-            }
+            })
         }
         "failed" => {
             let reason = item
@@ -91,50 +83,53 @@ fn upload_record_from_item(
                 .and_then(|v| v.as_s().ok())
                 .cloned()
                 .unwrap_or_default();
-            UploadStatus::Failed { reason }
+            Ok(UploadOutcome::Failed { reason })
         }
-        other => {
-            return Err(invalid_data(format!(
-                "upload item has unrecognized status {other:?}"
-            )))
-        }
-    };
-    Ok(UploadRecord {
-        upload_id,
-        status,
-        raw_object_key,
-    })
+        other => Err(invalid_data(format!(
+            "upload item has unrecognized status {other:?}"
+        ))),
+    }
 }
 
 #[async_trait]
-impl UploadStore for DynamoConversationsTable {
-    async fn create_pending(
+impl UploadOutcomeStore for DynamoConversationsTable {
+    async fn record_outcome(
         &self,
         user_id: &UserId,
         upload_id: UploadId,
-        raw_object_key: &str,
+        outcome: UploadOutcome,
     ) -> Result<(), StoreError> {
-        self.client
+        let mut request = self
+            .client
             .put_item()
             .table_name(&self.table_name)
             .item("pk", AttributeValue::S(user_id.to_string()))
-            .item("sk", AttributeValue::S(upload_sort_key(upload_id)))
-            .item("status", AttributeValue::S("pending".to_string()))
-            .item(
-                "raw_object_key",
-                AttributeValue::S(raw_object_key.to_string()),
-            )
-            .send()
-            .await
-            .map_err(backend_error)?;
+            .item("sk", AttributeValue::S(upload_sort_key(upload_id)));
+        request = match outcome {
+            UploadOutcome::Ready { conversation_ids } => {
+                let ids_attr = AttributeValue::L(
+                    conversation_ids
+                        .iter()
+                        .map(|id| AttributeValue::S(id.to_string()))
+                        .collect(),
+                );
+                request
+                    .item("status", AttributeValue::S("ready".to_string()))
+                    .item("conversation_ids", ids_attr)
+            }
+            UploadOutcome::Failed { reason } => request
+                .item("status", AttributeValue::S("failed".to_string()))
+                .item("failure_reason", AttributeValue::S(reason)),
+        };
+        request.send().await.map_err(backend_error)?;
         Ok(())
     }
 
-    async fn get(
+    async fn get_outcome(
         &self,
         user_id: &UserId,
         upload_id: UploadId,
-    ) -> Result<Option<UploadRecord>, StoreError> {
+    ) -> Result<Option<UploadOutcome>, StoreError> {
         let output = self
             .client
             .get_item()
@@ -146,75 +141,8 @@ impl UploadStore for DynamoConversationsTable {
             .map_err(backend_error)?;
         output
             .item
-            .map(|item| upload_record_from_item(upload_id, &item))
+            .map(|item| upload_outcome_from_item(&item))
             .transpose()
-    }
-
-    async fn mark_processing(
-        &self,
-        user_id: &UserId,
-        upload_id: UploadId,
-    ) -> Result<(), StoreError> {
-        self.client
-            .update_item()
-            .table_name(&self.table_name)
-            .key("pk", AttributeValue::S(user_id.to_string()))
-            .key("sk", AttributeValue::S(upload_sort_key(upload_id)))
-            .update_expression("SET #status = :status")
-            .expression_attribute_names("#status", "status")
-            .expression_attribute_values(":status", AttributeValue::S("processing".to_string()))
-            .send()
-            .await
-            .map_err(backend_error)?;
-        Ok(())
-    }
-
-    async fn mark_ready(
-        &self,
-        user_id: &UserId,
-        upload_id: UploadId,
-        conversation_ids: Vec<ConversationId>,
-    ) -> Result<(), StoreError> {
-        let ids_attr = AttributeValue::L(
-            conversation_ids
-                .iter()
-                .map(|id| AttributeValue::S(id.to_string()))
-                .collect(),
-        );
-        self.client
-            .update_item()
-            .table_name(&self.table_name)
-            .key("pk", AttributeValue::S(user_id.to_string()))
-            .key("sk", AttributeValue::S(upload_sort_key(upload_id)))
-            .update_expression("SET #status = :status, conversation_ids = :ids")
-            .expression_attribute_names("#status", "status")
-            .expression_attribute_values(":status", AttributeValue::S("ready".to_string()))
-            .expression_attribute_values(":ids", ids_attr)
-            .send()
-            .await
-            .map_err(backend_error)?;
-        Ok(())
-    }
-
-    async fn mark_failed(
-        &self,
-        user_id: &UserId,
-        upload_id: UploadId,
-        reason: String,
-    ) -> Result<(), StoreError> {
-        self.client
-            .update_item()
-            .table_name(&self.table_name)
-            .key("pk", AttributeValue::S(user_id.to_string()))
-            .key("sk", AttributeValue::S(upload_sort_key(upload_id)))
-            .update_expression("SET #status = :status, failure_reason = :reason")
-            .expression_attribute_names("#status", "status")
-            .expression_attribute_values(":status", AttributeValue::S("failed".to_string()))
-            .expression_attribute_values(":reason", AttributeValue::S(reason))
-            .send()
-            .await
-            .map_err(backend_error)?;
-        Ok(())
     }
 }
 
@@ -250,7 +178,7 @@ fn conversation_summary_from_item(
 }
 
 #[async_trait]
-impl ConversationStore for DynamoConversationsTable {
+impl ConversationSummaryStore for DynamoConversationsTable {
     async fn list_for_user(
         &self,
         user_id: &UserId,
@@ -313,7 +241,7 @@ impl ConversationStore for DynamoConversationsTable {
             .transpose()
     }
 
-    async fn create(
+    async fn put(
         &self,
         user_id: &UserId,
         summary: ConversationSummary,

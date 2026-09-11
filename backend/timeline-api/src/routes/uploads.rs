@@ -1,8 +1,12 @@
-//! `POST /uploads` -- issues a presigned S3 PUT URL and records the upload
-//! as pending, per the migration plan section 1.6. The client then `PUT`s
-//! its `conversations.json` straight to S3, never through this Lambda --
-//! that's what keeps a 60MB export well clear of API Gateway's 10MB
-//! synchronous payload limit.
+//! `POST /uploads` -- issues a presigned S3 PUT URL, per the migration plan
+//! section 1.6. The client then `PUT`s its `conversations.json` straight to
+//! S3, never through this Lambda -- that's what keeps a 60MB export well
+//! clear of API Gateway's 10MB synchronous payload limit. Nothing is
+//! written to any storage port here: per the migration plan's
+//! §V2a-revision, the raw object's key is a pure function of
+//! `(user_id, upload_id)` (see
+//! [`timeline_core::ports::uploads::raw_object_key`]), so there is nothing
+//! to persist before the client's PUT lands.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,7 +16,7 @@ use axum::Json;
 use serde::Serialize;
 use timeline_core::ports::ids::UploadId;
 use timeline_core::ports::object_store::ObjectStore;
-use timeline_core::ports::uploads::UploadStore;
+use timeline_core::ports::uploads::raw_object_key;
 
 use crate::auth_extractor::AuthenticatedUser;
 use crate::error::ApiError;
@@ -32,17 +36,11 @@ pub struct CreateUploadResponse {
 pub async fn create_upload(
     AuthenticatedUser(user_id): AuthenticatedUser,
     State(object_store): State<Arc<dyn ObjectStore>>,
-    State(upload_store): State<Arc<dyn UploadStore>>,
 ) -> Result<Json<CreateUploadResponse>, ApiError> {
     let upload_id = UploadId(uuid::Uuid::new_v4());
-    let raw_object_key = format!("raw/{user_id}/{upload_id}.json");
+    let key = raw_object_key(&user_id, upload_id);
 
-    let upload_url = object_store
-        .presign_put(&raw_object_key, UPLOAD_URL_TTL)
-        .await?;
-    upload_store
-        .create_pending(&user_id, upload_id, &raw_object_key)
-        .await?;
+    let upload_url = object_store.presign_put(&key, UPLOAD_URL_TTL).await?;
 
     Ok(Json(CreateUploadResponse {
         upload_id,

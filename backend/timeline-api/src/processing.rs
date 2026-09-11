@@ -14,23 +14,28 @@
 //! at [timeline.html:64963-65020](../../../timeline.html#L64963) (only
 //! pushed to `humanMessages` when `m.sender === 'human'`) — Claude's own
 //! replies were never a target for these heuristics.
+//!
+//! Per the migration plan's §V2a-revision, there is no pre-existing upload
+//! record to look up: the raw object's key is recomputed from
+//! `(user_id, upload_id)` via [`timeline_core::ports::uploads::raw_object_key`],
+//! and a missing object surfaces as `ProcessingError::ObjectStore`'s
+//! `NotFound` case rather than a separate "upload not found" concept.
 
 use std::fmt;
 
 use timeline_core::flags::anger::detect_angry;
 use timeline_core::flags::caps::has_emphasis_caps;
 use timeline_core::flags::criticism::detect_critical;
-use timeline_core::ports::conversations::{ConversationStore, ConversationSummary};
+use timeline_core::ports::conversations::{ConversationSummary, ConversationSummaryStore};
 use timeline_core::ports::errors::{ObjectStoreError, StoreError};
 use timeline_core::ports::ids::{UploadId, UserId};
 use timeline_core::ports::message_flags::{AutoFlagWriter, FlagSet};
 use timeline_core::ports::object_store::ObjectStore;
-use timeline_core::ports::uploads::UploadStore;
+use timeline_core::ports::uploads::{raw_object_key, UploadOutcome, UploadOutcomeStore};
 use timeline_core::{extract_text, unwrap_uploaded_json, FormatError, Sender};
 
 #[derive(Debug)]
 pub enum ProcessingError {
-    UploadNotFound,
     RawObjectNotUtf8(std::string::FromUtf8Error),
     Format(FormatError),
     Store(StoreError),
@@ -40,7 +45,6 @@ pub enum ProcessingError {
 impl fmt::Display for ProcessingError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ProcessingError::UploadNotFound => write!(f, "upload not found"),
             ProcessingError::RawObjectNotUtf8(e) => {
                 write!(f, "uploaded file was not valid UTF-8: {e}")
             }
@@ -54,7 +58,6 @@ impl fmt::Display for ProcessingError {
 impl std::error::Error for ProcessingError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            ProcessingError::UploadNotFound => None,
             ProcessingError::RawObjectNotUtf8(e) => Some(e),
             ProcessingError::Format(e) => Some(e),
             ProcessingError::Store(e) => Some(e),
@@ -84,32 +87,26 @@ fn heuristic_flags(text: &str) -> FlagSet {
 }
 
 /// Reads the raw upload, parses and dedups it, writes one summary per
-/// conversation and one auto-flag set per human message, then marks the
-/// upload `Ready`. On a parse failure the upload is marked `Failed` with
+/// conversation and one auto-flag set per human message, then records a
+/// `Ready` outcome. On a parse failure a `Failed` outcome is recorded with
 /// the reason before the error is returned to the caller — callers should
-/// never need to separately call `mark_failed` themselves.
+/// never need to separately record failure themselves.
 pub async fn process_upload(
     object_store: &dyn ObjectStore,
-    upload_store: &dyn UploadStore,
-    conversation_store: &dyn ConversationStore,
+    upload_outcome_store: &dyn UploadOutcomeStore,
+    conversation_summary_store: &dyn ConversationSummaryStore,
     auto_flag_writer: &dyn AutoFlagWriter,
     user_id: &UserId,
     upload_id: UploadId,
 ) -> Result<(), ProcessingError> {
-    let record = upload_store
-        .get(user_id, upload_id)
-        .await?
-        .ok_or(ProcessingError::UploadNotFound)?;
-
-    upload_store.mark_processing(user_id, upload_id).await?;
-
-    let raw_bytes = object_store.get(&record.raw_object_key).await?;
+    let key = raw_object_key(user_id, upload_id);
+    let raw_bytes = object_store.get(&key).await?;
     let raw_text = match String::from_utf8(raw_bytes) {
         Ok(t) => t,
         Err(e) => {
             let reason = format!("uploaded file was not valid UTF-8: {e}");
-            upload_store
-                .mark_failed(user_id, upload_id, reason)
+            upload_outcome_store
+                .record_outcome(user_id, upload_id, UploadOutcome::Failed { reason })
                 .await?;
             return Err(ProcessingError::RawObjectNotUtf8(e));
         }
@@ -119,8 +116,8 @@ pub async fn process_upload(
         Ok(p) => p,
         Err(e) => {
             let reason = e.to_string();
-            upload_store
-                .mark_failed(user_id, upload_id, reason)
+            upload_outcome_store
+                .record_outcome(user_id, upload_id, UploadOutcome::Failed { reason })
                 .await?;
             return Err(ProcessingError::Format(e));
         }
@@ -134,7 +131,7 @@ pub async fn process_upload(
             name: conversation.name.clone(),
             message_count: conversation.chat_messages.len(),
         };
-        conversation_store.create(user_id, summary).await?;
+        conversation_summary_store.put(user_id, summary).await?;
         conversation_ids.push(conversation.uuid);
 
         for message in &conversation.chat_messages {
@@ -148,8 +145,12 @@ pub async fn process_upload(
         }
     }
 
-    upload_store
-        .mark_ready(user_id, upload_id, conversation_ids)
+    upload_outcome_store
+        .record_outcome(
+            user_id,
+            upload_id,
+            UploadOutcome::Ready { conversation_ids },
+        )
         .await?;
     Ok(())
 }

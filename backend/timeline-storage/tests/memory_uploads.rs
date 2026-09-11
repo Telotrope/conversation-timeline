@@ -1,10 +1,9 @@
-//! Black-box tests for `InMemoryUploadStore`.
+//! Black-box tests for `InMemoryUploadOutcomeStore`.
 
 use timeline_core::model::ConversationId;
-use timeline_core::ports::errors::StoreError;
 use timeline_core::ports::ids::{UploadId, UserId};
-use timeline_core::ports::uploads::{UploadStatus, UploadStore};
-use timeline_storage::memory::uploads::InMemoryUploadStore;
+use timeline_core::ports::uploads::{UploadOutcome, UploadOutcomeStore};
+use timeline_storage::memory::uploads::InMemoryUploadOutcomeStore;
 
 fn user(id: &str) -> UserId {
     UserId(id.to_string())
@@ -15,95 +14,115 @@ fn upload(n: u128) -> UploadId {
 }
 
 #[tokio::test]
-async fn create_pending_then_get_round_trips() {
-    let store = InMemoryUploadStore::new();
-    let u = user("alice");
-    let id = upload(1);
-    store
-        .create_pending(&u, id, "raw/alice/1.json")
-        .await
-        .unwrap();
-
-    let record = store.get(&u, id).await.unwrap().expect("record must exist");
-    assert_eq!(record.status, UploadStatus::Pending);
-    assert_eq!(record.raw_object_key, "raw/alice/1.json");
-}
-
-#[tokio::test]
-async fn get_before_creation_is_none_not_an_error() {
-    let store = InMemoryUploadStore::new();
-    assert_eq!(store.get(&user("alice"), upload(1)).await.unwrap(), None);
-}
-
-#[tokio::test]
-async fn lifecycle_pending_to_processing_to_ready() {
-    let store = InMemoryUploadStore::new();
-    let u = user("alice");
-    let id = upload(1);
-    store
-        .create_pending(&u, id, "raw/alice/1.json")
-        .await
-        .unwrap();
-
-    store.mark_processing(&u, id).await.unwrap();
+async fn get_outcome_before_any_record_is_none_not_an_error() {
+    let store = InMemoryUploadOutcomeStore::new();
     assert_eq!(
-        store.get(&u, id).await.unwrap().unwrap().status,
-        UploadStatus::Processing
+        store.get_outcome(&user("alice"), upload(1)).await.unwrap(),
+        None
     );
+}
 
+#[tokio::test]
+async fn record_outcome_then_get_outcome_round_trips_ready() {
+    let store = InMemoryUploadOutcomeStore::new();
+    let u = user("alice");
+    let id = upload(1);
     let conv_ids = vec![ConversationId(uuid::Uuid::from_u128(100))];
-    store.mark_ready(&u, id, conv_ids.clone()).await.unwrap();
+    store
+        .record_outcome(
+            &u,
+            id,
+            UploadOutcome::Ready {
+                conversation_ids: conv_ids.clone(),
+            },
+        )
+        .await
+        .unwrap();
+
     assert_eq!(
-        store.get(&u, id).await.unwrap().unwrap().status,
-        UploadStatus::Ready {
+        store.get_outcome(&u, id).await.unwrap(),
+        Some(UploadOutcome::Ready {
             conversation_ids: conv_ids
-        }
+        })
     );
 }
 
 #[tokio::test]
-async fn lifecycle_can_end_in_failure() {
-    let store = InMemoryUploadStore::new();
+async fn record_outcome_then_get_outcome_round_trips_failed() {
+    let store = InMemoryUploadOutcomeStore::new();
     let u = user("alice");
     let id = upload(1);
     store
-        .create_pending(&u, id, "raw/alice/1.json")
+        .record_outcome(
+            &u,
+            id,
+            UploadOutcome::Failed {
+                reason: "dedup blew up".to_string(),
+            },
+        )
         .await
         .unwrap();
 
-    store
-        .mark_failed(&u, id, "dedup blew up".to_string())
-        .await
-        .unwrap();
     assert_eq!(
-        store.get(&u, id).await.unwrap().unwrap().status,
-        UploadStatus::Failed {
+        store.get_outcome(&u, id).await.unwrap(),
+        Some(UploadOutcome::Failed {
             reason: "dedup blew up".to_string()
-        }
+        })
     );
 }
 
 #[tokio::test]
-async fn transitioning_an_upload_that_was_never_created_is_not_found() {
-    let store = InMemoryUploadStore::new();
-    let err = store
-        .mark_processing(&user("alice"), upload(1))
+async fn recording_a_second_outcome_overwrites_the_first() {
+    let store = InMemoryUploadOutcomeStore::new();
+    let u = user("alice");
+    let id = upload(1);
+    store
+        .record_outcome(
+            &u,
+            id,
+            UploadOutcome::Failed {
+                reason: "first attempt failed".to_string(),
+            },
+        )
         .await
-        .unwrap_err();
-    assert!(matches!(err, StoreError::NotFound));
+        .unwrap();
+    let conv_ids = vec![ConversationId(uuid::Uuid::from_u128(100))];
+    store
+        .record_outcome(
+            &u,
+            id,
+            UploadOutcome::Ready {
+                conversation_ids: conv_ids.clone(),
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        store.get_outcome(&u, id).await.unwrap(),
+        Some(UploadOutcome::Ready {
+            conversation_ids: conv_ids
+        })
+    );
 }
 
 #[tokio::test]
-async fn uploads_are_isolated_per_user() {
-    let store = InMemoryUploadStore::new();
+async fn outcomes_are_isolated_per_user() {
+    let store = InMemoryUploadOutcomeStore::new();
     let id = upload(1);
     store
-        .create_pending(&user("alice"), id, "raw/alice/1.json")
+        .record_outcome(
+            &user("alice"),
+            id,
+            UploadOutcome::Ready {
+                conversation_ids: vec![],
+            },
+        )
         .await
         .unwrap();
     assert_eq!(
-        store.get(&user("bob"), id).await.unwrap(),
+        store.get_outcome(&user("bob"), id).await.unwrap(),
         None,
-        "bob must not see alice's upload, even with the same id"
+        "bob must not see alice's upload outcome, even with the same id"
     );
 }

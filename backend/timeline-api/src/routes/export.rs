@@ -16,10 +16,10 @@ use axum::Json;
 use serde::Serialize;
 use serde_json::json;
 use timeline_core::model::{Conversation, ConversationId};
-use timeline_core::ports::conversations::ConversationStore;
+use timeline_core::ports::conversations::ConversationSummaryStore;
 use timeline_core::ports::message_flags::MessageFlagsReader;
 use timeline_core::ports::object_store::ObjectStore;
-use timeline_core::ports::uploads::UploadStore;
+use timeline_core::ports::uploads::raw_object_key;
 use timeline_core::{unwrap_uploaded_json, Sender};
 
 use crate::auth_extractor::AuthenticatedUser;
@@ -45,25 +45,24 @@ fn integrity_error(context: &str, e: impl std::fmt::Display) -> ApiError {
 pub async fn export(
     AuthenticatedUser(user_id): AuthenticatedUser,
     State(object_store): State<Arc<dyn ObjectStore>>,
-    State(upload_store): State<Arc<dyn UploadStore>>,
-    State(conversation_store): State<Arc<dyn ConversationStore>>,
+    State(conversation_summary_store): State<Arc<dyn ConversationSummaryStore>>,
     State(flags_reader): State<Arc<dyn MessageFlagsReader>>,
 ) -> Result<Json<ExportResponse>, ApiError> {
-    let summaries = conversation_store.list_for_user(&user_id).await?;
+    let summaries = conversation_summary_store.list_for_user(&user_id).await?;
 
     let mut upload_ids: Vec<_> = summaries.iter().map(|s| s.upload_id).collect();
     upload_ids.sort_by_key(|id| id.0);
     upload_ids.dedup();
 
     // Re-parse each distinct upload's raw bytes once, even if it produced
-    // several conversations, rather than refetching per conversation.
+    // several conversations, rather than refetching per conversation. The
+    // raw object's key is recomputed rather than read back from storage --
+    // see `raw_object_key`'s doc comment and the migration plan's
+    // §V2a-revision.
     let mut conversations_by_id: HashMap<ConversationId, Conversation> = HashMap::new();
     for upload_id in upload_ids {
-        let record = upload_store
-            .get(&user_id, upload_id)
-            .await?
-            .ok_or(ApiError::NotFound)?;
-        let raw_bytes = object_store.get(&record.raw_object_key).await?;
+        let key = raw_object_key(&user_id, upload_id);
+        let raw_bytes = object_store.get(&key).await?;
         let raw_text = String::from_utf8(raw_bytes)
             .map_err(|e| integrity_error("stored upload was not valid UTF-8", e))?;
         let parsed = unwrap_uploaded_json(&raw_text)

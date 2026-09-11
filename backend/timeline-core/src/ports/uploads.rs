@@ -1,8 +1,13 @@
-//! Tracks one upload's lifecycle (pending -> processing -> ready/failed).
-//! Backed by the `Conversations` DynamoDB table from the migration plan
-//! §1.3/§1.6 — an upload's own status row and the per-conversation summary
-//! rows it eventually produces share that table, distinguished by sort key
-//! in the concrete adapter, not by a separate table this crate doesn't list.
+//! Tracks the terminal outcome of one upload's processing. Per the
+//! migration plan's §V2a-revision, nothing is written before processing
+//! finishes -- there is no persisted `Pending`/`Processing` state, because
+//! nothing currently reads one (`POST /uploads` never touches this store at
+//! all): a client that needs a "still processing…" indicator can poll
+//! `get_outcome` and treat `None` as "not done yet." Backed by the
+//! `Conversations` DynamoDB table from the migration plan §1.3 -- an
+//! upload's own outcome row and the per-conversation summary rows it
+//! eventually produces share that table, distinguished by sort key in the
+//! concrete adapter, not by a separate table this crate doesn't list.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -11,11 +16,21 @@ use super::errors::StoreError;
 use super::ids::{UploadId, UserId};
 use crate::model::ConversationId;
 
+/// The raw upload's object-store key is a pure function of `(user_id,
+/// upload_id)` -- `raw/{user_id}/{upload_id}.json` -- so it is never
+/// stored, only recomputed. This is the one place that format string is
+/// defined; every caller that needs the key (issuing the presigned PUT URL
+/// in `timeline-api::routes::uploads`, the processing pipeline reading the
+/// bytes back in `timeline-api::processing`) must call this function
+/// rather than repeating the format string, so the two call sites can't
+/// drift out of sync with each other.
+pub fn raw_object_key(user_id: &UserId, upload_id: UploadId) -> String {
+    format!("raw/{user_id}/{upload_id}.json")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
-pub enum UploadStatus {
-    Pending,
-    Processing,
+pub enum UploadOutcome {
     Ready {
         conversation_ids: Vec<ConversationId>,
     },
@@ -24,49 +39,23 @@ pub enum UploadStatus {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UploadRecord {
-    pub upload_id: UploadId,
-    pub status: UploadStatus,
-    /// The S3 key the raw upload was (or will be) written to.
-    pub raw_object_key: String,
-}
-
 #[async_trait]
-pub trait UploadStore: Send + Sync {
-    /// Creates the initial `Pending` record, before the client has even
-    /// uploaded the object — called from the `POST /uploads` handler at the
-    /// same time it issues the presigned PUT URL.
-    async fn create_pending(
+pub trait UploadOutcomeStore: Send + Sync {
+    /// Written once, when processing finishes -- there is no earlier,
+    /// pending write to overwrite, so every adapter implements this as a
+    /// plain upsert.
+    async fn record_outcome(
         &self,
         user_id: &UserId,
         upload_id: UploadId,
-        raw_object_key: &str,
+        outcome: UploadOutcome,
     ) -> Result<(), StoreError>;
 
-    async fn get(
+    /// `None` means "not finished yet" -- the only status a polling client
+    /// needs, without a separate persisted `Pending`/`Processing` value.
+    async fn get_outcome(
         &self,
         user_id: &UserId,
         upload_id: UploadId,
-    ) -> Result<Option<UploadRecord>, StoreError>;
-
-    async fn mark_processing(
-        &self,
-        user_id: &UserId,
-        upload_id: UploadId,
-    ) -> Result<(), StoreError>;
-
-    async fn mark_ready(
-        &self,
-        user_id: &UserId,
-        upload_id: UploadId,
-        conversation_ids: Vec<ConversationId>,
-    ) -> Result<(), StoreError>;
-
-    async fn mark_failed(
-        &self,
-        user_id: &UserId,
-        upload_id: UploadId,
-        reason: String,
-    ) -> Result<(), StoreError>;
+    ) -> Result<Option<UploadOutcome>, StoreError>;
 }

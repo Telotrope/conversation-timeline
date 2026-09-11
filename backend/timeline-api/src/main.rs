@@ -14,9 +14,10 @@
 //!
 //! **The Lambda build never gets the `_dev` router.** Only `run_locally`
 //! ever calls `build_dev_router` -- the `lambda_http::run` branch is handed
-//! `build_router(app_state)` alone, so `AutoFlagWriter` and the
-//! `_dev/local-storage`/`_dev/login` routes are structurally absent from
-//! anything that could run in production, not just conventionally unused.
+//! `build_router(app_state)` alone, so `AutoFlagWriter`, `UploadOutcomeStore`,
+//! and the `_dev/local-storage`/`_dev/login` routes are structurally absent
+//! from anything that could run in production, not just conventionally
+//! unused.
 //!
 //! The signing key in [`timeline_api::dev_only::DEV_KEYPAIR`] is generated
 //! fresh, in memory, once per process -- never written to disk, never valid
@@ -34,15 +35,17 @@ use timeline_api::dev_only::{DEV_KEYPAIR, DEV_ONLY_CLIENT_ID, DEV_ONLY_ISSUER};
 use timeline_api::dev_state::DevState;
 use timeline_api::state::AppState;
 use timeline_auth::cognito::CognitoVerifier;
-use timeline_storage::memory::conversations::InMemoryConversationStore;
+use timeline_storage::memory::conversations::InMemoryConversationSummaryStore;
 use timeline_storage::memory::message_flags::InMemoryMessageFlagsStore;
 use timeline_storage::memory::object_store::InMemoryObjectStore;
-use timeline_storage::memory::uploads::InMemoryUploadStore;
+use timeline_storage::memory::uploads::InMemoryUploadOutcomeStore;
 
 /// Builds the in-memory stores once and exposes them as both `AppState`
 /// (the real, Cognito-gated API) and `DevState` (the `_dev`-only local
 /// testing surface) -- sharing the same underlying `Arc`s is what lets an
 /// upload PUT through `_dev/local-storage` show up in `GET /conversations`.
+/// `UploadOutcomeStore` is built for `DevState` only -- no route reachable
+/// from `AppState` needs it (see `state::AppState`'s module doc).
 fn build_local_state() -> (AppState, DevState) {
     // Forces DEV_KEYPAIR's generation to happen here, up front, rather than
     // lazily on the first login/verification -- so a slow key-generation
@@ -56,23 +59,21 @@ fn build_local_state() -> (AppState, DevState) {
     let flags_store = Arc::new(InMemoryMessageFlagsStore::new());
     let object_store: Arc<dyn timeline_core::ports::object_store::ObjectStore> =
         Arc::new(InMemoryObjectStore::new());
-    let upload_store: Arc<dyn timeline_core::ports::uploads::UploadStore> =
-        Arc::new(InMemoryUploadStore::new());
-    let conversation_store: Arc<dyn timeline_core::ports::conversations::ConversationStore> =
-        Arc::new(InMemoryConversationStore::new());
+    let conversation_summary_store: Arc<
+        dyn timeline_core::ports::conversations::ConversationSummaryStore,
+    > = Arc::new(InMemoryConversationSummaryStore::new());
 
     let app_state = AppState {
         object_store: object_store.clone(),
-        upload_store: upload_store.clone(),
-        conversation_store: conversation_store.clone(),
+        conversation_summary_store: conversation_summary_store.clone(),
         flags_reader: flags_store.clone(),
         user_flag_writer: flags_store.clone(),
         verifier: Arc::new(CognitoVerifier::new(jwks.clone(), DEV_ONLY_ISSUER, DEV_ONLY_CLIENT_ID)),
     };
     let dev_state = DevState {
         object_store,
-        upload_store,
-        conversation_store,
+        upload_outcome_store: Arc::new(InMemoryUploadOutcomeStore::new()),
+        conversation_summary_store,
         auto_flag_writer: flags_store,
     };
     (app_state, dev_state)

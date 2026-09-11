@@ -6,23 +6,26 @@
 //! level: nothing named `Arc<dyn AutoFlagWriter>` is ever in scope inside a
 //! user-facing route handler's function body, because it's never a
 //! parameter of any handler reachable from this app. The upload-processing
-//! Lambda (which *does* need `AutoFlagWriter`) is a separate binary with
-//! its own, smaller state -- see `src/bin/process_upload.rs`.
+//! Lambda (which *does* need `AutoFlagWriter`, and `UploadOutcomeStore` --
+//! see the migration plan's §V2a-revision) is a separate binary with its
+//! own, smaller state -- see `src/bin/process_upload.rs`. No user-facing
+//! route needs `UploadOutcomeStore` either: `POST /uploads` never touches
+//! it (there is no pending state to write), and `GET /export` recomputes
+//! the raw object's key instead of reading it back, so it's absent from
+//! this state entirely, not just unused.
 
 use std::sync::Arc;
 
 use axum::extract::FromRef;
 use timeline_auth::cognito::CognitoVerifier;
-use timeline_core::ports::conversations::ConversationStore;
+use timeline_core::ports::conversations::ConversationSummaryStore;
 use timeline_core::ports::message_flags::{MessageFlagsReader, UserFlagWriter};
 use timeline_core::ports::object_store::ObjectStore;
-use timeline_core::ports::uploads::UploadStore;
 
 #[derive(Clone)]
 pub struct AppState {
     pub object_store: Arc<dyn ObjectStore>,
-    pub upload_store: Arc<dyn UploadStore>,
-    pub conversation_store: Arc<dyn ConversationStore>,
+    pub conversation_summary_store: Arc<dyn ConversationSummaryStore>,
     pub flags_reader: Arc<dyn MessageFlagsReader>,
     pub user_flag_writer: Arc<dyn UserFlagWriter>,
     pub verifier: Arc<CognitoVerifier>,
@@ -34,15 +37,9 @@ impl FromRef<AppState> for Arc<dyn ObjectStore> {
     }
 }
 
-impl FromRef<AppState> for Arc<dyn UploadStore> {
+impl FromRef<AppState> for Arc<dyn ConversationSummaryStore> {
     fn from_ref(state: &AppState) -> Self {
-        state.upload_store.clone()
-    }
-}
-
-impl FromRef<AppState> for Arc<dyn ConversationStore> {
-    fn from_ref(state: &AppState) -> Self {
-        state.conversation_store.clone()
+        state.conversation_summary_store.clone()
     }
 }
 

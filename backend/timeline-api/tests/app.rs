@@ -20,10 +20,9 @@ use timeline_api::app::build_router;
 use timeline_api::dev_only::generate_dev_keypair;
 use timeline_api::state::AppState;
 use timeline_auth::cognito::CognitoVerifier;
-use timeline_storage::memory::conversations::InMemoryConversationStore;
+use timeline_storage::memory::conversations::InMemoryConversationSummaryStore;
 use timeline_storage::memory::message_flags::InMemoryMessageFlagsStore;
 use timeline_storage::memory::object_store::InMemoryObjectStore;
-use timeline_storage::memory::uploads::InMemoryUploadStore;
 use tower::ServiceExt;
 
 // A throwaway RSA keypair generated once for this whole test binary --
@@ -41,8 +40,7 @@ fn test_state() -> AppState {
     let flags_store = Arc::new(InMemoryMessageFlagsStore::new());
     AppState {
         object_store: Arc::new(InMemoryObjectStore::new()),
-        upload_store: Arc::new(InMemoryUploadStore::new()),
-        conversation_store: Arc::new(InMemoryConversationStore::new()),
+        conversation_summary_store: Arc::new(InMemoryConversationSummaryStore::new()),
         flags_reader: flags_store.clone(),
         user_flag_writer: flags_store,
         verifier: Arc::new(CognitoVerifier::new(jwks.clone(), ISSUER, CLIENT_ID)),
@@ -214,8 +212,8 @@ async fn conversations_are_isolated_per_authenticated_user() {
 }
 
 /// A test double that always fails -- proves the error-handling branch in
-/// `routes::uploads::create_upload` (an ObjectStore/UploadStore backend
-/// error becoming a 500 response) without needing a real backend that can
+/// `routes::uploads::create_upload` (an `ObjectStore` backend error
+/// becoming a 500 response) without needing a real backend that can
 /// actually fail.
 struct FaultyObjectStore;
 
