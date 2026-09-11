@@ -27,8 +27,8 @@ Measured directly (`cargo llvm-cov -p timeline-storage --summary-only`), not est
 | File | Line coverage | What's actually tested |
 |---|---|---|
 | [`memory/object_store.rs`](src/memory/object_store.rs) | 100% | Full black-box tests via the real `ObjectStore` trait. |
-| [`memory/uploads.rs`](src/memory/uploads.rs) | 100% | Full black-box tests via the real `UploadStore` trait. |
-| [`memory/conversations.rs`](src/memory/conversations.rs) | 100% | Full black-box tests via the real `ConversationStore` trait. |
+| [`memory/uploads.rs`](src/memory/uploads.rs) | 100% | Full black-box tests via the real `UploadOutcomeStore` trait. |
+| [`memory/conversations.rs`](src/memory/conversations.rs) | 100% | Full black-box tests via the real `ConversationSummaryStore` trait. |
 | [`memory/message_flags.rs`](src/memory/message_flags.rs) | 100% | Full black-box tests via all three flag traits, including that auto/user writes never cross-contaminate. |
 | [`dynamo/message_flags_table.rs`](src/dynamo/message_flags_table.rs) | 63.79% | Only the pure `UpdateExpression`-building logic (`auto_update_expression`/`user_update_expression`), via temporary private-function tests per this repo's CLAUDE.md exception. Every real `send()` call to DynamoDB is untested. |
 | [`dynamo/conversations_table.rs`](src/dynamo/conversations_table.rs) | **0%** | No tests of any kind — not even private-function ones. |
@@ -42,17 +42,18 @@ checked; other options (e.g. `s3rver`, MIT-licensed) are unverified candidates.
 
 ## Design: what each adapter is adapting, and how
 
-- **`InMemoryObjectStore`/`InMemoryUploadStore`/`InMemoryConversationStore`/`InMemoryMessageFlagsStore`**
+- **`InMemoryObjectStore`/`InMemoryUploadOutcomeStore`/`InMemoryConversationSummaryStore`/`InMemoryMessageFlagsStore`**
   — each wraps a `Mutex<HashMap<...>>`. `InMemoryObjectStore`'s presigned URLs are real, relative
   HTTP paths (`/_dev/local-storage/put|get/{key}`) that `timeline-api`'s `_dev`-only routes serve —
   not an inert placeholder string — so a real browser can actually `PUT`/`GET` against them in local
   dev (see the migration plan's §V2a).
 - **`S3ObjectStore`** implements `ObjectStore` against a real `aws_sdk_s3::Client`, using
   `PresigningConfig::expires_in` for `presign_put`/`presign_get`.
-- **`DynamoConversationsTable`** implements *both* `UploadStore` and `ConversationStore` against one
-  DynamoDB table (`Conversations`) — a standard single-table-design pattern, distinguishing an
-  upload's own status row from the conversation summaries it eventually produces by sort-key prefix
-  (`UPLOAD#<id>` vs. `CONV#<id>`).
+- **`DynamoConversationsTable`** implements *both* `UploadOutcomeStore` and `ConversationSummaryStore`
+  against one DynamoDB table (`Conversations`) — a standard single-table-design pattern,
+  distinguishing an upload's own terminal-outcome row (written once, by `record_outcome` — see the
+  migration plan's §V2a-revision) from the conversation summaries it eventually produces by
+  sort-key prefix (`UPLOAD#<id>` vs. `CONV#<id>`).
 - **`DynamoMessageFlagsStore`** implements the three flag traits against a separate `MessageFlags`
   table, with disjoint `auto_*`/`user_*` DynamoDB attribute names — the storage-level enforcement of
   the auto/user separation, verified by `auto_update_expression`/`user_update_expression`'s tests
@@ -65,10 +66,10 @@ classDiagram
     class ObjectStore {
         <<trait, timeline-core>>
     }
-    class UploadStore {
+    class UploadOutcomeStore {
         <<trait, timeline-core>>
     }
-    class ConversationStore {
+    class ConversationSummaryStore {
         <<trait, timeline-core>>
     }
     class MessageFlagsReader {
@@ -84,10 +85,10 @@ classDiagram
     class InMemoryObjectStore {
         -Mutex~HashMap~ objects
     }
-    class InMemoryUploadStore {
-        -Mutex~HashMap~ records
+    class InMemoryUploadOutcomeStore {
+        -Mutex~HashMap~ outcomes
     }
-    class InMemoryConversationStore {
+    class InMemoryConversationSummaryStore {
         -Mutex~HashMap~ summaries
         +insert(user_id, summary)  "test-only sync helper"
     }
@@ -109,10 +110,10 @@ classDiagram
 
     ObjectStore <|.. InMemoryObjectStore
     ObjectStore <|.. S3ObjectStore
-    UploadStore <|.. InMemoryUploadStore
-    UploadStore <|.. DynamoConversationsTable
-    ConversationStore <|.. InMemoryConversationStore
-    ConversationStore <|.. DynamoConversationsTable
+    UploadOutcomeStore <|.. InMemoryUploadOutcomeStore
+    UploadOutcomeStore <|.. DynamoConversationsTable
+    ConversationSummaryStore <|.. InMemoryConversationSummaryStore
+    ConversationSummaryStore <|.. DynamoConversationsTable
     MessageFlagsReader <|.. InMemoryMessageFlagsStore
     AutoFlagWriter <|.. InMemoryMessageFlagsStore
     UserFlagWriter <|.. InMemoryMessageFlagsStore

@@ -72,16 +72,15 @@ changed.
 classDiagram
     class AppState {
         +Arc~dyn ObjectStore~ object_store
-        +Arc~dyn UploadStore~ upload_store
-        +Arc~dyn ConversationStore~ conversation_store
+        +Arc~dyn ConversationSummaryStore~ conversation_summary_store
         +Arc~dyn MessageFlagsReader~ flags_reader
         +Arc~dyn UserFlagWriter~ user_flag_writer
         +Arc~CognitoVerifier~ verifier
     }
     class DevState {
         +Arc~dyn ObjectStore~ object_store
-        +Arc~dyn UploadStore~ upload_store
-        +Arc~dyn ConversationStore~ conversation_store
+        +Arc~dyn UploadOutcomeStore~ upload_outcome_store
+        +Arc~dyn ConversationSummaryStore~ conversation_summary_store
         +Arc~dyn AutoFlagWriter~ auto_flag_writer
     }
     class AuthenticatedUser {
@@ -96,7 +95,6 @@ classDiagram
     }
     class ProcessingError {
         <<enum>>
-        UploadNotFound
         RawObjectNotUtf8
         Format(FormatError)
         Store(StoreError)
@@ -104,7 +102,7 @@ classDiagram
     }
     class process_upload {
         <<function>>
-        +process_upload(object_store, upload_store, conversation_store, auto_flag_writer, user_id, upload_id) Result~(), ProcessingError~
+        +process_upload(object_store, upload_outcome_store, conversation_summary_store, auto_flag_writer, user_id, upload_id) Result~(), ProcessingError~
     }
     class create_upload {
         <<handler, AppState>>

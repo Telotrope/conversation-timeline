@@ -40,8 +40,8 @@ crate or its tests — a Postgres-backed adapter could replace DynamoDB with zer
 | Port | Purpose |
 |---|---|
 | [`ObjectStore`](src/ports/object_store.rs) | Presigned-URL blob storage (S3-shaped): `presign_put`/`presign_get`/`get`/`put`. |
-| [`UploadStore`](src/ports/uploads.rs) | One upload's lifecycle: `create_pending` → `mark_processing` → `mark_ready`/`mark_failed`. |
-| [`ConversationStore`](src/ports/conversations.rs) | Conversation summaries: `list_for_user`/`get` (read), `create` (write — used only by the upload-processing pipeline). |
+| [`UploadOutcomeStore`](src/ports/uploads.rs) | One upload's terminal outcome, written once when processing finishes: `record_outcome`/`get_outcome`. No pending/processing state — nothing reads it (see the migration plan's §V2a-revision). The raw object's key is a pure function of `(user_id, upload_id)` (`raw_object_key`), never stored. |
+| [`ConversationSummaryStore`](src/ports/conversations.rs) | Conversation summaries: `list_for_user`/`get` (read), `put` (write — used only by the upload-processing pipeline). |
 | [`MessageFlagsReader`](src/ports/message_flags.rs) | Read access to a message's auto + user flags. |
 | [`AutoFlagWriter`](src/ports/message_flags.rs) | Write access to *only* auto-detected flags — held exclusively by the processing pipeline. |
 | [`UserFlagWriter`](src/ports/message_flags.rs) | Write access to *only* the user's own overrides — held exclusively by the `PATCH .../flags` route. |
@@ -96,19 +96,16 @@ classDiagram
         +get(key) Vec~u8~
         +put(key, data)
     }
-    class UploadStore {
+    class UploadOutcomeStore {
         <<trait>>
-        +create_pending(user_id, upload_id, key)
-        +get(user_id, upload_id) UploadRecord?
-        +mark_processing(user_id, upload_id)
-        +mark_ready(user_id, upload_id, conversation_ids)
-        +mark_failed(user_id, upload_id, reason)
+        +record_outcome(user_id, upload_id, outcome)
+        +get_outcome(user_id, upload_id) UploadOutcome?
     }
-    class ConversationStore {
+    class ConversationSummaryStore {
         <<trait>>
         +list_for_user(user_id) Vec~ConversationSummary~
         +get(user_id, conversation_id) ConversationSummary?
-        +create(user_id, summary)
+        +put(user_id, summary)
     }
     class MessageFlagsReader {
         <<trait>>
@@ -123,15 +120,8 @@ classDiagram
         <<trait>>
         +set_user_flags(user_id, conversation_id, message_id, overrides) MessageFlagRecord
     }
-    class UploadRecord {
-        +UploadId upload_id
-        +UploadStatus status
-        +String raw_object_key
-    }
-    class UploadStatus {
+    class UploadOutcome {
         <<enum>>
-        Pending
-        Processing
         Ready(conversation_ids)
         Failed(reason)
     }
@@ -156,9 +146,8 @@ classDiagram
         +Option~bool~ critical
         +Option~bool~ angry
     }
-    UploadStore ..> UploadRecord
-    UploadRecord --> UploadStatus
-    ConversationStore ..> ConversationSummary
+    UploadOutcomeStore ..> UploadOutcome
+    ConversationSummaryStore ..> ConversationSummary
     MessageFlagsReader ..> MessageFlagRecord
     UserFlagWriter ..> MessageFlagRecord
     MessageFlagRecord --> FlagSet
