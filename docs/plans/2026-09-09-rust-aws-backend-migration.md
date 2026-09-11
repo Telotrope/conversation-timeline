@@ -945,31 +945,37 @@ S3-compatible option (needs more investigation) as a dedicated increment after V
 flow is committed. Explicitly **not part of V2a** — V2a stays in-memory-only, deliberately, per
 the container-free/AWS-free design already agreed for routine testing.
 
-### C11 [OPEN, plan drafted — code not yet applied]: `UploadStatus`'s `Pending`/`Processing` are persisted but never read
+### C11 [RESOLVED]: `UploadStatus`'s `Pending`/`Processing` are persisted but never read
 Confirmed by `grep`, not assumed: no route reads `UploadRecord.status`, and `process_upload`
-doesn't branch on it either. Written by `create_pending`/`mark_processing`, read by nothing.
-**Mitigation in plan:** [§V2a-revision above](#v2a-revision-what-each-store-actually-persists-and-why--a-design-review-found-real-problems)
-redesigns `UploadStore` into `UploadOutcomeStore`, dropping both variants and the methods that
-wrote them. **Open:** apply to code — needs its own approved plan-to-code cycle before any file
-changes, per this repo's Workflow rule.
+didn't branch on it either. Written by `create_pending`/`mark_processing`, read by nothing.
+**Resolution:** applied the [§V2a-revision](#v2a-revision-what-each-store-actually-persists-and-why--a-design-review-found-real-problems)
+redesign to code — `UploadStore`/`UploadRecord`/`UploadStatus` are gone, replaced by
+[`UploadOutcomeStore`](../../backend/timeline-core/src/ports/uploads.rs#L43)'s
+`record_outcome`/`get_outcome`, which only ever holds a terminal `Ready`/`Failed` value. `POST
+/uploads` ([routes/uploads.rs](../../backend/timeline-api/src/routes/uploads.rs)) never
+constructs or calls it at all now.
 
-### C12 [OPEN, plan drafted — code not yet applied]: `raw_object_key` is stored despite being a pure function of `(user_id, upload_id)`
-`create_upload` computes it as `format!("raw/{user_id}/{upload_id}.json")`
-([timeline-api/src/routes/uploads.rs:38](../../backend/timeline-api/src/routes/uploads.rs#L38)),
-then it's written to `UploadStore` and read back by `export.rs`
-([timeline-api/src/routes/export.rs:66](../../backend/timeline-api/src/routes/export.rs#L66))
-instead of being recomputed. **Mitigation in plan:** dropped entirely in the
-`UploadOutcomeStore` redesign above — callers recompute the key from the same format string.
-**Open:** same as C11, needs its own approved implementation pass.
+### C12 [RESOLVED]: `raw_object_key` is stored despite being a pure function of `(user_id, upload_id)`
+`create_upload` computed it as `format!("raw/{user_id}/{upload_id}.json")`, then wrote it to
+`UploadStore` and read it back in `export.rs` instead of recomputing it. **Resolution:** the
+format string now lives in exactly one place,
+[`raw_object_key`](../../backend/timeline-core/src/ports/uploads.rs#L27), and every caller that
+needs the key — [`routes::uploads::create_upload`](../../backend/timeline-api/src/routes/uploads.rs#L41),
+[`routes::export::export`](../../backend/timeline-api/src/routes/export.rs#L64), and
+`processing::process_upload` — calls it fresh rather than reading a stored copy back.
 
-### C13 [OPEN, plan drafted — code not yet applied]: Port names overclaim what they persist
+### C13 [RESOLVED]: Port names overclaim what they persist
 `ConversationStore` stores `ConversationSummary` (name, count, a foreign key) — never a
 conversation's actual messages, which are never persisted as a structured thing at all, only
 reconstructed by re-parsing the raw upload blob on demand. `UploadStore` doesn't store an upload's
-content either — that's in `ObjectStore`; it stores a status/outcome record pointing at where the
-content is. **Mitigation in plan:** renamed to `ConversationSummaryStore` and
-`UploadOutcomeStore` above, alongside C11/C12's structural simplification (not a rename alone —
-`UploadOutcomeStore`'s contract is genuinely smaller). **Open:** apply to code, same gate as C11.
+content either — that's in `ObjectStore`; it stored a status/outcome record pointing at where the
+content is. **Resolution:** renamed to
+[`ConversationSummaryStore`](../../backend/timeline-core/src/ports/conversations.rs#L45) and
+[`UploadOutcomeStore`](../../backend/timeline-core/src/ports/uploads.rs#L43), alongside C11/C12's
+structural simplification (not a rename alone — `UploadOutcomeStore`'s contract is genuinely
+smaller). The concrete adapters were renamed to match (`InMemoryConversationSummaryStore`,
+`InMemoryUploadOutcomeStore`) so an adapter's own name no longer implies a trait that doesn't
+exist.
 
 ### C14 [RESOLVED]: The ports' own shape was only explicable via AWS-specific reasoning, not domain terms
 Original concern: explaining why three separate storage ports exist, and what each one's
