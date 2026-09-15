@@ -48,6 +48,36 @@ requirement is that the page loads over `http://`/`https://`, not `file://`.
   can confirm or correct flags. Confirmed flags are saved back to the backend as you click, for as
   long as the server in step 1 keeps running.
 
+### Running the backend and browser on different machines
+
+The steps above assume the backend and the browser are the same machine, where the browser's own
+`127.0.0.1:3000` reaches the backend directly. That's not true for a remote/cloud dev environment
+(a devcontainer, a cloud IDE, a VM) reached from your own machine's browser through a
+port-forwarding proxy — `127.0.0.1` in *your* browser always means *your* machine, never the
+remote one, no matter what's actually listening on the far end.
+
+In that case, once you know the URL your browser can actually reach the backend through (however
+your environment forwards/proxies port 3000 — ask your environment's docs if unsure), open
+`timeline.html` with it as a query parameter, once:
+
+```
+http://localhost:8000/timeline.html?api_base=https://your-forwarded-url/for/port/3000
+```
+
+This is remembered in `localStorage`, so you don't need to repeat it on later loads (from the same
+browser) — see [timeline.html](timeline.html)'s `resolveApiBase` for exactly what it does. If
+requests still fail after this, check your browser's Network tab: some proxy setups gate access
+behind their own login/session and will answer with their own error page instead of ever reaching
+`timeline-api`. `timeline-api` itself only ever answers with one of a small, specific set of
+messages — `"missing Authorization header"`, `"invalid or expired token"`, `"not found"`,
+`"storage backend error"`, `"object store backend error"`, `"internal error"` (some as plain text,
+some as `{"error": "..."}` JSON — see
+[backend/timeline-api/src/error.rs](backend/timeline-api/src/error.rs) and
+[backend/timeline-api/src/auth_extractor.rs](backend/timeline-api/src/auth_extractor.rs)) — so a
+response with any other wording (a generic `"Unauthorized"`, an HTML login page, etc.) means
+something in front of the backend answered instead of `timeline-api` itself, not a bug in this
+tool.
+
 ### Testing this end to end without doing it by hand
 
 [e2e/](e2e/README.md) has a real, repeatable Playwright suite that drives an actual browser through

@@ -65050,7 +65050,26 @@ function setLoadStatus(msg, isError){
 // Not a relative path: timeline.html isn't served by timeline-api and is
 // opened separately, so relative fetch()es would resolve against the
 // wrong origin. See the migration plan's V2a.
-const API_BASE = 'http://127.0.0.1:3000';
+//
+// Defaults to same-machine local dev (see the root README's "Running this
+// locally"), where the browser's own 127.0.0.1 reaches the backend
+// directly. That default is wrong whenever the backend runs on a
+// different machine than the browser -- a remote/cloud dev environment
+// reached through a port-forwarding proxy, for example -- so it can be
+// overridden once via a `?api_base=<url>` query parameter; the override
+// is remembered in localStorage so it doesn't need to be retyped on every
+// reload. No trailing slash: every call site below appends a leading-slash
+// path directly onto this value.
+function resolveApiBase(){
+  const fromQuery = new URLSearchParams(window.location.search).get('api_base');
+  if(fromQuery){
+    const trimmed = fromQuery.replace(/\/+$/, '');
+    localStorage.setItem('timeline_api_base', trimmed);
+    return trimmed;
+  }
+  return localStorage.getItem('timeline_api_base') || 'http://127.0.0.1:3000';
+}
+const API_BASE = resolveApiBase();
 let AUTH_TOKEN = null;
 
 // Dev-only: mints a bearer token from timeline-api's checked-in throwaway
