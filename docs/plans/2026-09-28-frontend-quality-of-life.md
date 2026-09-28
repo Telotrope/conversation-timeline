@@ -75,17 +75,50 @@ Goes in **before** Phase 3, per your call. The current suite covers upload → r
 reload; it does not touch the calendar or the analytics views, which is precisely where a large
 deletion could break something silently.
 
-New tests in [e2e/](../../e2e/), against the same real backend the existing suite uses:
-- **Calendar view** renders day cells with session blocks for the fixture's real dates.
-- **Each of the five analytics views** (`friction`, `trend`, `length`, `timeofday`, `idlegap` —
-  the `data-analysis` buttons at [timeline.html:883-887](../../timeline.html#L883-L887)) renders
-  without console errors and produces non-empty content.
-- **Review table search, filter, and pagination** return plausible subsets.
+### What the audit found
+
+A full coverage audit was run. Rust is in good shape: **173 tests pass, 77.57% line coverage
+measured fresh with `cargo llvm-cov`**, and **every route has at least one test** — the gaps there
+are inside handlers, not whole endpoints. The frontend is where the holes are.
+
+Ordered by risk, the things **no test of any kind touches**:
+
+| Gap | Why it matters |
+|---|---|
+| **All five analytics views** — `computeFrictionAnalysis`, `computeTrendAnalysis`, `computeLengthAnalysis`, `computeTimeOfDayAnalysis`, `computeIdleGapAnalysis`, their five renderers, all three chart renderers, `pearsonR` (~370 lines) | Largest untested block in the page. `runAnalysis` only fires on a `data-analysis` click and the suite never opens that tab. Wrong-number bugs here are silent. |
+| **`exportAnnotatedConversations`** — "Download annotated conversations.json" | Never clicked. This is the data-*out* path; a bug here loses annotation work. |
+| **`selectConversation` → `renderMarkdownLite` → `escapeHtml`** | The suite asserts on `#convItems` text but never opens a conversation. `escapeHtml` being untested is the one gap with a correctness/injection flavor. |
+| **`resolveApiBase`'s `?api_base=` branch** | Only the default fallback is covered — the query-param and localStorage branches, i.e. exactly the mechanism the remote/Tailscale setup depends on, are untested. |
+| **Review search, `#reviewFilter`, pagination, the three global toggles** | Render and the Approve button are covered; none of the controls are. |
+| **Calendar interactions** — day clicks, `jumpToReviewDay`, `shiftReviewDay` | Calendar *rendering* turns out to be incidentally smoke-covered (the load path always calls `renderCalendar`, and two tests assert zero console errors). The interactions are not. |
+| **Error paths** — `describeFailure`, the backend-unreachable `TypeError` hint | Untested. |
+| **`classifyWithAI`** | Untested, and by its own comment it is artifact-only and slated for replacement by V3's Bedrock path. Possibly already dead in this deployment — worth deciding whether to delete rather than test. |
+
+### New tests for this phase
+
+In [e2e/](../../e2e/), against the same real backend the existing suite uses — prioritizing the
+table above, and specifically the things Phase 3's deletion could break:
+- **Each of the five analytics views** renders non-empty content with no console errors.
+- **Calendar** renders day cells with session blocks for the fixture's real dates, and a day click
+  navigates as expected.
+- **Opening a conversation** renders its transcript (covers the markdown/escaping path).
+- **Review search, filter, and pagination** return plausible subsets.
+- **The annotated-export download** produces a file containing the flags.
 - **A message the backend flagged renders as flagged** — the assertion that proves flags come from
   the backend rather than a client-side pass, which is what Phase 3 removes.
 
-A full inventory of what else is untested is being audited separately; findings will be folded in
-here before this phase starts.
+### Structural gaps the audit surfaced, for the record
+
+These are outside this phase's scope but shouldn't be lost — see C11 and C12:
+- **`main.rs` is 0% covered**, including the branch deciding that `/_dev/*` routes are absent from
+  the Lambda build.
+- **There is no CI of any kind** (no `.github/`), and the e2e suite is wired into nothing — it runs
+  only when someone remembers to run it.
+- **`tests/test_no_unhandled_exceptions.py`, referenced in CLAUDE.md, does not exist in this repo.**
+  No silent-swallow check runs on either Rust or JavaScript.
+- **The file-size ratchet exists** ([backend/timeline-core/tests/file_sizes.rs](../../backend/timeline-core/tests/file_sizes.rs),
+  passing, empty allowlist) **but only scans `.rs` files under `backend/`** — `timeline.html` is
+  entirely outside its reach.
 
 ---
 
@@ -347,6 +380,27 @@ upload. Phase 4 proposes separating those, but the choice between the full fix (
 and the cheap fix (a `detect: false` parameter) is yours, and the full fix is backend work you'd
 wanted to defer. **Open:** your decision on which option, per
 [§Phase 4](#recommendation-make-both-tiers-explicit-side-by-side).
+
+### C11 [OPEN]: nothing verifies that the `_dev` routes stay out of the Lambda build
+`main.rs` measures 0% coverage — all six functions unexecuted, because tests build routers directly
+via `build_router` and bypass `main` entirely. Its module doc states the Lambda branch is handed
+`build_router` alone, so `POST /_dev/login` and the local-storage routes are structurally absent
+from anything deployable. Reading the source, that claim looks correct — but **no test asserts it**,
+and it is the one property in this codebase where being wrong would mean shipping an unauthenticated
+token-minting endpoint to production.
+**Open:** add a test that builds the Lambda-path router and asserts every `/_dev/*` path returns
+404. Cheap to write. Trigger: before any real deployment — this must not be outstanding when V2
+deploys.
+
+### C12 [OPEN]: the test suites only run when someone remembers
+No CI exists. The e2e suite is manual by design and wired into nothing, the launcher test is manual,
+and the file-size ratchet only covers `.rs` files under `backend/` — `timeline.html` is outside it.
+Separately, CLAUDE.md refers to a silent-exception-swallow check (`tests/test_no_unhandled_exceptions.py`)
+that does not exist in this repo at all.
+**Mitigation in plan:** none — this is out of scope for a quality-of-life pass.
+**Open:** whether to add CI, and whether the ratchet should grow a JavaScript arm once Phase 3
+shrinks `timeline.html` to a reviewable size. Trigger: after Phase 3, when the file is small enough
+for a line-count rule to mean something.
 
 ## Open questions for review
 
