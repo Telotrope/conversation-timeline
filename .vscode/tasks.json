@@ -1,0 +1,77 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Dev: Start local environment",
+      "detail": "Brings up timeline-api and the timeline.html file server, restarting either one only if it is actually out of date.",
+      "dependsOn": ["Dev: Backend (timeline-api)", "Dev: Static server (timeline.html)"],
+      "dependsOrder": "parallel",
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "Dev: Backend (timeline-api)",
+      "type": "shell",
+      "command": "./scripts/dev-up.sh backend",
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated",
+        "group": "dev"
+      },
+      "problemMatcher": {
+        "owner": "timeline-api",
+        "pattern": {
+          "regexp": "^error: (.*)$",
+          "message": 1
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^Building timeline-api",
+          "endsPattern": "(listening on http://|already up to date)"
+        }
+      }
+    },
+    {
+      "label": "Dev: Static server (timeline.html)",
+      "type": "shell",
+      "command": "./scripts/dev-up.sh static",
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated",
+        "group": "dev"
+      },
+      "problemMatcher": {
+        "owner": "timeline-static",
+        "pattern": {
+          "regexp": "^error: (.*)$",
+          "message": 1
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^(Serving HTTP|port \\d+ is held|static server already)",
+          "endsPattern": "(Serving HTTP on|already serving timeline.html)"
+        }
+      }
+    },
+    {
+      "label": "Dev: Stop local environment",
+      "type": "shell",
+      "command": "./scripts/dev-down.sh all",
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "always", "panel": "dedicated", "group": "dev" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Dev: Test the launcher scripts",
+      "type": "shell",
+      "command": "./scripts/test-dev-up.sh",
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "problemMatcher": []
+    }
+  ]
+}
