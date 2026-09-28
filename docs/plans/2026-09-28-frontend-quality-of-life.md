@@ -12,7 +12,7 @@ migration plan's server work (real S3/DynamoDB adapters, its C10).
 | 1 | Dev-server launcher + VS Code task | `scripts/`, `.vscode/` | **Approved to build** |
 | 2 | e2e coverage for calendar + analytics | `e2e/` | **Approved** |
 | 3 | Delete the page's detection logic and lexicons | `timeline.html`, `e2e/` | **Approved**, incl. the e2e drift block |
-| 4 | Make detection an explicit, user-triggered step | `timeline.html`, `backend/` | **Open — needs your decision, see §Phase 4** |
+| 4 | Detection runs only when asked, with visible progress | `timeline.html`, `backend/` | **Decided**; user-facing naming of the two tiers is tabled |
 | 5 | Upload progress bar | `timeline.html` | Approved in substance |
 | 6 | Back/forward navigation + restore on load | `timeline.html` | Approved in substance |
 
@@ -214,47 +214,84 @@ client-side case, where the same work ran in JavaScript on the UI thread and was
 real arguments for changing it are **control** (don't compute what wasn't asked for) and **clarity**
 (below), not speed.
 
-### The confusion you predicted is real
+### Decided: it runs only when asked, and the user can watch it run
 
-The review table already distinguishes the two sources — "auto" vs "AI" with tooltips at
-[timeline.html:66198](../../timeline.html#L66198) and [:66215](../../timeline.html#L66215), driven by
-`auto_source` being `'heuristic'` or `'llm'`. But nothing tells the user *how they relate*: the
-heuristic is configured by a checkbox on the load screen, while the AI pass is a button inside the
-Review tab, with no shared framing. They're two tiers of the same operation presented as unrelated
-features in different places.
+Two requirements, both from the user, neither optional:
 
-### Recommendation: make both tiers explicit, side by side
+1. **The non-generative detection pass runs only on an explicit user action** — a checked box or a
+   pressed button — and never otherwise. Not on upload, not implicitly, not "because it's cheap."
+2. **While it runs, the user can see that it is running**, as progress, not as a frozen screen. It is
+   a pass over every speech act in the export; it is not instantaneous and must not be presented as
+   though it were.
 
-Move detection out of `process_upload` into its own user-triggered route, and put its button
-directly next to "Classify with AI" in the Review tab:
+**On requirement 2 and what this plan is allowed to claim about duration:** nothing here has been
+measured. The pass is work proportional to the number of speech acts, and this plan does not assert
+it is fast, cheap, or instant — earlier drafts did, with no measurement behind the word, which is
+exactly the kind of claim this project's conventions forbid. The progress display exists because the
+duration is *unknown and non-trivial*, not as decoration over something already known to be quick.
 
-- **Upload does upload.** Parse, dedup, store, return. The timeline itself — calendar, sessions,
-  conversation list — needs no flags at all, so this first render is complete and correct, not empty.
-- **The Review tab offers two clearly-paired choices**, e.g. "Scan with keywords (free, instant)" and
-  "Classify with AI (more accurate)" — same place, same shape, obvious relationship, with the
-  existing "auto"/"AI" source labels then meaning something.
-- **The load-screen "Automatically detect flags" checkbox is deleted**, since the choice now lives
-  where the results appear.
+### Design
 
-Cost of this option, stated plainly: it's backend work, which you wanted to defer. It's a small piece
-— lifting an existing loop out of `process_upload` into a new route handler, no new adapters, no
-AWS — but it is not zero, and it needs its own tests. It also means the raw upload gets re-read and
-re-parsed at detection time rather than riding along with the pass already in progress.
+**Trigger.** Detection moves out of `process_upload` into its own user-triggered route. Upload does
+upload: parse, dedup, store, return. The timeline itself — calendar, sessions, conversation list —
+needs no flags at all, so the first render is complete and correct rather than empty.
 
-**Cheaper alternative if you'd rather not touch the backend much:** keep detection at upload but
-have the page send an explicit flag (`POST /uploads` with `detect: false`), so nothing is computed
-unless asked. One boolean, no new route, no re-parsing. It satisfies "don't compute by default" but
-leaves the two tiers as unrelated-looking features in different parts of the UI, so it does not fix
-the confusion you flagged.
+The trigger is a checkbox on the load screen, **unchecked by default**, meaning "also run detection
+once the upload is in." Chosen over a Review-tab button for one concrete reason: it composes directly
+with Phase 5's load progress bar, so detection becomes another labelled phase of a bar the user is
+already watching, which is what requirement 2 asks for. A separate button that can run it later
+(or re-run it) is a reasonable addition but is **not** specified here — see the note on tabled work
+below.
+
+**Progress.** A single request that returns when the whole pass is done cannot report progress. The
+client drives the loop instead, in batches:
+
+- The page requests detection for a batch of messages, gets the resulting flags, advances the bar,
+  and repeats until done.
+- This reuses the idiom already in the page: `classifyWithAI` at
+  [timeline.html:65605-65650](../../timeline.html#L65605) already batches its work
+  (`CLASSIFY_BATCH_SIZE`) and drives `.progress-track` / `.progress-fill` / `.progress-label` per
+  batch. Same CSS, same shape of loop, no new streaming or background-job machinery — which per this
+  repo's reuse-order rule beats adding server-sent events or a polling status endpoint.
+- Because progress is measured in batches completed out of batches total, the bar is genuinely
+  determinate here, unlike the phases in Phase 5 that have nothing observable to report.
+
+**Proposed route shape** (a proposal, not a settled interface): `POST /detect` taking a conversation
+id and a list of message uuids, returning the computed flags for exactly those messages and writing
+them through the existing `AutoFlagWriter`. Client-enumerated ids rather than server-side offsets,
+because that keeps the batching explicit and testable from the outside.
+
+**Cost, stated plainly:** this is backend work. It is a small piece — lifting an existing loop out of
+`process_upload` into a route handler, no new adapters, no AWS — but it is not zero, it needs its own
+tests, and it means the raw upload is re-read at detection time rather than riding along with a pass
+already in progress.
+
+### What this phase does NOT decide
+
+The user has **tabled** the question of how the two tiers are named and explained to users —
+non-generative versus generative emotion detection — and will design that separately. So this phase
+deliberately does not invent user-facing labels, does not pair the two triggers in the interface, and
+does not touch the existing "auto"/"AI" source markers at
+[timeline.html:66198](../../timeline.html#L66198) and [:66215](../../timeline.html#L66215). It changes
+*when* the pass runs and *whether the user can see it running*. Nothing else.
 
 ### Interaction with Phase 3
 
-Fact 2 above ("the backend computes auto flags for every human message") is exactly what this phase
-changes. Phase 3's deletion stays correct either way — the page has no business running detection
-itself in either design — but the story changes from "flags always arrive with the export" to "flags
-arrive once you've asked for them." Messages simply render unflagged until then. If both phases land,
-Phase 3 should go first so the deletion is reviewed against today's behavior rather than two moving
-parts at once.
+Fact 2 in Phase 3 ("the backend computes auto flags for every human message") is exactly what this
+phase changes, so the two must not land together unverified. Phase 3's deletion is correct either way
+— the page has no business running detection itself in either design — but:
+
+- **Phase 3 alone should be output-neutral**: the rendered page must look identical before and after.
+  This is checkable rather than hopeful, because the flags being rendered already come from the
+  backend today — when "refresh detection" is unchecked, the defaults are read straight from the
+  stored values at [timeline.html:65001-65005](../../timeline.html#L65001-L65005), and the page's own
+  detectors only feed the drift count. Deleting code that wasn't feeding the render should change
+  nothing on screen.
+- **Phase 4 deliberately changes output**: with detection no longer running at upload, a freshly
+  uploaded export renders with no flags until the user asks for them. That is an intended change and
+  must be verified as such, not mistaken for a Phase 3 regression.
+
+Hence Phase 3 first, verified output-neutral, then Phase 4 with its own expected-difference baseline.
 
 ---
 
@@ -374,12 +411,22 @@ analytics. **Resolution:** you approved adding that coverage first — it's now
 [§Phase 2](#phase-2-e2e-coverage-for-the-views-the-deletion-could-break), sequenced before the
 deletion.
 
-### C10 [OPEN]: "always available" was silently implemented as "always already computed"
+### C10 [RESOLVED]: "always available" was silently implemented as "always already computed"
 The migration plan promised a free tier that's *available*; the code computes it unconditionally at
-upload. Phase 4 proposes separating those, but the choice between the full fix (own route, paired UI)
-and the cheap fix (a `detect: false` parameter) is yours, and the full fix is backend work you'd
-wanted to defer. **Open:** your decision on which option, per
-[§Phase 4](#recommendation-make-both-tiers-explicit-side-by-side).
+upload, which is not the same claim and contradicts what the user asked for.
+**Resolution:** detection moves behind an explicit trigger and reports progress while it runs, per
+[§Phase 4](#decided-it-runs-only-when-asked-and-the-user-can-watch-it-run). The `detect: false`
+parameter alternative was rejected: it would stop the unwanted computation but leaves the user with no
+indication that a pass over every speech act is happening when they do ask for it.
+
+### C13 [RESOLVED]: this plan twice asserted durations it had never measured
+"Free, instant" was written about the non-generative pass in conversation, one message after the same
+plan had explicitly said it hadn't been measured and wouldn't be characterized. The pass is work
+proportional to the number of speech acts in the export; no timing for it exists anywhere in this
+repo.
+**Resolution:** every duration claim about it is removed. The progress display in
+[§Phase 4](#design) is justified by the duration being *unknown*, not by any measurement. If a timing
+claim is ever wanted, it needs a measurement first.
 
 ### C11 [OPEN]: nothing verifies that the `_dev` routes stay out of the Lambda build
 `main.rs` measures 0% coverage — all six functions unexecuted, because tests build routers directly
@@ -392,21 +439,31 @@ token-minting endpoint to production.
 404. Cheap to write. Trigger: before any real deployment — this must not be outstanding when V2
 deploys.
 
-### C12 [OPEN]: the test suites only run when someone remembers
-No CI exists. The e2e suite is manual by design and wired into nothing, the launcher test is manual,
-and the file-size ratchet only covers `.rs` files under `backend/` — `timeline.html` is outside it.
-Separately, CLAUDE.md refers to a silent-exception-swallow check (`tests/test_no_unhandled_exceptions.py`)
-that does not exist in this repo at all.
-**Mitigation in plan:** none — this is out of scope for a quality-of-life pass.
-**Open:** whether to add CI, and whether the ratchet should grow a JavaScript arm once Phase 3
-shrinks `timeline.html` to a reviewable size. Trigger: after Phase 3, when the file is small enough
-for a line-count rule to mean something.
+### C12 [RESOLVED]: "run all tests" had been narrowed to exclude the slow suites
+Framed originally as a missing-CI problem. It isn't: the standing instruction is to run all tests
+before every commit, and the defect was that `cargo test --workspace` excludes the e2e suite and the
+launcher test, so "all" had quietly come to mean "the fast ones." That is a subset invented to avoid
+work, not a property of the project.
+**Resolution:** one command runs every suite — the Rust workspace, the Playwright e2e suite, and the
+launcher test — and that command is what "run all tests" means. It also pins the Node version the e2e
+suite requires (the default `node` here is 18; the suite needs 20), so an environment mismatch fails
+loudly instead of looking like a broken test.
+**Also in scope, per the user's direction:** a silent-exception-swallow check covering both the Rust
+and the JavaScript. CLAUDE.md describes one at `tests/test_no_unhandled_exceptions.py`; no such file,
+and no Python at all, exists in this repo, so it has to be written rather than wired up.
+**Remaining, separately:** the file-size ratchet only scans `.rs` under `backend/`, so `timeline.html`
+is invisible to it. Worth a JavaScript arm once Phase 3 makes the file small enough for a line-count
+rule to mean anything.
 
 ## Open questions for review
 
-1. **Phase 4: which option** — the full separation (own route + paired buttons in the Review tab,
-   which also fixes the heuristic-vs-AI confusion), or the cheap `detect: false` parameter (satisfies
-   "don't compute by default," leaves the UI story unfixed)?
-2. **`scripts/` + bash** for Phase 1, versus a `justfile`/`Makefile`. Bash chosen only because the
-   README already documents raw shell commands. *(Proceeding with bash unless you say otherwise.)*
-3. **C8**: silent restore, or announced?
+1. **`scripts/` + bash** for Phase 1, versus a `justfile`/`Makefile`. Bash chosen only because the
+   README already documents raw shell commands.
+2. **C8**: silent restore, or announced?
+
+## Tabled at the user's direction
+
+- **How the two detection tiers are named and explained to users** — non-generative versus generative
+  emotion detection. The user designed this and will produce the design; this plan touches only *when*
+  the non-generative pass runs and whether its progress is visible. No user-facing labels are invented
+  here.
