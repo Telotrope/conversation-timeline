@@ -41,37 +41,63 @@ step) stays a manual, one-time-per-browser step, already solved and documented i
 
 ## Design
 
-### One script, parameterized per role
+### One script, parameterized per role — restart only when the running instance is actually stale
 
-`scripts/dev-up.sh {backend|static}` — a single script, not two, so the "kill whatever's on this
-port, then take it over" logic isn't duplicated:
+`scripts/dev-up.sh {backend|static}`. **Revised per user feedback: unconditionally killing
+whatever's on the port is wrong.** `timeline-api` holds all state — every uploaded conversation and
+confirmed flag — in memory only (`backend/README.md`'s persistence note; `run_locally` in
+[backend/timeline-api/src/main.rs](../../backend/timeline-api/src/main.rs) wires nothing but
+`InMemory*` stores). Killing a still-current backend for no reason doesn't just cost a few seconds
+of relaunch time, it **silently deletes whatever the user was looking at.** The script must tell
+"needs restarting" apart from "already correct, leave it alone."
 
-```
-scripts/dev-up.sh backend   # clears port $PORT (default 3000), execs `cargo run -p timeline-api`
-scripts/dev-up.sh static    # clears port $STATIC_PORT (default 8000), execs `python3 -m http.server $STATIC_PORT`
-```
+The two roles need genuinely different staleness logic, because only one of them has anything that
+can go stale in the first place:
 
-Behavior for either role:
+**`backend`** — compiled code, so a running instance can be serving code older than what's on disk:
 
-1. Find any process currently listening on the target port (`lsof -ti tcp:$PORT`).
-2. If found, **print its PID and full command line** (`ps -p $pid -o pid,cmd=`) before touching
-   it — never kill silently. Send `SIGTERM`; wait up to 3s; `SIGKILL` if it's still alive. This
-   makes "restart" mean "the old one is provably gone," closing the exact gap the user described.
-3. `exec` into the real long-running process (`cargo run -p timeline-api` / `python3 -m http.server`)
-   — not a background-and-detach. `exec` replaces the script's own process with it, so:
-   - The script exits, but only as the same process now running the server — there's no separate
-     wrapper/PID-file bookkeeping to fall out of sync with reality.
-   - Whoever terminates that process (Ctrl+C in a terminal, or VS Code's task-terminate button)
-     kills the real server directly, with nothing left behind.
-4. No custom "wait until healthy" polling loop is added. Both `cargo run -p timeline-api` (prints
-   `timeline-api (local dev, in-memory storage) listening on http://127.0.0.1:3000` — see
-   [backend/timeline-api/src/main.rs:88](../../backend/timeline-api/src/main.rs#L88)) and
-   `python3 -m http.server` (prints `Serving HTTP on 0.0.0.0 port 8000 ...`) already announce
-   readiness on stdout. VS Code's own background-task mechanism (below) watches for that line
-   instead of the script re-implementing a health check.
+1. Run `cargo build -p timeline-api` unconditionally. This is the freshness check itself, not
+   overhead to avoid — cargo's own incremental build already tracks the full dependency graph
+   correctly (every crate, `Cargo.lock`, build scripts), which a hand-rolled "any `.rs` file newer
+   than X" mtime scan in bash would get wrong in edge cases (a `Cargo.toml` dependency bump touches
+   no `.rs` file, for instance). When nothing changed this finishes in well under a second — the
+   real, disruptive cost this plan is fixing is the kill-and-relaunch-and-lose-all-state cycle, not
+   this build check.
+2. Hash the resulting binary (`sha256sum target/debug/timeline-api`).
+3. Compare against `.dev-state/timeline-api.hash`, a marker written the last time this script
+   actually started an instance (**not** a liveness-tracking PID file — see critique C6 for why
+   that distinction matters).
+4. Look up whatever's currently listening on `$PORT` (`lsof -ti tcp:$PORT`).
+   - **Nothing listening:** start fresh regardless of the hash (nothing to preserve). Write the new
+     hash to the marker, `exec cargo run -p timeline-api` (cheap — the binary's already built).
+   - **Something listening, hash matches, and its command line looks like our binary**
+     (`ps -p $pid -o cmd=` contains `timeline-api`): **do nothing.** Print `timeline-api already
+     up to date (pid $pid) — leaving it running.` and exit 0 immediately. No signal is ever sent to
+     that process.
+   - **Something listening, but the hash differs (code changed) or the command line doesn't match
+     our binary (something else is squatting on the port):** print the occupant's PID and full
+     command line, `SIGTERM` it, wait up to 3s, `SIGKILL` if still alive — then start fresh as
+     above. This is the original "provably gone, then replaced" behavior from the first draft of
+     this plan, now used only when a restart is actually warranted.
 
-`scripts/dev-down.sh {backend|static|all}` — the same port-clearing step as a standalone command,
-for manual terminal use and for this plan's own test script's teardown (see Testing below).
+**`static`** — `python3 -m http.server` re-reads `timeline.html` from disk on every request; it
+never caches file content in the process, so **there is no such thing as a stale static-server
+process** — restarting it can never make it serve fresher content than leaving it running would.
+Its check is liveness-only, not freshness:
+   - Something listening and it answers `curl -sf http://127.0.0.1:$STATIC_PORT/timeline.html`:
+     leave it alone, exit 0.
+   - Nothing listening, or the occupant doesn't answer correctly (wrong process on the port):
+     kill-if-present (same print-PID-then-SIGTERM/SIGKILL as above) and start fresh.
+
+Either way, once the script decides to actually start a process, it `exec`s into it (`cargo run
+-p timeline-api` / `python3 -m http.server $STATIC_PORT`) rather than backgrounding-and-detaching —
+the reasoning from the original draft (C1) still holds for *that* part: whichever terminal/task
+ends up attached to it can terminate it directly, with nothing left behind. What's changed is only
+*whether* that kill-and-start step happens at all on a given invocation.
+
+`scripts/dev-down.sh {backend|static|all}` — unconditional port-clearing as a standalone command
+(no freshness check — "down" always means down), for manual terminal use and for this plan's own
+test script's teardown (see Testing below).
 
 ### VS Code tasks (the "button")
 
@@ -87,33 +113,55 @@ for manual terminal use and for this plan's own test script's teardown (see Test
   `Ctrl+Shift+B`/`Cmd+Shift+B`) — no extension required, and this works the same in VS Code Web.
 
 Each server gets its own terminal pane (clearer output than interleaving both in one shared
-script), and restarting is just "run the build task again": the new `dev-up.sh backend` invocation
-kills whatever's currently on port 3000 — including the previous task's own still-running
-`cargo run` — before taking over. The old terminal pane will show its process being killed; that's
-expected, not an error, and is exactly the "no ambiguity about which version is running" property
-being built here (see critique C1).
+script), and re-running the build task is now the everyday way to "check whether I need a
+restart" — most of the time (no code changed) it does nothing, per the revised design above.
+**This changes what a task pane means, compared to the original draft:** a live pane is still
+*sufficient* evidence the server is running, but is no longer *necessary* — the process that's
+actually serving requests may be attached to an older pane from several task-runs ago, with more
+recent runs each having printed "already up to date" and exited. Liveness truth stays with the OS
+(`lsof` on the port), same as before; only the VS Code pane's role changes, from "the" source of
+truth to "a" source of truth. `"presentation": { "reveal": "silent" }` on the two leaf tasks keeps
+a no-op "already up to date" run from stealing focus or opening a new pane the user has to
+dismiss, so re-running the build task stays cheap to do often (see critique C6).
+
+On the runs that *do* find stale code, the old terminal pane shows its process being killed — that
+part of the original design (provably-gone-then-replaced) is unchanged, just now conditional.
 
 Stopping cleanly: VS Code's own per-terminal "kill" control (trash-can icon in the Terminal panel,
 or the "Tasks: Terminate Task" command) sends the signal directly to the `exec`'d process — no
-custom stop task needed.
+custom stop task needed. Note this only stops whichever instance that particular pane is attached
+to; if you want the backend down entirely regardless of which pane (if any) is showing it, use
+`scripts/dev-down.sh backend` from a terminal.
 
 ### Testing
 
 `scripts/test-dev-up.sh`, run manually (not part of `cargo test`/CI — it manages real ports and
 long-running processes, which the Rust workspace's own test suite deliberately never does):
 
-1. Occupy port 3000 with a throwaway process (`python3 -m http.server 3000 &`) to simulate a stale
-   leftover.
-2. Run `scripts/dev-up.sh backend &`; poll `curl -sf http://127.0.0.1:3000/conversations` until it
-   answers (reusing the same wait pattern as [e2e/upload-flow.spec.js:22-35](../../e2e/upload-flow.spec.js#L22-L35)).
-3. Assert exactly one process is now listening on 3000, and that it's a `cargo`/`timeline-api`
-   process, not the throwaway one (`lsof -ti tcp:3000` plus a `ps` command-line check) — proves
-   the stale process was actually replaced, not merely joined by a second one.
-4. Re-run `scripts/dev-up.sh backend` a second time (idempotency check); assert the same
-   single-process-on-3000 property still holds, and that the PID changed (proves the second run
-   genuinely replaced the first, not a no-op).
-5. Repeat 1-4 for the static server on port 8000.
-6. Teardown via `scripts/dev-down.sh all` in a trap, regardless of pass/fail, so a failed test run
+1. **Stale-code case:** occupy port 3000 with a throwaway process (`python3 -m http.server 3000 &`)
+   to simulate a leftover that isn't even the right program. Run `scripts/dev-up.sh backend &`;
+   poll `curl -sf http://127.0.0.1:3000/conversations` until it answers (reusing the same wait
+   pattern as [e2e/upload-flow.spec.js:22-35](../../e2e/upload-flow.spec.js#L22-L35)). Assert
+   exactly one process is now listening on 3000 and it's the real `timeline-api`, not the
+   throwaway one (`lsof -ti tcp:3000` plus a `ps` command-line check) — proves a wrong/stale
+   occupant actually gets replaced.
+2. **Already-current case (the behavior this plan revision exists to add):** with the real backend
+   now running from step 1, note its PID, then re-run `scripts/dev-up.sh backend` with no source
+   changes in between. Assert: (a) the PID on port 3000 is **unchanged**, (b) no `SIGTERM`/`SIGKILL`
+   was sent (assert via a wrapper that fails the test if `kill` is invoked at all during this run —
+   e.g. run under a stubbed `kill` shell function that records calls), (c) exit code 0. This is the
+   test that would have caught the original design's data-loss bug: it fails loudly if a rerun ever
+   restarts a server that didn't need it.
+3. **Genuinely-changed case:** touch a source file under `backend/timeline-core/src/` (a trivial
+   whitespace change is enough to force a rebuild), note the running PID, re-run
+   `scripts/dev-up.sh backend`. Assert the PID **changes** and the new process answers
+   `/conversations` correctly — proves a real code change is still detected and does trigger a
+   restart, not just that restarts have become permanently disabled.
+4. Repeat the three cases above for the static server on port 8000, adjusted for its liveness-only
+   (never freshness-based) logic: stale/wrong occupant gets replaced; an already-running, correctly
+   answering instance is left alone (its PID never changes across reruns, since staleness doesn't
+   apply to it at all — there's no "genuinely changed" case to test here, per the design above).
+5. Teardown via `scripts/dev-down.sh all` in a trap, regardless of pass/fail, so a failed test run
    never leaves stray servers behind.
 
 This is the closest available substitute for unit tests on a script whose entire job is process
@@ -129,10 +177,30 @@ via PID files) or run them in the foreground as the direct target of `exec`, wit
 terminal attached directly to each. Detached is more "fire and forget," but risks the exact problem
 being fixed — an orphaned background process nobody remembers is still running, invisible once its
 launching terminal/task closes.
-**Resolution:** foreground `exec`, no PID files — see [§Design, "One script, parameterized per
-role," step 3](#one-script-parameterized-per-role). VS Code's task UI becomes the single source of
-truth for "is it running": a live task pane means it's running, closing/terminating the task means
-it's dead. Applied in the design above.
+**Resolution:** foreground `exec` when a process is actually started, no PID files used for
+liveness — see [§Design, "One script, parameterized per role"](#one-script-parameterized-per-role-restart-only-when-the-running-instance-is-actually-stale).
+**Superseded in part by C6**: liveness (`lsof` on the port) is still ground truth and a live task
+pane is still *sufficient* evidence of a running server, but after the C6 revision it is no longer
+*necessary* — most reruns now find the server already current and exit without ever attaching a
+pane to it. See C6 for the full revision and the VS Code-tasks section's "what a task pane means"
+note.
+
+### C6 [RESOLVED]: unconditionally killing the current process on every run is wrong
+Raised by the user after reviewing the first draft: `timeline-api` holds all uploads and confirmed
+flags in memory only (no database, no disk persistence — `backend/README.md`'s persistence note).
+The original design's "always kill whatever's on the port, then start fresh" meant *every* rerun of
+the launcher — including ones triggered just to check whether anything needed restarting — silently
+discarded the user's in-progress session, and paid a multi-second rebuild+reboot cost, even when the
+code hadn't changed at all.
+**Resolution:** restart only when the running instance is provably stale, per role — the backend
+compares a hash of the freshly-built binary against a marker recorded when it was last actually
+(re)started, and only kills+restarts on a mismatch (or a wrong/absent occupant); the static file
+server has no staleness concept at all (`python3 -m http.server` reads `timeline.html` from disk on
+every request, so an old process can never serve stale content) and is left alone whenever it's
+already up and answering correctly. Full logic in
+[§Design, "One script, parameterized per role"](#one-script-parameterized-per-role-restart-only-when-the-running-instance-is-actually-stale);
+the "already current, do nothing" and "genuinely stale, do restart" cases are both covered as
+explicit test cases in [§Testing](#testing).
 
 ### C2 [RESOLVED]: safety of killing "whatever is listening on the port"
 Original concern: unconditionally killing any process bound to port 3000/8000 could kill something
@@ -174,6 +242,13 @@ all. Not wired into the VS Code task JSON itself.
 - Is `scripts/` (bash) the right home/language, or would you rather this live under `backend/` or
   as a `justfile`/`Makefile` target? Bash was chosen only because the README already documents raw
   shell commands and the repo has no existing task-runner convention.
-- Confirm the foreground/`exec` + VS Code-task-as-source-of-truth model (C1) matches what you
-  pictured by "a button that reduces terminal usage" — versus, say, a status-bar toggle from an
-  extension, which would be a materially different (and heavier) approach.
+- Confirm the foreground/`exec`-when-actually-starting model, now combined with the C6
+  skip-if-current logic, matches what you pictured by "a button that reduces terminal usage" —
+  versus, say, a status-bar toggle from an extension, which would be a materially different (and
+  heavier) approach.
+- `.dev-state/timeline-api.hash` is a new small piece of on-disk state (git-ignored) this revision
+  introduces to remember what was last started, purely so a rerun can tell "unchanged" from
+  "changed" without re-deriving it from cargo's own build metadata by hand. Confirm you're fine
+  with that file existing, versus, say, deriving the same fact some other way (e.g. always trusting
+  whatever `cargo run` itself would decide to rebuild) — no other approach identified so far avoids
+  needing *some* record of "what was running" to compare against.
