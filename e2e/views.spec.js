@@ -44,7 +44,18 @@ async function waitForPort(url, timeoutMs) {
 // Loads the fixture through the real backend and waits for the main view.
 // Returns the console errors seen during the load so tests can assert none
 // occurred -- a view that renders but throws is not working.
-async function loadFixture(page) {
+// Every load gets its own dev login name, so tests don't inherit each
+// other's server-side state. They share one backend process, and detection
+// results persist per user for its lifetime -- without this, a test asserting
+// "no flags unless asked" fails because an earlier test asked, for the same
+// user, against the same conversation ids.
+let loginCounter = 0;
+function uniqueSub() {
+  loginCounter += 1;
+  return `views-${process.pid}-${loginCounter}`;
+}
+
+async function loadFixture(page, { detect = false, sub = uniqueSub() } = {}) {
   const consoleErrors = [];
   page.on('console', (msg) => {
     if (msg.type() === 'error') consoleErrors.push(msg.text());
@@ -52,7 +63,11 @@ async function loadFixture(page) {
   page.on('pageerror', (err) => consoleErrors.push(String(err)));
 
   await page.goto(TIMELINE_HTML);
+  await page.fill('#devLoginSub', sub);
   await page.setInputFiles('#loadConvFile', FIXTURE);
+  // Detection is opt-in now: uploading alone computes no flags at all, so
+  // any test that needs them has to ask, exactly as a user would.
+  if (detect) await page.check('#autoDetectCheckbox');
   await page.click('#loadBtn');
   await expect(page.locator('#mainContent')).toBeVisible({ timeout: 30_000 });
 
@@ -238,7 +253,7 @@ test('review search and filter narrow the table, and pagination moves through it
 });
 
 test('a message the backend flagged renders as flagged', async ({ page }) => {
-  const consoleErrors = await loadFixture(page);
+  const consoleErrors = await loadFixture(page, { detect: true });
 
   await page.click('button[data-tab="review"]');
 
@@ -285,4 +300,158 @@ test('the annotated export downloads a file carrying the flags', async ({ page }
   expect(annotated.length, 'export contained no _claude_timeline_auto fields').toBeGreaterThan(0);
 
   expect(consoleErrors, `console errors:\n${consoleErrors.join('\n')}`).toEqual([]);
+});
+
+test('uploading without asking for detection produces no flags at all', async ({ page }) => {
+  // The behavior Phase 4 exists to create: uploading a file is not consent
+  // to run a pass over every message in it.
+  const consoleErrors = await loadFixture(page);
+
+  await page.click('button[data-tab="review"]');
+  await expect(page.locator('#reviewCount')).toContainText('message');
+  const checked = page.locator('#reviewTable input[type="checkbox"]:checked');
+  expect(await checked.count(), 'detection ran when nobody asked for it').toBe(0);
+
+  expect(consoleErrors, `console errors:\n${consoleErrors.join('\n')}`).toEqual([]);
+});
+
+test('the detection pass reports progress while it runs', async ({ page }) => {
+  const consoleErrors = [];
+  page.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
+  page.on('pageerror', (err) => consoleErrors.push(String(err)));
+
+  await page.goto(TIMELINE_HTML);
+  await page.fill('#devLoginSub', uniqueSub());
+  await page.setInputFiles('#loadConvFile', FIXTURE);
+  await page.check('#autoDetectCheckbox');
+
+  // Capture the label's text across the whole load rather than trying to
+  // catch one frame -- the fixture is small enough that the pass finishes
+  // fast, and sampling for a specific instant would be inherently flaky.
+  const seen = new Set();
+  const poll = setInterval(async () => {
+    try {
+      const t = await page.locator('#loadProgressLabel').textContent();
+      if (t) seen.add(t);
+    } catch (e) { /* page navigating or closed; sampling is best-effort */ }
+  }, 30);
+
+  await page.click('#loadBtn');
+  await expect(page.locator('#mainContent')).toBeVisible({ timeout: 30_000 });
+  clearInterval(poll);
+
+  const labels = [...seen].join(' | ');
+  expect(labels, `progress labels seen: ${labels}`).toMatch(/Scanning your messages/);
+
+  // And the pass actually did something.
+  await page.click('button[data-tab="review"]');
+  expect(await page.locator('#reviewTable input[type="checkbox"]:checked').count())
+    .toBeGreaterThan(0);
+
+  expect(consoleErrors, `console errors:\n${consoleErrors.join('\n')}`).toEqual([]);
+});
+
+test('the upload reports byte progress before the server-side wait', async ({ page }) => {
+  const consoleErrors = [];
+  page.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
+  page.on('pageerror', (err) => consoleErrors.push(String(err)));
+
+  await page.goto(TIMELINE_HTML);
+  await page.fill('#devLoginSub', uniqueSub());
+  await page.setInputFiles('#loadConvFile', FIXTURE);
+
+  const seen = new Set();
+  const poll = setInterval(async () => {
+    try {
+      const t = await page.locator('#loadProgressLabel').textContent();
+      if (t) seen.add(t);
+    } catch (e) { /* best-effort sampling */ }
+  }, 20);
+
+  await page.click('#loadBtn');
+  await expect(page.locator('#mainContent')).toBeVisible({ timeout: 30_000 });
+  clearInterval(poll);
+
+  const labels = [...seen].join(' | ');
+  // "Finishing up on the server" is the honest label for the stretch after
+  // the bytes are sent but before the response arrives -- the phase that
+  // would otherwise look like a frozen full bar.
+  expect(labels, `progress labels seen: ${labels}`).toMatch(/Finishing up on the server/);
+
+  expect(consoleErrors, `console errors:\n${consoleErrors.join('\n')}`).toEqual([]);
+});
+
+test('navigating writes the location to the hash, and Back returns to it', async ({ page }) => {
+  // Without this the browser cannot see tab changes at all, so Back leaves
+  // the page and the whole export has to be uploaded again.
+  const consoleErrors = await loadFixture(page);
+
+  await page.click('button[data-tab="conversations"]');
+  await expect.poll(() => page.evaluate(() => location.hash)).toBe('#conversations');
+
+  await page.click('button[data-tab="analytics"]');
+  await expect.poll(() => page.evaluate(() => location.hash)).toBe('#analytics');
+
+  // Choosing an analysis is its own location, so this is a third entry, not
+  // a replacement of the second.
+  await page.click('.analytics-item[data-analysis="friction"]');
+  await expect.poll(() => page.evaluate(() => location.hash)).toBe('#analytics/friction');
+
+  // Back steps within the page rather than leaving it: one step back is the
+  // analytics tab without a chosen analysis, two is the conversations tab.
+  await page.goBack();
+  await expect(page.locator('#view-analytics')).toHaveClass(/active/);
+  await page.goBack();
+  await expect(page.locator('#view-conversations')).toHaveClass(/active/);
+  await expect(page.locator('#mainContent')).toBeVisible();
+
+  expect(consoleErrors, `console errors:\n${consoleErrors.join('\n')}`).toEqual([]);
+});
+
+test('an open conversation is addressable in the hash', async ({ page }) => {
+  const consoleErrors = await loadFixture(page);
+
+  await page.click('button[data-tab="conversations"]');
+  const idx = await page.evaluate(() => CONVERSATIONS.findIndex((c) => c.total_messages > 0));
+  await page.click(`.conv-item[data-idx="${idx}"]`);
+  await expect.poll(() => page.evaluate(() => location.hash)).toBe(`#conversations/${idx}`);
+
+  expect(consoleErrors, `console errors:\n${consoleErrors.join('\n')}`).toEqual([]);
+});
+
+test('reloading restores the session and says so', async ({ page }) => {
+  const sub = uniqueSub();
+  await loadFixture(page, { sub });
+
+  const before = await page.evaluate(() => CONVERSATIONS.length);
+  expect(before).toBeGreaterThan(0);
+
+  // A reload is the cheap version of the problem this solves: the export is
+  // still on the server, so it should come back without picking the file
+  // again.
+  await page.reload();
+  await expect(page.locator('#mainContent')).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('#loadScreen')).toBeHidden();
+  expect(await page.evaluate(() => CONVERSATIONS.length)).toBe(before);
+
+  // Announced, not silent -- a page that quietly opens with old data leaves
+  // you unsure which file you are looking at.
+  const notice = page.locator('#restoredNotice');
+  await expect(notice).toBeVisible();
+  await expect(notice).toContainText(sub);
+
+  await page.click('#restoredNoticeDismiss');
+  await expect(notice).toBeHidden();
+});
+
+test('"Load a different file" stops the session coming back', async ({ page }) => {
+  await loadFixture(page, { sub: uniqueSub() });
+  await page.click('#loadDifferentBtn');
+  await expect(page.locator('#loadScreen')).toBeVisible();
+
+  await page.reload();
+  // Back to the picker, and staying there: dismissing a session is a
+  // standing decision, not one you have to repeat on every reload.
+  await expect(page.locator('#loadScreen')).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('#restoredNotice')).toBeHidden();
 });
