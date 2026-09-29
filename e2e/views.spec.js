@@ -41,20 +41,29 @@ async function waitForPort(url, timeoutMs) {
   throw new Error(`timed out waiting for ${url}: ${lastError}`);
 }
 
-// Loads the fixture through the real backend and waits for the main view.
-// Returns the console errors seen during the load so tests can assert none
-// occurred -- a view that renders but throws is not working.
-// Every load gets its own dev login name, so tests don't inherit each
-// other's server-side state. They share one backend process, and detection
-// results persist per user for its lifetime -- without this, a test asserting
-// "no flags unless asked" fails because an earlier test asked, for the same
-// user, against the same conversation ids.
+// Tests share one backend process, so they cannot assume a neutral starting
+// state -- detection results and uploads persist for its lifetime. Every test
+// empties the stores first rather than trying to dodge what earlier tests
+// left behind: a clean slate is a stronger guarantee than a distinct user id,
+// which avoids collisions but leaves the old data sitting there for anything
+// not keyed by user to find.
+async function resetBackend() {
+  const res = await fetch(`${API_BASE}/_dev/reset`, { method: 'POST' });
+  if (!res.ok) throw new Error(`could not reset the backend: ${res.status}`);
+}
+
+// Still one name per test. Reset makes this unnecessary for isolation, but a
+// distinct name keeps a failure message pointing at the test that produced
+// the data.
 let loginCounter = 0;
 function uniqueSub() {
   loginCounter += 1;
   return `views-${process.pid}-${loginCounter}`;
 }
 
+// Loads the fixture through the real backend and waits for the main view.
+// Returns the console errors seen during the load so tests can assert none
+// occurred -- a view that renders but throws is not working.
 async function loadFixture(page, { detect = false, sub = uniqueSub() } = {}) {
   const consoleErrors = [];
   page.on('console', (msg) => {
@@ -114,6 +123,10 @@ test.beforeAll(async () => {
     console.error('timeline-api never came up. Output so far:\n', serverOutput);
     throw e;
   }
+});
+
+test.beforeEach(async () => {
+  await resetBackend();
 });
 
 test.afterAll(async () => {
