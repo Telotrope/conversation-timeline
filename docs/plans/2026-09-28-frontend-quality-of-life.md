@@ -428,16 +428,18 @@ repo.
 [§Phase 4](#design) is justified by the duration being *unknown*, not by any measurement. If a timing
 claim is ever wanted, it needs a measurement first.
 
-### C11 [OPEN]: nothing verifies that the `_dev` routes stay out of the Lambda build
+### C11 [RESOLVED]: nothing verifies that the `_dev` routes stay out of the Lambda build
 `main.rs` measures 0% coverage — all six functions unexecuted, because tests build routers directly
 via `build_router` and bypass `main` entirely. Its module doc states the Lambda branch is handed
 `build_router` alone, so `POST /_dev/login` and the local-storage routes are structurally absent
 from anything deployable. Reading the source, that claim looks correct — but **no test asserts it**,
 and it is the one property in this codebase where being wrong would mean shipping an unauthenticated
 token-minting endpoint to production.
-**Open:** add a test that builds the Lambda-path router and asserts every `/_dev/*` path returns
-404. Cheap to write. Trigger: before any real deployment — this must not be outstanding when V2
-deploys.
+**Resolution:** [backend/timeline-api/tests/lambda_router.rs](../../backend/timeline-api/tests/lambda_router.rs)
+builds exactly what the Lambda branch builds and asserts every `/_dev/*` path 404s — and, because
+that alone would also pass on an empty router, asserts the real routes are present and merely
+unauthorized. Brought forward from "before deployment" by the arrival of `POST /_dev/reset`, which
+erases everything: a route like that must not be one wiring mistake away from production.
 
 ### C12 [RESOLVED]: "run all tests" had been narrowed to exclude the slow suites
 Framed originally as a missing-CI problem. It isn't: the standing instruction is to run all tests
