@@ -47,24 +47,6 @@ async function loadFixtureAndWaitForRender(page) {
   await expect(page.locator('#mainContent')).toBeVisible({ timeout: 20_000 });
   await expect(page.locator('#loadScreen')).toBeHidden();
 
-  // The fixture's message "...pissing me off." reliably trips the drift
-  // modal every load. Verified, not assumed: both detectors' keyword-phrase
-  // list is identical and matches neither side ("pissed" != "pissing", but
-  // that's a red herring -- it was never the deciding factor). The real
-  // cause is the two sentiment-score thresholds: AFINN's dampened score
-  // for this message is -0.408 (threshold -1.0, doesn't cross); VADER's
-  // compound is -0.6476 (threshold -0.6, recalibrated for VADER's bounded
-  // [-1,1] scale, per timeline-core/src/flags/anger.rs's module doc --
-  // barely crosses). A genuinely borderline message landing on opposite
-  // sides of two independently-calibrated algorithms' thresholds -- the
-  // expected, documented consequence of the AFINN -> VADER swap (migration
-  // plan C2), not a wiring bug. "Keep the saved values" trusts the server,
-  // which is now the source of truth.
-  const driftModal = page.locator('#driftModal');
-  if (await driftModal.isVisible().catch(() => false)) {
-    await page.click('#driftKeepSaved');
-  }
-
   return consoleErrors;
 }
 

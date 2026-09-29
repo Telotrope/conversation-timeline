@@ -56,16 +56,6 @@ async function loadFixture(page) {
   await page.click('#loadBtn');
   await expect(page.locator('#mainContent')).toBeVisible({ timeout: 30_000 });
 
-  // The fixture trips the detection-drift modal on the current build; taking
-  // the "keep saved" branch is what leaves the page rendering the backend's
-  // own flags. The modal is being deleted in Phase 3, at which point this
-  // becomes a no-op rather than a behavior change -- which is precisely why
-  // these tests must pass identically before and after that deletion.
-  const driftModal = page.locator('#driftModal');
-  if (await driftModal.isVisible().catch(() => false)) {
-    await page.click('#driftKeepSaved');
-  }
-
   return consoleErrors;
 }
 
@@ -157,9 +147,19 @@ test('opening a conversation renders its transcript', async ({ page }) => {
   const consoleErrors = await loadFixture(page);
 
   await page.click('button[data-tab="conversations"]');
-  const firstConv = page.locator('.conv-item').first();
-  await expect(firstConv).toBeVisible();
-  await firstConv.click();
+  await expect(page.locator('.conv-item').first()).toBeVisible();
+
+  // Pick a conversation that actually has messages rather than whichever
+  // happens to be first. The fixture contains an empty conversation, and the
+  // backend returns conversations in a non-deterministic order (its in-memory
+  // store iterates a HashMap without sorting -- see
+  // timeline-storage/src/memory/conversations.rs), so "the first one" is
+  // sometimes the empty one and has no session rows to find.
+  const idx = await page.evaluate(
+    () => CONVERSATIONS.findIndex((c) => c.total_messages > 0)
+  );
+  expect(idx, 'fixture had no conversation with messages').toBeGreaterThanOrEqual(0);
+  await page.click(`.conv-item[data-idx="${idx}"]`);
 
   // Before the click the detail pane holds only the placeholder; after it,
   // real session rows built from the fixture. This is the only test that
