@@ -753,24 +753,33 @@
       </div>
       <div class="load-field load-checkbox-field">
         <label style="display:flex; align-items:flex-start; gap:9px; cursor:pointer;">
-          <input type="checkbox" id="autoDetectCheckbox" checked style="margin-top:3px;">
+          <input type="checkbox" id="autoDetectCheckbox" style="margin-top:3px;">
           <span>
-            Automatically flag likely ALL-CAPS emphasis, criticism of Claude, and anger <strong>(recommended)</strong>.
+            After uploading, scan for likely ALL-CAPS emphasis, criticism of Claude, and anger.
             <span class="opt" style="display:block; margin-top:4px;">
-              ALL-CAPS uses a dictionary check to skip acronyms (IRS, DARPA, etc.). Criticism and anger use keyword
-              and sentiment heuristics — treat them as a starting point to review and correct in the Review tab, not
-              a verdict. This never overwrites flags you've already confirmed yourself — automatic and your own
-              flags are always kept completely separate, no matter what's checked here.
+              This runs only if you tick it. It reads every message you sent, so it takes a while on a large
+              export — you'll see its progress. ALL-CAPS uses a dictionary check to skip acronyms (IRS, DARPA,
+              etc.); criticism and anger use keyword and sentiment heuristics. Treat all three as a starting
+              point to correct in the Review tab, not a verdict. This never overwrites flags you've confirmed
+              yourself — automatic and your own flags are always kept completely separate.
             </span>
           </span>
         </label>
       </div>
       <button id="loadBtn" class="btn-primary">Load</button>
       <p class="load-status" id="loadStatus"></p>
+      <div id="loadProgress" style="display:none;">
+        <div class="progress-track"><div class="progress-fill" id="loadProgressFill"></div></div>
+        <div class="progress-label" id="loadProgressLabel"></div>
+      </div>
     </div>
   </div>
 
   <div id="mainContent" style="display:none;">
+  <div class="filter-banner" id="restoredNotice" style="display:none;">
+    <span id="restoredNoticeText"></span>
+    <button id="restoredNoticeDismiss" class="btn-secondary" style="padding:4px 10px;">Dismiss</button>
+  </div>
   <header>
     <h1>A record of our conversations</h1>
     <p class="sub" id="subtitle">Loading…</p>
@@ -955,7 +964,7 @@ function unwrapUploadedJSON(parsed){
   throw new Error('Expected either a bare array of conversations or a {conversations: [...]} object.');
 }
 
-function parseUploadedConversations(rawText, applyAutoFlags){
+function parseUploadedConversations(rawText){
   const parsedJSON = JSON.parse(rawText);
   const { conversations: data, alreadyProcessed } = unwrapUploadedJSON(parsedJSON);
 
@@ -987,15 +996,13 @@ function parseUploadedConversations(rawText, applyAutoFlags){
         else if(legacyFlags) embeddedOverrides[id] = legacyFlags;
 
         // Automatic flags are whatever the backend computed and embedded.
-        // This page performs no detection of its own: a message with no
-        // stored automatic flags simply has none, which is not a cue to go
-        // compute some here. The checkbox chooses whether to apply the
-        // stored tags at all, never whether to generate any.
-        const useStored = applyAutoFlags && storedAuto;
-        const defaultCaps = !!(useStored && storedAuto.caps);
-        const defaultCritical = !!(useStored && storedAuto.critical);
-        const defaultAngry = !!(useStored && storedAuto.angry);
-        const autoSource = useStored ? (storedAuto.source || 'heuristic') : 'none';
+        // This page performs no detection of its own, and a message with no
+        // stored automatic flags simply has none -- which is the normal
+        // state until the user asks for a detection pass.
+        const defaultCaps = !!(storedAuto && storedAuto.caps);
+        const defaultCritical = !!(storedAuto && storedAuto.critical);
+        const defaultAngry = !!(storedAuto && storedAuto.angry);
+        const autoSource = storedAuto ? (storedAuto.source || 'heuristic') : 'none';
 
         humanMessages.push({
           id,
@@ -1063,6 +1070,9 @@ async function ensureAuthToken(){
   if(!res.ok) throw new Error(await describeFailure('dev login', res));
   const body = await res.json();
   AUTH_TOKEN = body.token;
+  // Remembered so a reload can offer to pick the session back up without
+  // making you choose the file again -- see tryRestoreSession.
+  try{ localStorage.setItem('timeline_dev_sub', sub); } catch(e){ /* private mode; restore just won't offer */ }
   return AUTH_TOKEN;
 }
 
@@ -1087,21 +1097,256 @@ async function describeFailure(what, res){
   }
 }
 
+// --- Load-screen progress ---
+// Three states, because the load has three genuinely different kinds of
+// phase: a measurable transfer, an unmeasurable wait, and finished. Nothing
+// here invents a percentage for work whose size isn't known.
+
+function showLoadProgress(){
+  const wrap = document.getElementById('loadProgress');
+  const fill = document.getElementById('loadProgressFill');
+  wrap.style.display = 'block';
+  fill.classList.remove('is-error');
+  fill.style.width = '0%';
+  document.getElementById('loadProgressLabel').textContent = '';
+}
+
+function hideLoadProgress(){
+  document.getElementById('loadProgress').style.display = 'none';
+}
+
+function failLoadProgress(){
+  const wrap = document.getElementById('loadProgress');
+  if(wrap.style.display === 'none') return;
+  document.getElementById('loadProgressFill').classList.add('is-error');
+}
+
+// A phase whose duration can't be observed: full-width track, no number.
+// Used for the stretch after the request body is fully sent but before the
+// server answers -- the local-dev PUT handler does its processing there, and
+// a bar frozen at 100% would read as hung.
+function setLoadProgressIndeterminate(label){
+  document.getElementById('loadProgress').style.display = 'block';
+  document.getElementById('loadProgressFill').style.width = '100%';
+  document.getElementById('loadProgressLabel').textContent = label;
+}
+
+function formatBytes(n){
+  if(n < 1024) return n + ' B';
+  if(n < 1024 * 1024) return (n / 1024).toFixed(0) + ' KB';
+  return (n / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+// Deliberately coarse. The estimate is derived from a few seconds of
+// observed throughput, so rendering it to a tenth of a second would claim a
+// precision it does not have.
+function formatEta(seconds){
+  if(!isFinite(seconds) || seconds < 0) return '';
+  if(seconds < 5) return 'almost done';
+  if(seconds < 60) return `about ${Math.round(seconds / 5) * 5} seconds left`;
+  if(seconds < 120) return 'about a minute left';
+  return `about ${Math.round(seconds / 60)} minutes left`;
+}
+
+// Estimates remaining time from a rolling window of recent progress events
+// rather than an average over the whole transfer -- a whole-transfer average
+// keeps reporting a stale rate long after the speed changes. Returns '' until
+// there are at least two samples spanning enough time to mean anything.
+function makeRateEstimator(windowMs){
+  const samples = [];
+  return function(loaded, total){
+    const now = Date.now();
+    samples.push({ t: now, loaded });
+    while(samples.length > 2 && now - samples[0].t > windowMs) samples.shift();
+    if(samples.length < 2) return '';
+    const first = samples[0];
+    const elapsed = (now - first.t) / 1000;
+    const moved = loaded - first.loaded;
+    if(elapsed < 1 || moved <= 0) return '';
+    return formatEta((total - loaded) / (moved / elapsed));
+  };
+}
+
+// fetch() cannot report upload progress -- it has no equivalent of
+// xhr.upload.onprogress and its streaming request bodies aren't portable --
+// so the one request that carries the file body uses XMLHttpRequest. Every
+// other call in the load path stays on fetch.
+function putWithProgress(url, body, onProgress){
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', url);
+    xhr.upload.onprogress = (e) => {
+      if(e.lengthComputable) onProgress(e.loaded, e.total);
+    };
+    xhr.onload = () => resolve({ ok: xhr.status >= 200 && xhr.status < 300, status: xhr.status, text: xhr.responseText });
+    // Both fire for genuine transport failures; reject with something the
+    // caller's TypeError hint can still recognize as "couldn't reach it".
+    xhr.onerror = () => reject(new TypeError('Failed to fetch'));
+    xhr.onabort = () => reject(new TypeError('upload aborted'));
+    xhr.send(body);
+  });
+}
+
+// Reads a response body chunk by chunk so a large download reports real
+// progress. Content-Length is absent often enough (chunked encoding, proxies)
+// that the no-total case shows transferred bytes instead of a made-up
+// percentage.
+async function readBodyWithProgress(res, onProgress){
+  const total = Number(res.headers.get('Content-Length')) || 0;
+  if(!res.body || !res.body.getReader) return res.text();
+  const reader = res.body.getReader();
+  const chunks = [];
+  let loaded = 0;
+  for(;;){
+    const { done, value } = await reader.read();
+    if(done) break;
+    chunks.push(value);
+    loaded += value.length;
+    onProgress(loaded, total);
+  }
+  return new TextDecoder().decode(await new Blob(chunks).arrayBuffer());
+}
+
+// Applies an already-downloaded export: parses it, replaces the page's
+// state, and shows the timeline. Returns false if the export held no
+// conversations, leaving the caller to report that however suits it.
+//
+// Shared by the upload path and the restore-on-load path below, so a
+// restored session goes through exactly the same rendering as a fresh
+// upload rather than a parallel copy that can drift.
+function applyExportText(text){
+  const parsed = parseUploadedConversations(text);
+  if(parsed.conversations.length === 0) return false;
+
+  CONVERSATIONS = parsed.conversations;
+  MESSAGES = parsed.messages;
+  HUMAN_MESSAGES = parsed.humanMessages;
+  HUMAN_BY_ID = new Map(HUMAN_MESSAGES.map(m => [m.id, m]));
+  BLOCKS = buildBlocks();
+  RAW_DATA = parsed.rawData;
+
+  // Your confirmed flags come from whatever the server's export embedded
+  // (overrides you PATCHed to the backend earlier -- see
+  // patchFlagsToBackend). There's no other recovery mechanism now that this
+  // page talks to a real backend instead of window.storage; see the
+  // migration plan's V2a.
+  OVERRIDES = { ...parsed.embeddedOverrides };
+  const embeddedCount = Object.keys(parsed.embeddedOverrides).length;
+
+  attachFlags();
+  if(embeddedCount > 0){
+    setSaveStatus(`Loaded ${embeddedCount} of your confirmed flag${embeddedCount===1?'':'s'} from the server.`);
+  }
+
+  document.getElementById('loadScreen').style.display = 'none';
+  document.getElementById('mainContent').style.display = '';
+
+  renderSubtitle();
+  renderCalendar();
+  renderConvList();
+  renderReviewTable();
+  return true;
+}
+
+// Picks up the last session on load, so a reload or a Back press past the
+// first entry doesn't cost you the whole upload again. The backend still
+// holds the processed export; all this needs is the name it was uploaded
+// under.
+//
+// Announced rather than silent: a page that quietly opens with old data
+// leaves you unsure whether you're looking at this file or the last one.
+// Everything about it is best-effort -- no remembered name, a server that
+// was restarted (its storage is in-memory), or anything else unexpected
+// just means the normal load screen, which is the correct fallback and not
+// an error worth shouting about.
+async function tryRestoreSession(){
+  let sub = null;
+  try{ sub = localStorage.getItem('timeline_dev_sub'); } catch(e){ return; }
+  if(!sub) return;
+
+  document.getElementById('devLoginSub').value = sub;
+  try{
+    const token = await ensureAuthToken();
+    const exportRes = await fetch(`${API_BASE}/export`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    if(!exportRes.ok) return;
+    const { export_url } = await exportRes.json();
+    const downloadRes = await fetch(`${API_BASE}${export_url}`);
+    if(!downloadRes.ok) return;
+    if(!applyExportText(await downloadRes.text())) return;
+
+    showRestoredNotice(sub);
+    applyLocationHash();
+  } catch(e){
+    // The server being gone or unreachable is the ordinary case here, not a
+    // fault: it just means there is nothing to restore. Logged rather than
+    // swallowed so a genuinely surprising failure is still visible.
+    console.info('No previous session restored:', e.message);
+    AUTH_TOKEN = null;
+  }
+}
+
+function showRestoredNotice(sub){
+  const notice = document.getElementById('restoredNotice');
+  document.getElementById('restoredNoticeText').textContent =
+    `Picked up where you left off — the export you last loaded as "${sub}". Use "Load a different file…" to start fresh.`;
+  notice.style.display = 'flex';
+  document.getElementById('restoredNoticeDismiss').onclick = () => { notice.style.display = 'none'; };
+}
+
+// Runs the backend's non-generative detection pass, one page of
+// conversations at a time. The server could do the whole thing in one
+// request, but then there would be nothing to report: paging is what makes
+// the progress bar show real, earned progress rather than a spinner. Same
+// shape as the AI classification pass further down this file.
+async function runDetectionPass(token){
+  const fill = document.getElementById('loadProgressFill');
+  const label = document.getElementById('loadProgressLabel');
+  let offset = 0;
+  let detected = 0;
+  for(;;){
+    const res = await fetch(`${API_BASE}/detect`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ offset, limit: 5 }),
+    });
+    if(!res.ok) throw new Error(await describeFailure('scanning your messages', res));
+    const body = await res.json();
+    detected += body.messages_detected;
+
+    const total = body.total_conversations;
+    const done = body.next_offset === null || body.next_offset === undefined;
+    const covered = done ? total : body.next_offset;
+    const pct = total ? Math.round((covered / total) * 100) : 100;
+    fill.style.width = pct + '%';
+    label.textContent =
+      `Scanning your messages — ${covered} of ${total} conversation${total === 1 ? '' : 's'} (${pct}%)`;
+
+    if(done) return detected;
+    offset = body.next_offset;
+  }
+}
+
 async function handleLoadClick(){
   const convInput = document.getElementById('loadConvFile');
   const convFile = convInput.files[0];
-  const applyAutoFlags = document.getElementById('autoDetectCheckbox').checked;
+  const runDetection = document.getElementById('autoDetectCheckbox').checked;
 
   if(!convFile){
     setLoadStatus('Choose a conversations.json file first.', true);
+    hideLoadProgress();
     return;
   }
 
   try{
+    showLoadProgress();
     setLoadStatus('Logging in…');
+    setLoadProgressIndeterminate('Signing in…');
     const token = await ensureAuthToken();
 
     setLoadStatus('Uploading your conversation export…');
+    setLoadProgressIndeterminate('Reading the file…');
     const rawText = await convFile.text();
     const createRes = await fetch(`${API_BASE}/uploads`, {
       method: 'POST',
@@ -1110,14 +1355,38 @@ async function handleLoadClick(){
     if(!createRes.ok) throw new Error(await describeFailure('starting the upload', createRes));
     const { upload_url } = await createRes.json();
 
-    const putRes = await fetch(`${API_BASE}${upload_url}`, { method: 'PUT', body: rawText });
-    if(!putRes.ok) throw new Error(await describeFailure('uploading the file', putRes));
+    const uploadFill = document.getElementById('loadProgressFill');
+    const uploadLabel = document.getElementById('loadProgressLabel');
+    const uploadEta = makeRateEstimator(3000);
+    const putRes = await putWithProgress(`${API_BASE}${upload_url}`, rawText, (loaded, total) => {
+      const pct = Math.round((loaded / total) * 100);
+      uploadFill.style.width = pct + '%';
+      const eta = uploadEta(loaded, total);
+      uploadLabel.textContent =
+        `Uploading ${formatBytes(loaded)} of ${formatBytes(total)} (${pct}%)` + (eta ? ` — ${eta}` : '');
+    });
+    if(!putRes.ok){
+      throw new Error(`uploading the file failed (${putRes.status})${putRes.text ? ': ' + putRes.text : ''}`);
+    }
 
-    // No polling here -- the local-dev PUT handler runs processing
-    // synchronously before responding, so it's already finished by the
-    // time putRes resolves. Real S3-triggered processing is asynchronous;
-    // that gap isn't solved here, see the migration plan's V2a.
+    // The bytes being sent is not the end of the wait: the local-dev PUT
+    // handler parses, dedups and stores the upload before it answers, and
+    // none of that is observable from here. Saying so beats a full bar that
+    // looks stuck. No polling is needed either -- by the time the PUT
+    // resolves the work is done. Real S3-triggered processing is
+    // asynchronous; that gap isn't solved here, see the migration plan's V2a.
     setLoadStatus('Processing your export…');
+    setLoadProgressIndeterminate('Finishing up on the server…');
+
+    // Only if asked. Detection reads every message you sent, and nothing
+    // here has measured how long that takes, so it is never implied by the
+    // act of uploading.
+    if(runDetection){
+      setLoadStatus('Scanning your messages for flags…');
+      await runDetectionPass(token);
+      setLoadProgressIndeterminate('Finishing up on the server…');
+    }
+
     const exportRes = await fetch(`${API_BASE}/export`, {
       headers: { 'Authorization': `Bearer ${token}` },
     });
@@ -1126,43 +1395,33 @@ async function handleLoadClick(){
 
     const downloadRes = await fetch(`${API_BASE}${export_url}`);
     if(!downloadRes.ok) throw new Error(await describeFailure('downloading the processed export', downloadRes));
-    const text = await downloadRes.text();
+    const downloadEta = makeRateEstimator(3000);
+    const text = await readBodyWithProgress(downloadRes, (loaded, total) => {
+      if(total){
+        const pct = Math.round((loaded / total) * 100);
+        uploadFill.style.width = pct + '%';
+        const eta = downloadEta(loaded, total);
+        uploadLabel.textContent =
+          `Downloading ${formatBytes(loaded)} of ${formatBytes(total)} (${pct}%)` + (eta ? ` — ${eta}` : '');
+      } else {
+        // No Content-Length: report what has actually arrived rather than
+        // inventing a proportion of an unknown whole.
+        uploadFill.style.width = '100%';
+        uploadLabel.textContent = `Downloading… ${formatBytes(loaded)} so far`;
+      }
+    });
 
-    const parsed = parseUploadedConversations(text, applyAutoFlags);
-    if(parsed.conversations.length === 0){
+    setLoadProgressIndeterminate('Preparing the timeline…');
+
+    if(!applyExportText(text)){
       setLoadStatus('That file parsed, but contained no conversations — is it the right export?', true);
+      failLoadProgress();
       return;
     }
-
-    CONVERSATIONS = parsed.conversations;
-    MESSAGES = parsed.messages;
-    HUMAN_MESSAGES = parsed.humanMessages;
-    HUMAN_BY_ID = new Map(HUMAN_MESSAGES.map(m => [m.id, m]));
-    BLOCKS = buildBlocks();
-    RAW_DATA = parsed.rawData;
-
-    // Your confirmed flags come from whatever the server's export embedded
-    // (overrides you PATCHed to the backend in an earlier session against
-    // the same in-memory server -- see patchFlagsToBackend). There's no
-    // other recovery mechanism now that this page talks to a real backend
-    // instead of window.storage; see the migration plan's V2a.
-    OVERRIDES = { ...parsed.embeddedOverrides };
-    const embeddedCount = Object.keys(parsed.embeddedOverrides).length;
-
-    attachFlags();
-    if(embeddedCount > 0){
-      setSaveStatus(`Loaded ${embeddedCount} of your confirmed flag${embeddedCount===1?'':'s'} from the server.`);
-    }
-
-    document.getElementById('loadScreen').style.display = 'none';
-    document.getElementById('mainContent').style.display = '';
-
-    renderSubtitle();
-    renderCalendar();
-    renderConvList();
-    renderReviewTable();
+    hideLoadProgress();
   } catch(err){
     console.error(err);
+    failLoadProgress();
     // A TypeError here (not an HTTP error response -- those are handled by
     // describeFailure above) means fetch() itself couldn't reach the
     // server at all -- almost always because it isn't running.
@@ -1179,6 +1438,12 @@ document.getElementById('loadDifferentBtn').addEventListener('click', ()=>{
   document.getElementById('loadScreen').style.display = '';
   document.getElementById('loadConvFile').value = '';
   setLoadStatus('');
+  // Asking for a different file is also how you say "stop bringing the old
+  // one back", so the remembered session goes with it. Without this, the
+  // next reload would silently restore exactly what you just dismissed.
+  try{ localStorage.removeItem('timeline_dev_sub'); } catch(e){ /* nothing to forget */ }
+  AUTH_TOKEN = null;
+  window.location.hash = '';
 });
 
 let CONVERSATIONS = [];
@@ -1844,6 +2109,7 @@ function renderConvList(filter=''){
 let currentConv = null;
 function selectConversation(idx){
   currentConv = idx;
+  rememberLocation();
   document.querySelectorAll('.conv-item').forEach(el=>{
     el.classList.toggle('selected', parseInt(el.dataset.idx,10) === idx);
   });
@@ -2022,8 +2288,67 @@ function switchTab(name){
     v.classList.toggle('active', v.id === 'view-' + name);
   });
 }
+
+// --- Where you are, in the URL ---
+// Without this, every tab change and conversation selection is invisible to
+// the browser, so Back leaves the page entirely and the whole export has to
+// be loaded again. The three axes worth remembering are the tab, the open
+// conversation, and the chosen analysis.
+//
+// A hash, not history.pushState: this file is still opened directly as a
+// file:// URL in places (the e2e suite does exactly that), and pushState is
+// restricted for file URLs in some browsers, so it would work when tested by
+// hand and fail in the test meant to protect it. A hash behaves identically
+// under both.
+//
+// Review search and pagination deliberately stay out -- they change on every
+// keystroke and would bury real navigation under dozens of history entries.
+
+// Set while applying a hash, so restoring state doesn't immediately write
+// the same hash back and fight with the browser's own history.
+let APPLYING_HASH = false;
+
+function currentLocationHash(){
+  if(currentAnalysis && document.getElementById('view-analytics').classList.contains('active')){
+    return `#analytics/${currentAnalysis}`;
+  }
+  const active = document.querySelector('nav.tabs button.active');
+  const tab = active ? active.dataset.tab : 'calendar';
+  if(tab === 'conversations' && currentConv !== null) return `#conversations/${currentConv}`;
+  return `#${tab}`;
+}
+
+function rememberLocation(){
+  if(APPLYING_HASH) return;
+  const next = currentLocationHash();
+  if(next !== window.location.hash) window.location.hash = next;
+}
+
+function applyLocationHash(){
+  const raw = window.location.hash.replace(/^#/, '');
+  if(!raw) return;
+  const [tab, arg] = raw.split('/');
+  if(!document.getElementById('view-' + tab)) return;
+
+  APPLYING_HASH = true;
+  try{
+    switchTab(tab);
+    if(tab === 'conversations' && arg !== undefined){
+      const idx = parseInt(arg, 10);
+      if(!isNaN(idx) && idx >= 0 && idx < CONVERSATIONS.length) selectConversation(idx);
+    }
+    if(tab === 'analytics' && arg){
+      const btn = document.querySelector(`.analytics-item[data-analysis="${arg}"]`);
+      if(btn) runAnalysis(arg, {});
+    }
+  } finally {
+    APPLYING_HASH = false;
+  }
+}
+
+window.addEventListener('hashchange', applyLocationHash);
 document.querySelectorAll('nav.tabs button').forEach(b=>{
-  b.addEventListener('click', ()=> switchTab(b.dataset.tab));
+  b.addEventListener('click', ()=>{ switchTab(b.dataset.tab); rememberLocation(); });
 });
 
 document.getElementById('convSearch').addEventListener('input', (e)=> renderConvList(e.target.value));
@@ -2401,6 +2726,7 @@ function setAnalyticsProgress(pct){
 function runAnalysis(name, opts){
   opts = opts || {};
   currentAnalysis = name;
+  rememberLocation();
   document.querySelectorAll('.analytics-item').forEach(b=>{
     b.classList.toggle('active', b.dataset.analysis === name);
   });
@@ -2772,6 +3098,12 @@ function renderScatterChartSVG(container, points, opts){
     });
   }
 }
+
+// Last thing in the file, so everything it calls already exists. Deliberately
+// not awaited: the load screen is already usable, and a slow or unreachable
+// backend must not hold the page hostage while it decides there is nothing to
+// restore.
+tryRestoreSession();
 </script>
 
 </body>
