@@ -55,6 +55,11 @@ fn test_router() -> Router {
         upload_outcome_store: Arc::new(InMemoryUploadOutcomeStore::new()),
         conversation_summary_store,
         auto_flag_writer: flags_store,
+        // Nothing here calls POST /_dev/reset, so there is nothing for it to
+        // empty. Left explicitly empty rather than wired up, so that a test
+        // added later which *does* reset fails loudly instead of quietly
+        // clearing nothing.
+        resettable: Arc::new(vec![]),
     };
     build_router(app_state).merge(build_dev_router(dev_state))
 }

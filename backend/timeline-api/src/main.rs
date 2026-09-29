@@ -56,12 +56,21 @@ fn build_local_state() -> (AppState, DevState) {
     // Mutex<HashMap>, so a PATCH through one would never be visible to a
     // GET through the other. One store, exposed as differently-typed
     // trait-object handles.
+    //
+    // Each store is built once as its concrete type and then handed out as
+    // whichever trait handles need it. Keeping the concrete `Arc` is what
+    // lets the same object also appear in `DevState::resettable`: a
+    // `Arc<dyn ObjectStore>` cannot be turned back into an
+    // `Arc<dyn Resettable>`, so the coercion has to happen from the concrete
+    // value, not after the fact.
     let flags_store = Arc::new(InMemoryMessageFlagsStore::new());
+    let object_store_concrete = Arc::new(InMemoryObjectStore::new());
+    let conversation_summary_store_concrete = Arc::new(InMemoryConversationSummaryStore::new());
     let object_store: Arc<dyn timeline_core::ports::object_store::ObjectStore> =
-        Arc::new(InMemoryObjectStore::new());
+        object_store_concrete.clone();
     let conversation_summary_store: Arc<
         dyn timeline_core::ports::conversations::ConversationSummaryStore,
-    > = Arc::new(InMemoryConversationSummaryStore::new());
+    > = conversation_summary_store_concrete.clone();
 
     let app_state = AppState {
         object_store: object_store.clone(),
@@ -71,11 +80,21 @@ fn build_local_state() -> (AppState, DevState) {
         auto_flag_writer: flags_store.clone(),
         verifier: Arc::new(CognitoVerifier::new(jwks.clone(), DEV_ONLY_ISSUER, DEV_ONLY_CLIENT_ID)),
     };
+    let upload_outcome_store = Arc::new(InMemoryUploadOutcomeStore::new());
     let dev_state = DevState {
         object_store,
-        upload_outcome_store: Arc::new(InMemoryUploadOutcomeStore::new()),
+        upload_outcome_store: upload_outcome_store.clone(),
         conversation_summary_store,
-        auto_flag_writer: flags_store,
+        auto_flag_writer: flags_store.clone(),
+        // Same underlying objects as the port handles above, held again as
+        // the one capability that is not a storage port -- see
+        // `timeline_storage::memory::resettable`.
+        resettable: Arc::new(vec![
+            object_store_concrete,
+            conversation_summary_store_concrete,
+            flags_store,
+            upload_outcome_store,
+        ]),
     };
     (app_state, dev_state)
 }

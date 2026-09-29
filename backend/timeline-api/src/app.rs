@@ -8,7 +8,9 @@ use axum::routing::{get, post, put};
 use axum::Router;
 
 use crate::dev_state::DevState;
-use crate::routes::{conversations, detect, dev_local_storage, dev_login, export, flags, uploads};
+use crate::routes::{
+    conversations, detect, dev_local_storage, dev_login, dev_reset, export, flags, uploads,
+};
 use crate::state::AppState;
 
 /// The real, user-facing API -- every route Cognito gates in production,
@@ -48,6 +50,9 @@ pub fn build_dev_router(state: DevState) -> Router {
             "/_dev/local-storage/get/{*key}",
             get(dev_local_storage::get_object),
         )
+        // Unlike `/_dev/login` below, this one needs state, so it has to be
+        // registered before `.with_state` resolves the router.
+        .route("/_dev/reset", post(dev_reset::reset))
         .with_state(state)
         // `/_dev/login` needs no state at all (see `routes::dev_login`), so
         // it's merged in after `.with_state` resolves the router above --

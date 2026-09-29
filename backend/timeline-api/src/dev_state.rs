@@ -14,6 +14,7 @@ use timeline_core::ports::conversations::ConversationSummaryStore;
 use timeline_core::ports::message_flags::AutoFlagWriter;
 use timeline_core::ports::object_store::ObjectStore;
 use timeline_core::ports::uploads::UploadOutcomeStore;
+use timeline_storage::memory::resettable::Resettable;
 
 #[derive(Clone)]
 pub struct DevState {
@@ -21,6 +22,17 @@ pub struct DevState {
     pub upload_outcome_store: Arc<dyn UploadOutcomeStore>,
     pub conversation_summary_store: Arc<dyn ConversationSummaryStore>,
     pub auto_flag_writer: Arc<dyn AutoFlagWriter>,
+    /// Every store `POST /_dev/reset` should empty. Held separately from the
+    /// port handles above because emptying a store is not a storage-port
+    /// capability -- see `timeline_storage::memory::resettable`. The same
+    /// underlying object typically appears both here and as one of the ports.
+    pub resettable: Arc<Vec<Arc<dyn Resettable>>>,
+}
+
+impl FromRef<DevState> for Arc<Vec<Arc<dyn Resettable>>> {
+    fn from_ref(state: &DevState) -> Self {
+        state.resettable.clone()
+    }
 }
 
 impl FromRef<DevState> for Arc<dyn ObjectStore> {
