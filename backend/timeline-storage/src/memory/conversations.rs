@@ -69,3 +69,12 @@ impl ConversationSummaryStore for InMemoryConversationSummaryStore {
         Ok(())
     }
 }
+
+impl crate::memory::resettable::Resettable for InMemoryConversationSummaryStore {
+    fn reset(&self) {
+        self.summaries
+            .lock()
+            .expect("in-memory store mutex poisoned")
+            .clear();
+    }
+}

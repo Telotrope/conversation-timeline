@@ -111,3 +111,12 @@ impl UserFlagWriter for InMemoryMessageFlagsStore {
         Ok(*record)
     }
 }
+
+impl crate::memory::resettable::Resettable for InMemoryMessageFlagsStore {
+    fn reset(&self) {
+        self.records
+            .lock()
+            .expect("in-memory store mutex poisoned")
+            .clear();
+    }
+}

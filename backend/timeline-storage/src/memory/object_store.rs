@@ -61,3 +61,12 @@ impl ObjectStore for InMemoryObjectStore {
         Ok(())
     }
 }
+
+impl crate::memory::resettable::Resettable for InMemoryObjectStore {
+    fn reset(&self) {
+        self.objects
+            .lock()
+            .expect("in-memory store mutex poisoned")
+            .clear();
+    }
+}

@@ -47,3 +47,12 @@ impl UploadOutcomeStore for InMemoryUploadOutcomeStore {
             .cloned())
     }
 }
+
+impl crate::memory::resettable::Resettable for InMemoryUploadOutcomeStore {
+    fn reset(&self) {
+        self.outcomes
+            .lock()
+            .expect("in-memory store mutex poisoned")
+            .clear();
+    }
+}
