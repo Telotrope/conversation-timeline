@@ -11,14 +11,11 @@
 //! presigned-URL PUT lands the bytes before anything ever calls this
 //! function.
 
-use timeline_core::flags::anger::detect_angry;
-use timeline_core::flags::caps::has_emphasis_caps;
-use timeline_core::flags::criticism::detect_critical;
 use timeline_core::model::{ConversationId, MessageId};
 use timeline_core::ports::conversations::ConversationSummaryStore;
 use timeline_core::ports::errors::ObjectStoreError;
 use timeline_core::ports::ids::{UploadId, UserId};
-use timeline_core::ports::message_flags::{FlagSet, MessageFlagsReader};
+use timeline_core::ports::message_flags::MessageFlagsReader;
 use timeline_core::ports::object_store::ObjectStore;
 use timeline_core::ports::uploads::{raw_object_key, UploadOutcome, UploadOutcomeStore};
 use timeline_api::processing::{process_upload, ProcessingError};
@@ -88,7 +85,6 @@ impl Harness {
             &self.object_store,
             &self.upload_outcome_store,
             &self.conversation_summary_store,
-            &self.flags_store,
             &self.user_id,
             self.upload_id,
         )
@@ -127,47 +123,26 @@ async fn a_successful_upload_produces_a_summary_and_records_a_ready_outcome() {
 }
 
 #[tokio::test]
-async fn human_message_gets_the_real_heuristic_flags_not_a_hardcoded_stand_in() {
+async fn processing_an_upload_writes_no_automatic_flags() {
+    // Detection is a separate, user-triggered pass now (POST /detect); the
+    // assertions about what it computes live in tests/detect.rs. What upload
+    // processing must guarantee is the negative: it does not run a pass over
+    // every speech act just because a file arrived.
     let h = Harness::with_raw_bytes(sample_upload_json().as_bytes()).await;
     h.run().await.unwrap();
 
     let conversation_id = ConversationId(CONV_ID.parse().unwrap());
-    let human_id = MessageId(HUMAN_MSG_ID.parse().unwrap());
-    let record = h
-        .flags_store
-        .get(&h.user_id, conversation_id, human_id)
-        .await
-        .unwrap()
-        .expect("human message should have an auto-flag record");
-
-    let expected = FlagSet {
-        caps: has_emphasis_caps(HUMAN_TEXT),
-        critical: detect_critical(HUMAN_TEXT),
-        angry: detect_angry(HUMAN_TEXT),
-    };
-    assert_eq!(record.auto, expected);
-    // The example text is specifically chosen to exercise the caps and
-    // criticism heuristics from timeline-project-decisions.md section 5.
-    assert!(expected.caps, "WRONG should trip the caps heuristic");
-    assert!(
-        expected.critical,
-        "'you failed to' should trip the criticism heuristic"
-    );
-}
-
-#[tokio::test]
-async fn assistant_messages_never_get_an_auto_flag_record() {
-    let h = Harness::with_raw_bytes(sample_upload_json().as_bytes()).await;
-    h.run().await.unwrap();
-
-    let conversation_id = ConversationId(CONV_ID.parse().unwrap());
-    let assistant_id = MessageId(ASSISTANT_MSG_ID.parse().unwrap());
-    let record = h
-        .flags_store
-        .get(&h.user_id, conversation_id, assistant_id)
-        .await
-        .unwrap();
-    assert!(record.is_none());
+    for message_id in [HUMAN_MSG_ID, ASSISTANT_MSG_ID] {
+        let record = h
+            .flags_store
+            .get(&h.user_id, conversation_id, MessageId(message_id.parse().unwrap()))
+            .await
+            .unwrap();
+        assert!(
+            record.is_none(),
+            "upload processing must not write auto flags for {message_id}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -195,13 +170,11 @@ async fn processing_an_upload_whose_bytes_were_never_put_is_an_object_store_not_
     let object_store = InMemoryObjectStore::new();
     let upload_outcome_store = InMemoryUploadOutcomeStore::new();
     let conversation_summary_store = InMemoryConversationSummaryStore::new();
-    let flags_store = InMemoryMessageFlagsStore::new();
 
     let err = process_upload(
         &object_store,
         &upload_outcome_store,
         &conversation_summary_store,
-        &flags_store,
         &user_id,
         upload_id,
     )

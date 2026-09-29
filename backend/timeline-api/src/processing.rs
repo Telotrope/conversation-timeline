@@ -29,10 +29,10 @@ use timeline_core::flags::criticism::detect_critical;
 use timeline_core::ports::conversations::{ConversationSummary, ConversationSummaryStore};
 use timeline_core::ports::errors::{ObjectStoreError, StoreError};
 use timeline_core::ports::ids::{UploadId, UserId};
-use timeline_core::ports::message_flags::{AutoFlagWriter, FlagSet};
+use timeline_core::ports::message_flags::FlagSet;
 use timeline_core::ports::object_store::ObjectStore;
 use timeline_core::ports::uploads::{raw_object_key, UploadOutcome, UploadOutcomeStore};
-use timeline_core::{extract_text, unwrap_uploaded_json, FormatError, Sender};
+use timeline_core::{unwrap_uploaded_json, FormatError};
 
 #[derive(Debug)]
 pub enum ProcessingError {
@@ -78,7 +78,10 @@ impl From<ObjectStoreError> for ProcessingError {
     }
 }
 
-fn heuristic_flags(text: &str) -> FlagSet {
+/// The non-generative pass: dictionary-checked ALL-CAPS emphasis plus
+/// keyword/sentiment criticism and anger. Shared with `routes::detect`,
+/// which is the only thing that runs it now.
+pub fn heuristic_flags(text: &str) -> FlagSet {
     FlagSet {
         caps: has_emphasis_caps(text),
         critical: detect_critical(text),
@@ -87,15 +90,22 @@ fn heuristic_flags(text: &str) -> FlagSet {
 }
 
 /// Reads the raw upload, parses and dedups it, writes one summary per
-/// conversation and one auto-flag set per human message, then records a
-/// `Ready` outcome. On a parse failure a `Failed` outcome is recorded with
-/// the reason before the error is returned to the caller — callers should
-/// never need to separately record failure themselves.
+/// conversation, then records a `Ready` outcome. On a parse failure a
+/// `Failed` outcome is recorded with the reason before the error is returned
+/// to the caller — callers should never need to separately record failure
+/// themselves.
+///
+/// **This does not compute flags.** Detection is a separate, user-triggered
+/// pass (`POST /detect`, see `crate::routes::detect`): it is work
+/// proportional to the number of speech acts in the export, and running it
+/// here made every upload pay for it whether or not anyone had asked for
+/// automatic tags. A freshly uploaded export therefore has no automatic
+/// flags until detection is requested, which is the intended behavior and
+/// not a missing write.
 pub async fn process_upload(
     object_store: &dyn ObjectStore,
     upload_outcome_store: &dyn UploadOutcomeStore,
     conversation_summary_store: &dyn ConversationSummaryStore,
-    auto_flag_writer: &dyn AutoFlagWriter,
     user_id: &UserId,
     upload_id: UploadId,
 ) -> Result<(), ProcessingError> {
@@ -133,16 +143,6 @@ pub async fn process_upload(
         };
         conversation_summary_store.put(user_id, summary).await?;
         conversation_ids.push(conversation.uuid);
-
-        for message in &conversation.chat_messages {
-            if message.sender != Sender::Human {
-                continue;
-            }
-            let flags = heuristic_flags(&extract_text(message));
-            auto_flag_writer
-                .set_auto_flags(user_id, conversation.uuid, message.uuid, flags)
-                .await?;
-        }
     }
 
     upload_outcome_store

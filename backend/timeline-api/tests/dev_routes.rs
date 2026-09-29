@@ -43,6 +43,7 @@ fn test_router() -> Router {
         conversation_summary_store: conversation_summary_store.clone(),
         flags_reader: flags_store.clone(),
         user_flag_writer: flags_store.clone(),
+        auto_flag_writer: flags_store.clone(),
         verifier: Arc::new(CognitoVerifier::new(
             jwks.clone(),
             DEV_ONLY_ISSUER,

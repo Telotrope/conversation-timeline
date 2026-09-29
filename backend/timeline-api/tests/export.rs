@@ -1,8 +1,14 @@
 //! Black-box test for `GET /export`: upload a real file through the
-//! `_dev`-only local flow, let it process, then export it back and confirm
-//! the flags computed during processing are embedded in the result -- and
-//! that the result re-parses as an already-processed upload, matching
+//! `_dev`-only local flow, run detection, then export it back and confirm
+//! the computed flags are embedded in the result -- and that the result
+//! re-parses as an already-processed upload, matching
 //! `timeline_core::unwrap_uploaded_json`'s two accepted shapes.
+//!
+//! Detection is an explicit step here because it is an explicit step in the
+//! product: uploading no longer computes flags (see
+//! `timeline_api::routes::detect`). What this file still owns is whether
+//! `GET /export` *embeds* whatever flags exist; whether detection computes
+//! the right ones is tests/detect.rs's job.
 
 use std::sync::Arc;
 
@@ -37,6 +43,7 @@ fn test_router() -> Router {
         conversation_summary_store: conversation_summary_store.clone(),
         flags_reader: flags_store.clone(),
         user_flag_writer: flags_store.clone(),
+        auto_flag_writer: flags_store.clone(),
         verifier: Arc::new(CognitoVerifier::new(
             jwks.clone(),
             DEV_ONLY_ISSUER,
@@ -82,7 +89,7 @@ async fn dev_login(router: &Router, sub: &str) -> String {
 }
 
 #[tokio::test]
-async fn export_embeds_the_auto_flags_computed_during_processing() {
+async fn export_embeds_the_auto_flags_that_detection_computed() {
     let router = test_router();
     let token = dev_login(&router, "alice").await;
 
@@ -109,6 +116,17 @@ async fn export_embeds_the_auto_flags_computed_during_processing() {
         .unwrap();
     let put_response = router.clone().oneshot(put_request).await.unwrap();
     assert_eq!(put_response.status(), StatusCode::OK);
+
+    // Flags only exist once they have been asked for.
+    let detect_request = Request::builder()
+        .method("POST")
+        .uri("/detect")
+        .header("Authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(json!({ "offset": 0 }).to_string()))
+        .unwrap();
+    let detect_response = router.clone().oneshot(detect_request).await.unwrap();
+    assert_eq!(detect_response.status(), StatusCode::OK);
 
     let export_request = Request::builder()
         .method("GET")

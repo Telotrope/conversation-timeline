@@ -13,7 +13,6 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use timeline_core::ports::conversations::ConversationSummaryStore;
 use timeline_core::ports::ids::{UploadId, UserId};
-use timeline_core::ports::message_flags::AutoFlagWriter;
 use timeline_core::ports::object_store::ObjectStore;
 use timeline_core::ports::uploads::UploadOutcomeStore;
 
@@ -42,7 +41,6 @@ pub async fn put_object(
     State(object_store): State<Arc<dyn ObjectStore>>,
     State(upload_outcome_store): State<Arc<dyn UploadOutcomeStore>>,
     State(conversation_summary_store): State<Arc<dyn ConversationSummaryStore>>,
-    State(auto_flag_writer): State<Arc<dyn AutoFlagWriter>>,
     body: Bytes,
 ) -> Result<StatusCode, ApiError> {
     object_store.put(&key, body.to_vec()).await?;
@@ -58,7 +56,6 @@ pub async fn put_object(
             object_store.as_ref(),
             upload_outcome_store.as_ref(),
             conversation_summary_store.as_ref(),
-            auto_flag_writer.as_ref(),
             &user_id,
             upload_id,
         )

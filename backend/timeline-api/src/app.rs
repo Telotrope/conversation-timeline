@@ -8,7 +8,7 @@ use axum::routing::{get, post, put};
 use axum::Router;
 
 use crate::dev_state::DevState;
-use crate::routes::{conversations, dev_local_storage, dev_login, export, flags, uploads};
+use crate::routes::{conversations, detect, dev_local_storage, dev_login, export, flags, uploads};
 use crate::state::AppState;
 
 /// The real, user-facing API -- every route Cognito gates in production,
@@ -22,6 +22,7 @@ pub fn build_router(state: AppState) -> Router {
             get(flags::get_flags).patch(flags::patch_flags),
         )
         .route("/export", get(export::export))
+        .route("/detect", post(detect::detect))
         .with_state(state)
 }
 

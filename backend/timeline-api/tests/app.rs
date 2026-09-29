@@ -42,7 +42,8 @@ fn test_state() -> AppState {
         object_store: Arc::new(InMemoryObjectStore::new()),
         conversation_summary_store: Arc::new(InMemoryConversationSummaryStore::new()),
         flags_reader: flags_store.clone(),
-        user_flag_writer: flags_store,
+        user_flag_writer: flags_store.clone(),
+        auto_flag_writer: flags_store,
         verifier: Arc::new(CognitoVerifier::new(jwks.clone(), ISSUER, CLIENT_ID)),
     }
 }
