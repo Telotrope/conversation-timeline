@@ -461,6 +461,27 @@ rule to mean anything.
    README already documents raw shell commands.
 2. **C8**: silent restore, or announced?
 
+## Known defects — fix before shipping, lower priority than the phases
+
+Both were found while verifying Phase 3, neither is caused by it, and the user has scheduled them
+behind the quality-of-life phases.
+
+1. **Conversation order is non-deterministic across backend restarts.** `list_for_user` in
+   [backend/timeline-storage/src/memory/conversations.rs](../../backend/timeline-storage/src/memory/conversations.rs)
+   iterates a `HashMap` and collects without sorting, and Rust seeds its hasher randomly per
+   process. Observed directly: three runs of the *same* unmodified page produced three different
+   conversation orders. User-visible as the conversation list and the per-conversation colors
+   reshuffling between sessions, and it makes any test that says "the first conversation"
+   order-dependent — one did, and had to be rewritten. Fix: sort the returned summaries by a stable
+   key. Note `export.rs` already sorts `upload_ids` but never sorts `summaries`.
+2. **Intermittent "Failed to fetch" from the page to the backend, cause unknown.** Several capture
+   runs failed with the page reporting it could not reach `http://127.0.0.1:3000` while the backend
+   was demonstrably listening and answering `curl`. It affected the pre-deletion build equally, so
+   it is not a regression. Serving over `http` instead of `file://` did not eliminate it; explicitly
+   waiting for reachability before driving the browser did. **Not root-caused** — worked around, not
+   explained. Worth isolating before shipping, since a user hitting this sees only "Is the backend
+   running?" when it is.
+
 ## Tabled at the user's direction
 
 - **How the two detection tiers are named and explained to users** — non-generative versus generative
