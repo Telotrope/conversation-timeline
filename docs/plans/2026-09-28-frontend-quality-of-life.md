@@ -9,12 +9,12 @@ migration plan's server work (real S3/DynamoDB adapters, its C10).
 
 | # | Phase | Touches | Status |
 |---|---|---|---|
-| 1 | Dev-server launcher + VS Code task | `scripts/`, `.vscode/` | **Approved to build** |
-| 2 | e2e coverage for calendar + analytics | `e2e/` | **Approved** |
-| 3 | Delete the page's detection logic and lexicons | `timeline.html`, `e2e/` | **Approved**, incl. the e2e drift block |
-| 4 | Detection runs only when asked, with visible progress | `timeline.html`, `backend/` | **Decided**; user-facing naming of the two tiers is tabled |
-| 5 | Upload progress bar | `timeline.html` | Approved in substance |
-| 6 | Back/forward navigation + restore on load | `timeline.html` | Approved in substance |
+| 1 | Dev-server launcher + VS Code task | `scripts/`, `.vscode/` | **Done** |
+| 2 | e2e coverage for calendar + analytics | `e2e/` | **Done** |
+| 3 | Delete the page's detection logic and lexicons | `timeline.html`, `e2e/` | **Done** — verified output-neutral byte-for-byte |
+| 4 | Detection runs only when asked, with visible progress | `timeline.html`, `backend/` | **Done**; user-facing naming of the two tiers still tabled |
+| 5 | Upload progress bar | `timeline.html` | **Done** |
+| 6 | Back/forward navigation + restore on load | `timeline.html` | **Done** — restore is announced, per your call |
 
 ---
 
