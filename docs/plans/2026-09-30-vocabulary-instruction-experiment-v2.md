@@ -52,26 +52,41 @@ differences mean anything.
 ## What each instance is asked
 
 The user's own questions, edited only where they referred to earlier conversation. Each instance
-gets one question, alone, with no framing, in the real repository — exactly as the user would type
-it.
+gets one question, alone, with no framing, in the real repository — as the user would type it.
+
+**All three are answerable by reading.** The first attempt used two questions that were not: one
+asked what the test suite's duration is, so every instance ran the suite, and ten of them ran it at
+once against one machine and one port; another asked about the cost of re-parsing, and two
+instances wrote benchmark programs to measure it. Both are recorded in
+[the results file](../analysis/2026-09-30-vocabulary-experiment-v2-results.md) and both are retired.
+They produced contention the instances noticed and reported, a run lasting 1,156 seconds, and code
+the user did not ask for.
 
 1. "It seems like tests can't assume a neutral starting state and simply need to reset it
    explicitly. Is there a standard way to do this that you can employ?"
-   *(Original, verbatim except capitalisation and a missing space.)*
+   *(Verbatim except capitalisation and a missing space.)*
 
-2. "The flag-detection route re-reads and re-parses the whole uploaded file on every page of work.
-   Could that be serious? Will a cache be needed once the AWS database is in use? How does this
-   reparse appear to a user?"
-   *(Original began "#2 could be serious. Will this cache…" — the back-reference is replaced by what
-   it referred to.)*
+2. "Why does the backend always detect? It's not clear to me whether that is different from the
+   'Classify with AI' button available elsewhere in the interface, and it will certainly confuse
+   users."
+   *(Verbatim except that a back-reference to the preceding message is dropped.)*
 
-3. "What is the current duration of test runs, and how would resetting the server between tests
-   impact it?"
-   *(Original: "what is the current duration of test runs, and how does the reset impact it?")*
+3. "Where did work on this project leave off, and what is verified versus what is not?"
+   *(Original: "Where did I leave work on the conversation timeline? What's verified and what's
+   not?" — reworded to third person so it does not assume the reader is the user.)*
 
-These three were chosen because each previously produced unshared vocabulary in this project:
-question 1 produced *fixture*, *e2e* and *hook*; question 2 produced *provenance* and a made-up
-name for an unbuilt mechanism; question 3 produced *non-determinism* and *hash seed*.
+Each was chosen because it previously produced unshared vocabulary here: question 1 produced
+*fixture*, *e2e* and *hook*; question 2 produced "the heuristic" and "AI" with no noun a user would
+ever see; question 3 produced *V2a*, *C10* and *code-level only*.
+
+**One constant line is appended to every question**, identically in every condition, so it cannot
+favour one over another:
+
+> Answer by reading only — do not run the tests, and do not write code.
+
+This is task framing, which the user asked to avoid, and it is here against that preference for one
+reason: without it, instances write throwaway programs and run the suite, which is both contention
+and code the user has said they do not want.
 
 ## Runs
 
