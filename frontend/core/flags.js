@@ -49,6 +49,9 @@ export function attachFlags(){
       const dist = t < s ? s - t : (t > e ? t - e : 0);
       if(dist < bestDist){ bestDist = dist; best = b; }
     });
+    // Currently unreachable: the early return above leaves at least one
+    // session, and any session is nearer than Infinity. Kept as a backstop
+    // if the search above changes.
     if(!best) return;
     best.allHuman.push(msg);
     if(effectiveFlag(msg, 'critical')) best.criticalItems.push(msg);

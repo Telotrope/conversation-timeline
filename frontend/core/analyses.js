@@ -46,6 +46,8 @@ export async function computeFrictionAnalysis(opts, runChunked){
       total: b.count,
       flagged: b.criticalItems.length + b.angryItems.length + b.capsItems.length > 0
         ? b.allHuman.filter(isFlagged).length : 0,
+      // The zero case is currently unreachable: buildBlocks never makes a
+      // session without messages. Kept as a backstop if that changes.
       pct: b.count ? (b.allHuman.filter(isFlagged).length / b.count * 100) : 0,
       conv: b.conv,
       rangeStart: new Date(b.start).getTime(),
@@ -83,6 +85,8 @@ export async function computeTrendAnalysis(opts, runChunked){
   const keys = Array.from(buckets.keys()).sort();
   const points = keys.map(k => ({
     x: k,
+    // The zero case is currently unreachable: a bucket is only created when
+    // a message is counted into it. Kept as a backstop if that changes.
     y: buckets.get(k).total ? (buckets.get(k).flagged / buckets.get(k).total * 100) : 0,
     total: buckets.get(k).total,
     flagged: buckets.get(k).flagged,
