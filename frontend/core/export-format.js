@@ -58,11 +58,13 @@ export function parseUploadedConversations(rawText){
         // automatic pass clobber something the user explicitly decided.
         const storedAuto = m._claude_timeline_auto || null;
         const storedUser = m._claude_timeline_user || null;
-        // Backward compatibility with the previous single-field format.
-        const legacyFlags = m._claude_timeline_flags || null;
 
-        if(storedUser) embeddedOverrides[id] = storedUser;
-        else if(legacyFlags) embeddedOverrides[id] = legacyFlags;
+        // Only a review that states at least one flag counts as yours. The
+        // server writes an all-blank one for every message a scan touched,
+        // and counting those would report messages you never reviewed.
+        if(storedUser && ['caps', 'critical', 'angry'].some(k => typeof storedUser[k] === 'boolean')){
+          embeddedOverrides[id] = storedUser;
+        }
 
         // Automatic flags are whatever the backend computed and embedded.
         // This page performs no detection of its own, and a message with no

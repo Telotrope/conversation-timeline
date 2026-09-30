@@ -30,7 +30,6 @@ export function exportAnnotatedConversations(){
     (c.chat_messages || []).forEach(m => {
       if(m.sender !== 'human') return;
       const id = convIdx + '|' + m.created_at;
-      delete m._claude_timeline_flags; // retire the old single-field format
 
       const msg = state.humanById.get(id);
       if(msg){

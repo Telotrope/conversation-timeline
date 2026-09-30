@@ -53,7 +53,6 @@ test('embedded automatic and confirmed flags are read from their separate fields
     }),
     exportMessage('human', 'y', '2026-01-01T10:01:00Z', {
       _claude_timeline_auto: { angry: true },
-      _claude_timeline_flags: { caps: true },
     }),
   ] }]));
   const [a, b] = r.humanMessages;
@@ -64,11 +63,20 @@ test('embedded automatic and confirmed flags are read from their separate fields
   assert.equal(b.default_caps, false);
   assert.deepEqual(r.embeddedOverrides, {
     [a.id]: { caps: false, critical: false, angry: false },
-    [b.id]: { caps: true },
   });
 });
 
 test('anything other than an array or {conversations: [...]} is rejected', () => {
   assert.throws(() => parseUploadedConversations('{"nope": 1}'), /Expected either a bare array/);
   assert.throws(() => parseUploadedConversations('null'), /Expected either a bare array/);
+});
+
+test('a review field with no flag stated is not counted as a review', () => {
+  // The server writes an all-blank review for every message a scan touched.
+  const r = parseUploadedConversations(JSON.stringify([{ name: 'A', chat_messages: [
+    exportMessage('human', 'blank', '2026-01-01T10:00:00Z', { _claude_timeline_user: { caps: null, critical: null, angry: null } }),
+    exportMessage('human', 'empty', '2026-01-01T10:01:00Z', { _claude_timeline_user: {} }),
+    exportMessage('human', 'one', '2026-01-01T10:02:00Z', { _claude_timeline_user: { caps: null, critical: false, angry: null } }),
+  ] }]));
+  assert.deepEqual(Object.keys(r.embeddedOverrides), ['0|2026-01-01T10:02:00Z']);
 });
