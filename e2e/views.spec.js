@@ -405,10 +405,10 @@ test('the upload reports byte progress before the server-side wait', async ({ pa
   clearInterval(poll);
 
   const labels = [...seen].join(' | ');
-  // "Finishing up on the server" is the honest label for the stretch after
+  // "Processing on the server" is the honest label for the stretch after
   // the bytes are sent but before the response arrives -- the phase that
   // would otherwise look like a frozen full bar.
-  expect(labels, `progress labels seen: ${labels}`).toMatch(/Finishing up on the server/);
+  expect(labels, `progress labels seen: ${labels}`).toMatch(/Processing on the server/);
 
   expect(consoleErrors, `console errors:\n${consoleErrors.join('\n')}`).toEqual([]);
 });

@@ -145,7 +145,7 @@ export async function handleLoadClick(){
     setLoadProgressIndeterminate('Signing in…');
     const token = await ensureAuthToken(document.getElementById('devLoginSub').value.trim());
 
-    setLoadStatus('Uploading your conversation export…');
+    setLoadStatus('Sending your file…');
     setLoadProgressIndeterminate('Reading the file…');
     const rawText = await convFile.text();
     const createRes = await fetch(`${API_BASE}/uploads`, {
@@ -163,7 +163,7 @@ export async function handleLoadClick(){
       uploadFill.style.width = pct + '%';
       const eta = uploadEta(loaded, total);
       uploadLabel.textContent =
-        `Uploading ${formatBytes(loaded)} of ${formatBytes(total)} (${pct}%)` + (eta ? ` — ${eta}` : '');
+        `Sending your file — ${formatBytes(loaded)} of ${formatBytes(total)} (${pct}%)` + (eta ? ` — ${eta}` : '');
     });
     if(!putRes.ok){
       throw new Error(`uploading the file failed (${putRes.status})${putRes.text ? ': ' + putRes.text : ''}`);
@@ -175,8 +175,8 @@ export async function handleLoadClick(){
     // looks stuck. No polling is needed either -- by the time the PUT
     // resolves the work is done. Real S3-triggered processing is
     // asynchronous; that gap isn't solved here, see the migration plan's V2a.
-    setLoadStatus('Processing your export…');
-    setLoadProgressIndeterminate('Finishing up on the server…');
+    setLoadStatus('Processing on the server…');
+    setLoadProgressIndeterminate('Processing on the server…');
 
     // Only if asked. Detection reads every message you sent, and nothing
     // here has measured how long that takes, so it is never implied by the
@@ -184,7 +184,7 @@ export async function handleLoadClick(){
     if(runDetection){
       setLoadStatus('Scanning your messages for flags…');
       await runDetectionPass(token);
-      setLoadProgressIndeterminate('Finishing up on the server…');
+      setLoadProgressIndeterminate('Processing on the server…');
     }
 
     const exportRes = await fetch(`${API_BASE}/export`, {
@@ -202,12 +202,12 @@ export async function handleLoadClick(){
         uploadFill.style.width = pct + '%';
         const eta = downloadEta(loaded, total);
         uploadLabel.textContent =
-          `Downloading ${formatBytes(loaded)} of ${formatBytes(total)} (${pct}%)` + (eta ? ` — ${eta}` : '');
+          `Receiving your processed timeline — ${formatBytes(loaded)} of ${formatBytes(total)} (${pct}%)` + (eta ? ` — ${eta}` : '');
       } else {
         // No Content-Length: report what has actually arrived rather than
         // inventing a proportion of an unknown whole.
         uploadFill.style.width = '100%';
-        uploadLabel.textContent = `Downloading… ${formatBytes(loaded)} so far`;
+        uploadLabel.textContent = `Receiving your processed timeline — ${formatBytes(loaded)} so far`;
       }
     });
 
