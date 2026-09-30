@@ -147,9 +147,8 @@ test('confirming a flag in the review table persists through a reload', async ({
   // backend, the export this time embeds the confirmed override, and
   // parseUploadedConversations picks it up as an embedded override.
   await loadFixtureAndWaitForRender(page);
-  // OVERRIDES is a top-level `let` in a plain (non-module) script, so it's
-  // a global-scope binding, not a window property -- evaluate the bare
-  // identifier, not window.OVERRIDES.
-  const embeddedCount = await page.evaluate(() => Object.keys(OVERRIDES || {}).length);
-  expect(embeddedCount).toBeGreaterThan(0);
+  // The page announces confirmed flags that arrive embedded in the export,
+  // and says nothing when there are none.
+  await expect(page.locator('#saveStatus'))
+    .toHaveText(/^Loaded [1-9]\d* of your confirmed flags? from the server\.$/);
 });

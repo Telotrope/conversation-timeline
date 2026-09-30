@@ -86,6 +86,18 @@ async function loadFixture(page, { detect = false, sub = uniqueSub() } = {}) {
   return consoleErrors;
 }
 
+// Index of the first conversation the list shows as having messages. Reads
+// the rendered list rather than the page's own variables, which are not
+// reachable from outside once the page's script is a module.
+async function firstNonEmptyConversationIndex(page) {
+  return page.locator('.conv-item').evaluateAll((items) => {
+    const item = items.find(
+      (el) => !/^0 messages\b/.test(el.querySelector('.meta').textContent.trim())
+    );
+    return item ? Number(item.dataset.idx) : -1;
+  });
+}
+
 // True only when this file started the server, so afterAll never stops one
 // it did not start.
 let startedServerHere = false;
@@ -188,9 +200,7 @@ test('opening a conversation renders its transcript', async ({ page }) => {
   // store iterates a HashMap without sorting -- see
   // timeline-storage/src/memory/conversations.rs), so "the first one" is
   // sometimes the empty one and has no session rows to find.
-  const idx = await page.evaluate(
-    () => CONVERSATIONS.findIndex((c) => c.total_messages > 0)
-  );
+  const idx = await firstNonEmptyConversationIndex(page);
   expect(idx, 'fixture had no conversation with messages').toBeGreaterThanOrEqual(0);
   await page.click(`.conv-item[data-idx="${idx}"]`);
 
@@ -430,7 +440,7 @@ test('an open conversation is addressable in the hash', async ({ page }) => {
   const consoleErrors = await loadFixture(page);
 
   await page.click('button[data-tab="conversations"]');
-  const idx = await page.evaluate(() => CONVERSATIONS.findIndex((c) => c.total_messages > 0));
+  const idx = await firstNonEmptyConversationIndex(page);
   await page.click(`.conv-item[data-idx="${idx}"]`);
   await expect.poll(() => page.evaluate(() => location.hash)).toBe(`#conversations/${idx}`);
 
@@ -441,7 +451,8 @@ test('reloading restores the session and says so', async ({ page }) => {
   const sub = uniqueSub();
   await loadFixture(page, { sub });
 
-  const before = await page.evaluate(() => CONVERSATIONS.length);
+  // One list item per conversation: the search box is empty after a load.
+  const before = await page.locator('.conv-item').count();
   expect(before).toBeGreaterThan(0);
 
   // A reload is the cheap version of the problem this solves: the export is
@@ -450,7 +461,7 @@ test('reloading restores the session and says so', async ({ page }) => {
   await page.reload();
   await expect(page.locator('#mainContent')).toBeVisible({ timeout: 30_000 });
   await expect(page.locator('#loadScreen')).toBeHidden();
-  expect(await page.evaluate(() => CONVERSATIONS.length)).toBe(before);
+  expect(await page.locator('.conv-item').count()).toBe(before);
 
   // Announced, not silent -- a page that quietly opens with old data leaves
   // you unsure which file you are looking at.
