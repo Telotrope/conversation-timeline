@@ -509,8 +509,8 @@ before anything else happens.
 module from loading. The page then stops working with only a message in the browser console,
 and some tests could still pass against the blank parts of the page.
 - Each spec registers `page.on('pageerror')` and fails the test if anything fires.
-- This adds a check to the existing test files without changing any existing assertion. It
-  needs your approval as part of approving this plan.
+- This adds a check to the existing test files without changing any existing assertion. You
+  approved it on 2026-09-30.
 
 **V3. Measure baseline coverage.** Run the whole suite with Playwright's Chromium coverage
 collection on the single-file page. Record which of the 85 functions never run, and the line
