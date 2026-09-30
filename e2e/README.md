@@ -37,6 +37,10 @@ and tears both servers down afterward. The page is served rather than opened as 
 because its scripts are JavaScript modules, which browsers refuse to load from disk. On failure,
 Playwright saves a screenshot (see its own output for the path).
 
+Every test also fails if the page throws an uncaught error or one of its script files fails to
+load ([page-health.js](page-health.js)). A broken import stops the page's code from running
+with only a console message, which a test looking elsewhere on the page could miss.
+
 ## What's covered
 
 - `upload-flow.spec.js`: uploads the real test fixture

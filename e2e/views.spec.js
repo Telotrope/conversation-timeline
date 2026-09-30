@@ -13,6 +13,7 @@
 const path = require('path');
 const { test, expect } = require('@playwright/test');
 const { spawn } = require('child_process');
+const { failOnPageErrors } = require('./page-health');
 
 const BACKEND_DIR = path.resolve(__dirname, '..', 'backend');
 // Served over HTTP by the static server in playwright.config.js, the same
@@ -88,6 +89,8 @@ async function loadFixture(page, { detect = false, sub = uniqueSub() } = {}) {
 // True only when this file started the server, so afterAll never stops one
 // it did not start.
 let startedServerHere = false;
+
+failOnPageErrors();
 
 test.beforeAll(async () => {
   // Reuse a server that is already listening rather than starting a second

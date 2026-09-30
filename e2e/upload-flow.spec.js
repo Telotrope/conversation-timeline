@@ -8,6 +8,7 @@
 const path = require('path');
 const { test, expect } = require('@playwright/test');
 const { spawn } = require('child_process');
+const { failOnPageErrors } = require('./page-health');
 
 const BACKEND_DIR = path.resolve(__dirname, '..', 'backend');
 // Served over HTTP by the static server in playwright.config.js, the same
@@ -51,6 +52,8 @@ async function loadFixtureAndWaitForRender(page) {
 
   return consoleErrors;
 }
+
+failOnPageErrors();
 
 test.beforeAll(async () => {
   // cargo/zig aren't on the default PATH this session installed them into
