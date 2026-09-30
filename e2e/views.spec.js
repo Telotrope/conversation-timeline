@@ -951,3 +951,138 @@ test('analyses over hundreds of messages still complete', async ({ page }, testI
     expect((await page.locator('#analyticsMain').innerText()).trim(), analysis).toMatch(/\d/);
   }
 });
+
+// ---------------------------------------------------------------------------
+// Do the analytics show the right numbers? One small export whose every
+// figure was worked out by hand, loaded through the real backend and page.
+// Times are UTC and the browser runs in UTC, so hours and days are as written.
+//
+// Your reviews (flagged = any flag set). Each message of yours is followed a
+// minute later by a reply from Claude, which counts toward session length.
+//   Alpha, Mon 2 Mar:  10:00 critical, 10:05 clean, 10:10 clean   session 10:00-10:11
+//   Alpha, Mon 2 Mar:  14:00 angry, 14:10 ALL-CAPS                 session 14:00-14:11
+//   Alpha, Tue 3 Mar:  10:00 clean                                 session 10:00-10:01
+//   Beta,  Tue 10 Mar: 09:00 clean, 09:05 clean                    session 09:00-09:06
+//   Gamma, Wed 11 Mar: 20:00 never reviewed                        session 20:00-20:01
+// ---------------------------------------------------------------------------
+
+const CLEAN = { caps: false, critical: false, angry: false };
+function exchanges(list) {
+  return list.flatMap(([at, text, review]) => [
+    { sender: 'human', at: new Date(at), text, review },
+    { sender: 'assistant', at: new Date(Date.parse(at) + 60_000), text: `reply to ${text}` },
+  ]);
+}
+const VALIDATION_EXPORT = [
+  { name: 'Alpha', messages: exchanges([
+    ['2026-03-02T10:00:00Z', 'a1', { ...CLEAN, critical: true }],
+    ['2026-03-02T10:05:00Z', 'a2', CLEAN],
+    ['2026-03-02T10:10:00Z', 'a3', CLEAN],
+    ['2026-03-02T14:00:00Z', 'a4', { ...CLEAN, angry: true }],
+    ['2026-03-02T14:10:00Z', 'a5', { ...CLEAN, caps: true }],
+    ['2026-03-03T10:00:00Z', 'a6', CLEAN],
+  ]) },
+  { name: 'Beta', messages: exchanges([
+    ['2026-03-10T09:00:00Z', 'b1', CLEAN],
+    ['2026-03-10T09:05:00Z', 'b2', CLEAN],
+  ]) },
+  { name: 'Gamma', messages: exchanges([['2026-03-11T20:00:00Z', 'g1', undefined]]) },
+];
+
+test.describe('the analytics show the right numbers for a known export', () => {
+  test.use({ timezoneId: 'UTC' });
+
+  async function loadOnlyYourTags(page, testInfo) {
+    await loadFile(page, writeExport(testInfo, 'validation.json', VALIDATION_EXPORT));
+    await expect(page.locator('#mainContent')).toBeVisible({ timeout: 30_000 });
+    await page.uncheck('#toggleShowAuto');
+  }
+  const cells = (page) => page.locator('.friction-row').evaluateAll((rows) =>
+    rows.map((r) => [...r.querySelectorAll('td')].map((td) => td.textContent.trim())));
+  const titles = (page, selector) => page.locator(selector).evaluateAll((els) =>
+    els.map((e) => e.querySelector('title').textContent));
+
+  test('friction ranking, by conversation and by session', async ({ page }, testInfo) => {
+    await loadOnlyYourTags(page, testInfo);
+    await runAnalysis(page, 'friction');
+    // Alpha: 3 of 6 reviewed flagged. Beta: 0 of 2. Gamma: nothing reviewed, left out.
+    expect(await cells(page)).toEqual([['Alpha', '6', '3', '50.0%'], ['Beta', '2', '0', '0.0%']]);
+
+    await page.click('#frictionBySession');
+    await waitForAnalysis(page);
+    const rows = await cells(page);
+    expect(rows.slice(0, 2)).toEqual([
+      ['Alpha — Monday, March 2, 2026', '2', '2', '100.0%'],
+      ['Alpha — Monday, March 2, 2026', '3', '1', '33.3%'],
+    ]);
+    // The two 0% sessions tie; their order is not part of the claim.
+    expect(rows.slice(2).sort()).toEqual([
+      ['Alpha — Tuesday, March 3, 2026', '1', '0', '0.0%'],
+      ['Beta — Tuesday, March 10, 2026', '2', '0', '0.0%'],
+    ]);
+  });
+
+  test('flag rate over time, weekly and monthly', async ({ page }, testInfo) => {
+    await loadOnlyYourTags(page, testInfo);
+    await runAnalysis(page, 'trend');
+    // Weeks start on Sunday: 1-7 March holds all six of Alpha's, 8-14 March Beta's two.
+    expect(await titles(page, '#trendChart .data-point')).toEqual([
+      '2026-W09: 50.0% (3/6)', '2026-W10: 0.0% (0/2)',
+    ]);
+    await page.click('#trendMonthly');
+    await waitForAnalysis(page);
+    expect(await titles(page, '#trendChart .data-point')).toEqual(['2026-03: 37.5% (3/8)']);
+  });
+
+  test('session length against flag rate', async ({ page }, testInfo) => {
+    await loadOnlyYourTags(page, testInfo);
+    await runAnalysis(page, 'length');
+    // (11 min, 33.3%), (11 min, 100%), (1 min, 0%), (6 min, 0%): r = 0.7385, checked by hand.
+    await expect(page.locator('#analyticsMain .stat-block .num').first()).toHaveText('0.74');
+    await expect(page.locator('#analyticsMain .stat-block .num').nth(1)).toHaveText('4');
+    expect((await titles(page, '#lengthChart .data-point')).sort()).toEqual([
+      'Alpha — Monday, March 2, 2026 — 11 min long, 100.0% flagged',
+      'Alpha — Monday, March 2, 2026 — 11 min long, 33.3% flagged',
+      'Alpha — Tuesday, March 3, 2026 — 1 min long, 0.0% flagged',
+      'Beta — Tuesday, March 10, 2026 — 6 min long, 0.0% flagged',
+    ]);
+  });
+
+  test('time of day and day of week', async ({ page }, testInfo) => {
+    await loadOnlyYourTags(page, testInfo);
+    await runAnalysis(page, 'timeofday');
+    // 9:00 is Beta's two; 10:00 is Alpha's three on Monday plus one on Tuesday;
+    // 14:00 is Alpha's two. Hours with nothing reviewed get no bar.
+    expect(await titles(page, '#hourChart .data-bar')).toEqual([
+      '9:00 — 0.0% (0/2)', '10:00 — 25.0% (1/4)', '14:00 — 100.0% (2/2)',
+    ]);
+    expect(await titles(page, '#dowChart .data-bar')).toEqual([
+      'Mon — 60.0% (3/5)', 'Tue — 0.0% (0/3)',
+    ]);
+  });
+
+  test('idle time before a session', async ({ page }, testInfo) => {
+    await loadOnlyYourTags(page, testInfo);
+    await runAnalysis(page, 'idlegap');
+    // Only Alpha has later sessions: 14:00 comes 3 h 49 min after 10:11, and
+    // Tuesday 10:00 comes 19 h 49 min after 14:11. Two points make r = -1.
+    await expect(page.locator('#analyticsMain .stat-block .num').first()).toHaveText('-1.00');
+    await expect(page.locator('#analyticsMain .analytics-desc'))
+      .toContainText("3 sessions excluded as a conversation's first session");
+    expect((await titles(page, '#idleGapChart .data-point')).sort()).toEqual([
+      'Alpha — Monday, March 2, 2026 — 3.8 h after the previous session, 100.0% flagged',
+      'Alpha — Tuesday, March 3, 2026 — 19.8 h after the previous session, 0.0% flagged',
+    ]);
+  });
+
+  test('with automatic tags shown too, unreviewed messages count as unflagged', async ({ page }, testInfo) => {
+    await loadOnlyYourTags(page, testInfo);
+    await page.check('#toggleShowAuto');
+    await runAnalysis(page, 'friction');
+    // No scan was run, so Gamma's one message has no flags either way. Beta
+    // and Gamma tie at 0%; their order is not part of the claim.
+    const rows = await cells(page);
+    expect(rows[0]).toEqual(['Alpha', '6', '3', '50.0%']);
+    expect(rows.slice(1).sort()).toEqual([['Beta', '2', '0', '0.0%'], ['Gamma', '1', '0', '0.0%']]);
+  });
+});
