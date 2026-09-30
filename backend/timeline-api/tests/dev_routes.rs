@@ -54,6 +54,7 @@ fn test_router() -> Router {
         object_store,
         upload_outcome_store: Arc::new(InMemoryUploadOutcomeStore::new()),
         conversation_summary_store,
+        user_flag_writer: flags_store.clone(),
         auto_flag_writer: flags_store,
         // Nothing here calls POST /_dev/reset, so there is nothing for it to
         // empty. Left explicitly empty rather than wired up, so that a test

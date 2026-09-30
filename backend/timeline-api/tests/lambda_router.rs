@@ -117,6 +117,7 @@ async fn reset_empties_the_stores_it_is_given() {
         object_store: object_store_concrete.clone(),
         upload_outcome_store: outcomes.clone(),
         conversation_summary_store: summaries_concrete.clone(),
+        user_flag_writer: flags_store.clone(),
         auto_flag_writer: flags_store.clone(),
         resettable: Arc::new(vec![
             object_store_concrete.clone(),

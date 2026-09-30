@@ -15,7 +15,7 @@ use timeline_core::model::{ConversationId, MessageId};
 use timeline_core::ports::conversations::ConversationSummaryStore;
 use timeline_core::ports::errors::ObjectStoreError;
 use timeline_core::ports::ids::{UploadId, UserId};
-use timeline_core::ports::message_flags::MessageFlagsReader;
+use timeline_core::ports::message_flags::{AutoFlagWriter, FlagOverrides, FlagSet, MessageFlagsReader};
 use timeline_core::ports::object_store::ObjectStore;
 use timeline_core::ports::uploads::{raw_object_key, UploadOutcome, UploadOutcomeStore};
 use timeline_api::processing::{process_upload, ProcessingError};
@@ -85,6 +85,7 @@ impl Harness {
             &self.object_store,
             &self.upload_outcome_store,
             &self.conversation_summary_store,
+            &self.flags_store,
             &self.user_id,
             self.upload_id,
         )
@@ -170,11 +171,13 @@ async fn processing_an_upload_whose_bytes_were_never_put_is_an_object_store_not_
     let object_store = InMemoryObjectStore::new();
     let upload_outcome_store = InMemoryUploadOutcomeStore::new();
     let conversation_summary_store = InMemoryConversationSummaryStore::new();
+    let flags_store = InMemoryMessageFlagsStore::new();
 
     let err = process_upload(
         &object_store,
         &upload_outcome_store,
         &conversation_summary_store,
+        &flags_store,
         &user_id,
         upload_id,
     )
@@ -184,4 +187,90 @@ async fn processing_an_upload_whose_bytes_were_never_put_is_an_object_store_not_
         err,
         ProcessingError::ObjectStore(ObjectStoreError::NotFound)
     ));
+}
+
+/// The sample upload with a `_claude_timeline_user` field on each message.
+fn upload_with_reviews(human_review: &str, assistant_review: &str) -> String {
+    sample_upload_json()
+        .replacen(
+            r#""content": [{"type": "text", "text": "This"#,
+            &format!(r#""_claude_timeline_user": {human_review}, "content": [{{"type": "text", "text": "This"#),
+            1,
+        )
+        .replacen(
+            r#""content": [{"type": "text", "text": "Let me"#,
+            &format!(r#""_claude_timeline_user": {assistant_review}, "content": [{{"type": "text", "text": "Let me"#),
+            1,
+        )
+}
+
+fn ids() -> (ConversationId, MessageId, MessageId) {
+    (
+        ConversationId(CONV_ID.parse().unwrap()),
+        MessageId(HUMAN_MSG_ID.parse().unwrap()),
+        MessageId(ASSISTANT_MSG_ID.parse().unwrap()),
+    )
+}
+
+#[tokio::test]
+async fn reviews_embedded_in_an_upload_are_stored_as_yours() {
+    let raw = upload_with_reviews(
+        r#"{"caps": false, "critical": true, "angry": false}"#,
+        r#"{"caps": true, "critical": true, "angry": true}"#,
+    );
+    let h = Harness::with_raw_bytes(raw.as_bytes()).await;
+    h.run().await.unwrap();
+
+    let (conv, human, assistant) = ids();
+    let record = h.flags_store.get(&h.user_id, conv, human).await.unwrap().unwrap();
+    assert_eq!(
+        record.user,
+        FlagOverrides { caps: Some(false), critical: Some(true), angry: Some(false) }
+    );
+    // Only your own messages carry reviews; one on Claude's is ignored.
+    assert!(h.flags_store.get(&h.user_id, conv, assistant).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn an_empty_review_is_not_stored() {
+    let raw = upload_with_reviews(r#"{"caps": null, "critical": null, "angry": null}"#, "{}");
+    let h = Harness::with_raw_bytes(raw.as_bytes()).await;
+    h.run().await.unwrap();
+
+    let (conv, human, _) = ids();
+    assert!(h.flags_store.get(&h.user_id, conv, human).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn detection_after_upload_keeps_the_imported_review() {
+    // The failure this import exists to prevent: detection used to create
+    // records whose empty review then replaced the file's in the export.
+    let raw = upload_with_reviews(r#"{"caps": false, "critical": true, "angry": false}"#, "{}");
+    let h = Harness::with_raw_bytes(raw.as_bytes()).await;
+    h.run().await.unwrap();
+
+    let (conv, human, _) = ids();
+    h.flags_store
+        .set_auto_flags(&h.user_id, conv, human, FlagSet { caps: true, critical: false, angry: true })
+        .await
+        .unwrap();
+    let record = h.flags_store.get(&h.user_id, conv, human).await.unwrap().unwrap();
+    assert_eq!(record.user.critical, Some(true));
+    assert_eq!(record.auto, FlagSet { caps: true, critical: false, angry: true });
+}
+
+#[tokio::test]
+async fn an_unreadable_review_fails_the_upload_and_stores_nothing() {
+    let raw = upload_with_reviews(r#""yes please""#, "{}");
+    let h = Harness::with_raw_bytes(raw.as_bytes()).await;
+    let err = h.run().await.unwrap_err();
+    assert!(matches!(err, ProcessingError::ReviewField { .. }), "{err:?}");
+
+    let outcome = h.upload_outcome_store.get_outcome(&h.user_id, h.upload_id).await.unwrap().unwrap();
+    let UploadOutcome::Failed { reason } = outcome else { panic!("expected Failed, got {outcome:?}") };
+    assert!(reason.contains(HUMAN_MSG_ID) && reason.contains("_claude_timeline_user"), "{reason}");
+
+    let (conv, human, _) = ids();
+    assert!(h.flags_store.get(&h.user_id, conv, human).await.unwrap().is_none());
+    assert!(h.conversation_summary_store.list_for_user(&h.user_id).await.unwrap().is_empty());
 }
