@@ -16,7 +16,7 @@ import { state } from '../core/state.js';
 // reached through a port-forwarding proxy, for example -- so it can be
 // overridden once via a `?api_base=<url>` query parameter; the override
 // is remembered in localStorage so it doesn't need to be retyped on every
-// reload. No trailing slash: every call site below appends a leading-slash
+// reload. No trailing slash: every call site appends a leading-slash
 // path directly onto this value.
 function resolveApiBase(){
   const fromQuery = new URLSearchParams(window.location.search).get('api_base');

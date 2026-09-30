@@ -58,14 +58,7 @@ export function attachFlags(){
   state.blocks.forEach(b => b.allHuman.sort((a,c)=> new Date(a.ts) - new Date(c.ts)));
 }
 
-// Nothing renders until a conversations.json file is loaded via the load
-// screen (see handleLoadClick above), which populates state.conversations/
-// state.messages/state.humanMessages and then triggers the first render itself.
-
-// =====================================================================
-// Analytics tab
-// =====================================================================
-
+// Whether any of the three flags is in effect for this message.
 export function isFlagged(msg){
   return effectiveFlag(msg, 'critical') || effectiveFlag(msg, 'angry') || effectiveFlag(msg, 'caps');
 }
