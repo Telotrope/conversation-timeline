@@ -104,7 +104,7 @@ user's own messages, in this file, or in the codebase"* forbids *but* on a liter
 worked examples underneath make the intent clear, but the instruction sentence does not, and an
 instance following it literally wrote prose no one would want to read.
 
-## Measurement 2: time per run, and why it is not usable
+## Measurement 2: time per run
 
 All six were launched in one message and ran concurrently.
 
@@ -132,11 +132,11 @@ minutes after the other four.
 out a late start. Contention is ruled out by the other four: all six ran concurrently under
 identical load and four finished in under 43 seconds.
 
-**Did the instruction make the model deliberate longer?** The token counts say no, and this is the
-decisive evidence. The two slow runs used 48,763 and 54,390 tokens against roughly 40,000 for the
-others — about 22% to 36% more. A run that spent fifty times the wall clock *thinking* would have
-produced far more than a quarter more tokens. Fifty times the time for a quarter more output means
-the instance was **blocked, not working**.
+**Did the instruction make the model deliberate fifty times longer?** No. The two slow runs used
+48,763 and 54,390 tokens against roughly 40,000 for the others — 22% to 36% more. Fifty times the
+wall clock for a quarter more output means the instance was **blocked, not working** for most of
+that span. It did deliberate longer, but by a factor of four to five, not fifty; the next section
+separates the two.
 
 ### Diagnosed, not guessed: exactly 600 seconds, three times each
 
