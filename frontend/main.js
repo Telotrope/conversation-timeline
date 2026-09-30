@@ -4,79 +4,12 @@ import { FORMAT_VERSION, extractMessageText, parseUploadedConversations } from '
 import { attachFlags, effectiveFlag, hasUserValue, isOverridden } from './core/flags.js';
 import { fmtClock, fmtDayHeading, fmtDuration, fmtMonthHeading, formatBytes, formatEta } from './core/format.js';
 import { state } from './core/state.js';
+import { API_BASE, clearAuthToken, describeFailure, ensureAuthToken, patchFlagsToBackend, putWithProgress, readBodyWithProgress } from './infra/api-client.js';
 
 function setLoadStatus(msg, isError){
   const el = document.getElementById('loadStatus');
   el.textContent = msg;
   el.style.color = isError ? '#B0392F' : 'var(--ink-faint)';
-}
-
-// Not a relative path: timeline.html isn't served by timeline-api and is
-// opened separately, so relative fetch()es would resolve against the
-// wrong origin. See the migration plan's V2a.
-//
-// Defaults to same-machine local dev (see the root README's "Running this
-// locally"), where the browser's own 127.0.0.1 reaches the backend
-// directly. That default is wrong whenever the backend runs on a
-// different machine than the browser -- a remote/cloud dev environment
-// reached through a port-forwarding proxy, for example -- so it can be
-// overridden once via a `?api_base=<url>` query parameter; the override
-// is remembered in localStorage so it doesn't need to be retyped on every
-// reload. No trailing slash: every call site below appends a leading-slash
-// path directly onto this value.
-function resolveApiBase(){
-  const fromQuery = new URLSearchParams(window.location.search).get('api_base');
-  if(fromQuery){
-    const trimmed = fromQuery.replace(/\/+$/, '');
-    localStorage.setItem('timeline_api_base', trimmed);
-    return trimmed;
-  }
-  return localStorage.getItem('timeline_api_base') || 'http://127.0.0.1:3000';
-}
-const API_BASE = resolveApiBase();
-let AUTH_TOKEN = null;
-
-// Dev-only: mints a bearer token from timeline-api's checked-in throwaway
-// keypair, since there's no real Cognito pool to log in against locally.
-// Never a real authentication mechanism -- see timeline-api's dev_only
-// module and the migration plan's V2a.
-async function ensureAuthToken(){
-  if(AUTH_TOKEN) return AUTH_TOKEN;
-  const sub = document.getElementById('devLoginSub').value.trim();
-  if(!sub) throw new Error('enter a dev login name first');
-  const res = await fetch(`${API_BASE}/_dev/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sub }),
-  });
-  if(!res.ok) throw new Error(await describeFailure('dev login', res));
-  const body = await res.json();
-  AUTH_TOKEN = body.token;
-  // Remembered so a reload can offer to pick the session back up without
-  // making you choose the file again -- see tryRestoreSession.
-  try{ localStorage.setItem('timeline_dev_sub', sub); } catch(e){ /* private mode; restore just won't offer */ }
-  return AUTH_TOKEN;
-}
-
-// A bare HTTP status code ("upload failed (413)") doesn't explain what
-// actually went wrong -- both axum's own built-in error responses (e.g.
-// "Failed to buffer the request body: length limit exceeded" for a
-// too-large upload) and this app's own JSON error bodies ({"error": "..."})
-// carry real, useful text. Read whichever shape came back rather than
-// discarding it. Reading the body can itself fail (already consumed,
-// network cut mid-read); that failure is folded into the message too,
-// not silently dropped.
-async function describeFailure(what, res){
-  try{
-    const text = await res.text();
-    try{
-      const parsed = JSON.parse(text);
-      if(parsed && typeof parsed.error === 'string') return `${what} failed (${res.status}): ${parsed.error}`;
-    } catch(e){ /* not JSON -- fall through to raw text below */ }
-    return `${what} failed (${res.status})${text ? ': ' + text : ''}`;
-  } catch(e){
-    return `${what} failed (${res.status}), and the error response itself couldn't be read: ${e.message}`;
-  }
 }
 
 // --- Load-screen progress ---
@@ -130,46 +63,6 @@ function makeRateEstimator(windowMs){
     if(elapsed < 1 || moved <= 0) return '';
     return formatEta((total - loaded) / (moved / elapsed));
   };
-}
-
-// fetch() cannot report upload progress -- it has no equivalent of
-// xhr.upload.onprogress and its streaming request bodies aren't portable --
-// so the one request that carries the file body uses XMLHttpRequest. Every
-// other call in the load path stays on fetch.
-function putWithProgress(url, body, onProgress){
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('PUT', url);
-    xhr.upload.onprogress = (e) => {
-      if(e.lengthComputable) onProgress(e.loaded, e.total);
-    };
-    xhr.onload = () => resolve({ ok: xhr.status >= 200 && xhr.status < 300, status: xhr.status, text: xhr.responseText });
-    // Both fire for genuine transport failures; reject with something the
-    // caller's TypeError hint can still recognize as "couldn't reach it".
-    xhr.onerror = () => reject(new TypeError('Failed to fetch'));
-    xhr.onabort = () => reject(new TypeError('upload aborted'));
-    xhr.send(body);
-  });
-}
-
-// Reads a response body chunk by chunk so a large download reports real
-// progress. Content-Length is absent often enough (chunked encoding, proxies)
-// that the no-total case shows transferred bytes instead of a made-up
-// percentage.
-async function readBodyWithProgress(res, onProgress){
-  const total = Number(res.headers.get('Content-Length')) || 0;
-  if(!res.body || !res.body.getReader) return res.text();
-  const reader = res.body.getReader();
-  const chunks = [];
-  let loaded = 0;
-  for(;;){
-    const { done, value } = await reader.read();
-    if(done) break;
-    chunks.push(value);
-    loaded += value.length;
-    onProgress(loaded, total);
-  }
-  return new TextDecoder().decode(await new Blob(chunks).arrayBuffer());
 }
 
 // Applies an already-downloaded export: parses it, replaces the page's
@@ -230,7 +123,7 @@ async function tryRestoreSession(){
 
   document.getElementById('devLoginSub').value = sub;
   try{
-    const token = await ensureAuthToken();
+    const token = await ensureAuthToken(document.getElementById('devLoginSub').value.trim());
     const exportRes = await fetch(`${API_BASE}/export`, {
       headers: { 'Authorization': `Bearer ${token}` },
     });
@@ -247,7 +140,7 @@ async function tryRestoreSession(){
     // fault: it just means there is nothing to restore. Logged rather than
     // swallowed so a genuinely surprising failure is still visible.
     console.info('No previous session restored:', e.message);
-    AUTH_TOKEN = null;
+    clearAuthToken();
   }
 }
 
@@ -306,7 +199,7 @@ async function handleLoadClick(){
     showLoadProgress();
     setLoadStatus('Logging in…');
     setLoadProgressIndeterminate('Signing in…');
-    const token = await ensureAuthToken();
+    const token = await ensureAuthToken(document.getElementById('devLoginSub').value.trim());
 
     setLoadStatus('Uploading your conversation export…');
     setLoadProgressIndeterminate('Reading the file…');
@@ -405,42 +298,12 @@ document.getElementById('loadDifferentBtn').addEventListener('click', ()=>{
   // one back", so the remembered session goes with it. Without this, the
   // next reload would silently restore exactly what you just dismissed.
   try{ localStorage.removeItem('timeline_dev_sub'); } catch(e){ /* nothing to forget */ }
-  AUTH_TOKEN = null;
+  clearAuthToken();
   window.location.hash = '';
 });
 
 state.blocks = buildBlocks();
 attachFlags();
-
-// Persists your confirmed flags to the real backend. setRowOverrides (below) already
-// updates state.overrides and re-renders optimistically before calling this; a
-// failed PATCH is surfaced via setSaveStatus, not silently swallowed, but
-// doesn't roll back the optimistic local update. See the migration plan's
-// V2a: this only persists for as long as the in-memory local-dev backend
-// stays running -- there is no database behind it yet.
-async function patchFlagsToBackend(msg, values){
-  if(!AUTH_TOKEN){
-    setSaveStatus('Not saved to the server — log in first.');
-    return;
-  }
-  const conv = state.rawData && state.rawData[msg.conv];
-  const rawMsg = conv && conv.chat_messages && conv.chat_messages[msg.rawIndex];
-  if(!conv || !rawMsg){
-    setSaveStatus("Could not save — couldn't find this message's server-side id.");
-    return;
-  }
-  try{
-    const res = await fetch(`${API_BASE}/conversations/${conv.uuid}/messages/${rawMsg.uuid}/flags`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AUTH_TOKEN}` },
-      body: JSON.stringify(values),
-    });
-    if(!res.ok) throw new Error(`server returned ${res.status}`);
-    setSaveStatus('Saved.');
-  } catch(e){
-    setSaveStatus('Could not save to the server: ' + e.message);
-  }
-}
 
 function setSaveStatus(msg){
   const el = document.getElementById('saveStatus');
@@ -462,7 +325,7 @@ function setRowOverrides(id, changedType, changedValue){
   };
   state.overrides[id] = values;
   attachFlags();
-  patchFlagsToBackend(msg, values);
+  patchFlagsToBackend(msg, values).then(setSaveStatus);
   renderCalendar();
   renderConvList(document.getElementById('convSearch').value);
   if(state.selectedConversation !== null) selectConversation(state.selectedConversation);
