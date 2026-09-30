@@ -3,6 +3,7 @@
 // the matching messages in the review tab.
 
 import { fmtClock, fmtDuration, fmtMonthHeading } from '../../core/format.js';
+import { localDateKey, localDaysTouched } from '../../core/blocks.js';
 import { state } from '../../core/state.js';
 import { escapeHtml } from '../render/markup.js';
 import { jumpToReview, jumpToReviewDay } from './review.js';
@@ -13,10 +14,15 @@ function colorFor(idx){ return PALETTE[idx % PALETTE.length]; }
 
 // --- Calendar view ---
 export function renderCalendar(){
+  // One entry per day a session touches: a session crossing midnight is
+  // drawn as a piece at the end of one row and a piece at the start of the
+  // next, both opening the same session.
   const byDay = {};
   state.blocks.forEach((b, i)=>{
     b._idx = i; // stable reference back into state.blocks for click handlers
-    (byDay[b.date] = byDay[b.date] || []).push(b);
+    localDaysTouched(b).forEach(piece => {
+      (byDay[piece.date] = byDay[piece.date] || []).push({ b, piece });
+    });
   });
   const days = Object.keys(byDay).sort();
 
@@ -31,18 +37,21 @@ export function renderCalendar(){
     const blocks = byDay[day];
     const d = new Date(day + 'T00:00:00');
 
+    const dayStart = d.getTime();
+    const dayLength = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime() - dayStart;
     let bars = '';
-    blocks.forEach(b=>{
-      const startOfDay = new Date(b.start);
-      const secOfDay = startOfDay.getHours()*3600 + startOfDay.getMinutes()*60 + startOfDay.getSeconds();
-      const leftPct = (secOfDay/86400)*100;
-      const widthPct = Math.max((b.duration_sec/86400)*100, 0.5);
+    blocks.forEach(({ b, piece })=>{
+      const leftPct = ((piece.start - dayStart) / dayLength) * 100;
+      const widthPct = Math.max(((piece.end - piece.start) / dayLength) * 100, 0.5);
       const conv = state.conversations[b.conv];
       let tip = `${conv.name} · ${fmtClock(b.start)}–${fmtClock(b.end)} · ${fmtDuration(b.duration_sec)} · ${b.count} messages · click to review these messages`;
+      // Each marker sits on the piece of the session that holds its messages.
+      const onPiece = (items) => items.filter(m => localDateKey(new Date(m.ts)) === piece.date);
+      const crit = onPiece(b.criticalItems), angry = onPiece(b.angryItems), caps = onPiece(b.capsItems);
       const flagIcons = [];
-      if(b.criticalItems.length){ flagIcons.push(`<span class="flag-icon critical" data-flag-type="critical" title="${b.criticalItems.length} critical — click to review">⚑</span>`); }
-      if(b.angryItems.length){ flagIcons.push(`<span class="flag-icon angry" data-flag-type="angry" title="${b.angryItems.length} angry — click to review">!</span>`); }
-      if(b.capsItems.length){ flagIcons.push(`<span class="flag-icon caps" data-flag-type="caps" title="${b.capsItems.length} ALL-CAPS — click to review">A</span>`); }
+      if(crit.length){ flagIcons.push(`<span class="flag-icon critical" data-flag-type="critical" title="${crit.length} critical — click to review">⚑</span>`); }
+      if(angry.length){ flagIcons.push(`<span class="flag-icon angry" data-flag-type="angry" title="${angry.length} angry — click to review">!</span>`); }
+      if(caps.length){ flagIcons.push(`<span class="flag-icon caps" data-flag-type="caps" title="${caps.length} ALL-CAPS — click to review">A</span>`); }
       const flagsHtml = flagIcons.length ? `<div class="bar-flags">${flagIcons.join('')}</div>` : '';
       bars += `<div class="bar" style="left:${leftPct}%; width:${widthPct}%; background:${colorFor(b.conv)};" title="${escapeHtml(tip)}" data-block-idx="${b._idx}">${flagsHtml}</div>`;
     });
