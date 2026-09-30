@@ -119,21 +119,30 @@ export async function readBodyWithProgress(res, onProgress){
   return new TextDecoder().decode(await new Blob(chunks).arrayBuffer());
 }
 
-// Persists your confirmed flags to the real backend, resolving to a message
-// for the save indicator. setRowOverrides already updates state.overrides and
-// re-renders optimistically before calling this; a failed PATCH is reported
-// in that message, not silently swallowed, but doesn't roll back the
-// optimistic local update. See the migration plan's
+// What happened when your confirmed flags were sent to the backend. The
+// wording shown for each is the interface's choice, in ui/flag-edits.js.
+export const SaveOutcome = Object.freeze({
+  SAVED: 'saved',
+  NOT_LOGGED_IN: 'not-logged-in',
+  NO_SERVER_ID: 'no-server-id',   // the message has no server-side id to save under
+  SERVER_ERROR: 'server-error',   // `detail` says what went wrong
+});
+
+// Persists your confirmed flags to the real backend, resolving to
+// { outcome: SaveOutcome, detail? }. setRowOverrides already updates
+// state.overrides and re-renders optimistically before calling this; a failed
+// PATCH is reported in the outcome, not silently swallowed, but doesn't roll
+// back the optimistic local update. See the migration plan's
 // V2a: this only persists for as long as the in-memory local-dev backend
 // stays running -- there is no database behind it yet.
 export async function patchFlagsToBackend(msg, values){
   if(!AUTH_TOKEN){
-    return 'Not saved to the server — log in first.';
+    return { outcome: SaveOutcome.NOT_LOGGED_IN };
   }
   const conv = state.rawData && state.rawData[msg.conv];
   const rawMsg = conv && conv.chat_messages && conv.chat_messages[msg.rawIndex];
   if(!conv || !rawMsg){
-    return "Could not save — couldn't find this message's server-side id.";
+    return { outcome: SaveOutcome.NO_SERVER_ID };
   }
   try{
     const res = await fetch(`${API_BASE}/conversations/${conv.uuid}/messages/${rawMsg.uuid}/flags`, {
@@ -142,8 +151,8 @@ export async function patchFlagsToBackend(msg, values){
       body: JSON.stringify(values),
     });
     if(!res.ok) throw new Error(`server returned ${res.status}`);
-    return 'Saved.';
+    return { outcome: SaveOutcome.SAVED };
   } catch(e){
-    return 'Could not save to the server: ' + e.message;
+    return { outcome: SaveOutcome.SERVER_ERROR, detail: e.message };
   }
 }

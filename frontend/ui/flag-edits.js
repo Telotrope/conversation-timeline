@@ -5,9 +5,19 @@
 
 import { effectiveFlag } from '../core/flags.js';
 import { state } from '../core/state.js';
-import { patchFlagsToBackend } from '../infra/api-client.js';
+import { SaveOutcome, patchFlagsToBackend } from '../infra/api-client.js';
 import { refreshAllViews } from './refresh-views.js';
 import { setSaveStatus } from './widgets/status-indicators.js';
+
+// The save indicator's wording for each outcome of a save.
+function saveMessage({ outcome, detail }){
+  switch(outcome){
+    case SaveOutcome.SAVED: return 'Saved.';
+    case SaveOutcome.NOT_LOGGED_IN: return 'Not saved to the server — log in first.';
+    case SaveOutcome.NO_SERVER_ID: return "Could not save — couldn't find this message's server-side id.";
+    case SaveOutcome.SERVER_ERROR: return 'Could not save to the server: ' + detail;
+  }
+}
 
 // Clicking any single checkbox, or the Approve button, promotes ALL THREE
 // flags on that message to explicit user values at once — using the
@@ -23,7 +33,7 @@ export function setRowOverrides(id, changedType, changedValue){
     critical: changedType === 'critical' ? changedValue : effectiveFlag(msg, 'critical'),
   };
   state.overrides[id] = values;
-  patchFlagsToBackend(msg, values).then(setSaveStatus);
+  patchFlagsToBackend(msg, values).then((result) => setSaveStatus(saveMessage(result)));
   refreshAllViews();
 }
 
