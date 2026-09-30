@@ -6,6 +6,9 @@
 - Revision 3 adopts your folder layout: `ui/` holds the actions that span views, above
   `ui/views/`, which sits above `ui/render/`, `ui/widgets/` and `ui/navigation/`. It also states
   the purpose of every file.
+- Revision 4 deletes the "Classify with AI" feature instead of moving it (§3f). Rust takes over
+  classification in the migration plan's V3, which now links to the deleted code at a fixed
+  commit.
 
 ## Goal
 
@@ -15,22 +18,23 @@ with one concern each, grouped by layer the way the Rust backend is split into
 `timeline-core` (domain), `timeline-storage` (adapters) and `timeline-api` (wiring).
 
 This is a **move, not a rewrite**. Function bodies move unchanged except for the edits listed
-in §3 and §4. Each of those edits exists only to make the split legal.
+in §3 and §4. Each of those edits exists only to make the split legal, with one exception: the
+"Classify with AI" feature is deleted (§3f).
 
 **Serving.** The page is served only over HTTP. The script becomes standard JavaScript modules
 loaded with `<script type="module" src="frontend/main.js">`. There is no build step and no
 bundler, and nothing is done to keep the page working when opened from disk.
 
 Out of scope:
-- The CSS and markup in lines 1–908.
+- The CSS and markup in lines 1–908, apart from the parts that belong only to the deleted
+  classification feature (§3f).
 - Any behavior change.
 - Replacing the URL-hash navigation with `history.pushState`. The comment at
   [timeline.html:2298](../../timeline.html#L2298) justifies hashes by `file://` use, which no longer
   applies. Switching would change behavior, so that is a separate decision. The comment moves
   with the code and is updated to say the reason no longer holds.
-- The "Classify with AI" feature. It calls `api.anthropic.com` directly from the browser
-  ([timeline.html:1745](../../timeline.html#L1745)), which cannot succeed from a page served over
-  HTTP. It moves unchanged. Whether to delete it is a separate decision.
+- Building the Bedrock-based replacement for "Classify with AI". That is V3 of
+  [2026-09-09-rust-aws-backend-migration.md](2026-09-09-rust-aws-backend-migration.md#L530).
 
 ## 1. Layers
 
@@ -135,33 +139,14 @@ of reading every body.
 - **Contents:** `pearsonR` and the five `compute…Analysis` functions. Separating them from
   drawing takes the edit in §3d.
 
-**`core/classify-prompt.js`** (~55 lines, from [1690–1740](../../timeline.html#L1690))
-- **Purpose:** builds the prompt text for "Classify with AI" from a batch of your messages.
-  Each message goes in with the reply before it, escaped so message text cannot break the
-  prompt's structure.
-- **Contents:** `CLASSIFY_BATCH_SIZE`, `CLASSIFY_MODEL`, `getPriorReplyText`,
-  `escapeForPromptTags`, `buildClassifyPrompt`.
-
 ### infra/ — network and storage, no DOM
 
-**`infra/api-client.js`** (~140 lines, from [1045–1099](../../timeline.html#L1045), [1174–1216](../../timeline.html#L1174) and [1624–1647](../../timeline.html#L1624))
+**`infra/api-client.js`** (~140 lines, from [1045–1099](../../timeline.html#L1045), [1174–1216](../../timeline.html#L1174) and [1617–1647](../../timeline.html#L1617))
 - **Purpose:** everything that talks to the timeline backend. It works out the backend's
   address, gets a development login token, uploads with progress and downloads with progress.
   It saves your flag corrections and turns failed responses into readable messages.
 - **Contents:** `resolveApiBase`, `API_BASE`, the auth token, `ensureAuthToken`,
   `describeFailure`, `putWithProgress`, `readBodyWithProgress`, `patchFlagsToBackend`.
-
-**`infra/anthropic-classifier.js`** (~70 lines, from [1741–1808](../../timeline.html#L1741))
-- **Purpose:** sends one batch of messages to Anthropic's API and reads back which ones it
-  judged critical or angry, retrying once on failure. Over HTTP this call cannot succeed (see
-  Out of scope).
-- **Contents:** `classifyBatchWithAI`, `classifyBatchWithRetry`.
-
-**`infra/artifact-storage.js`** (~40 lines, from [1580–1623](../../timeline.html#L1580))
-- **Purpose:** saves "Classify with AI" results as they arrive, using `window.storage`. That
-  storage exists only when the page runs inside Claude as an artifact. Over HTTP it is absent,
-  and this file does nothing.
-- **Contents:** `AUTO_CACHE_KEY`, `hasStorage`, `saveAutoClassificationsToStorage`.
 
 ### ui/render/ — turns data into HTML or SVG
 
@@ -178,10 +163,9 @@ of reading every body.
 
 ### ui/widgets/ — self-contained controls the whole page uses
 
-**`ui/widgets/confirm-modal.js`** (~25 lines, from [912–938](../../timeline.html#L912))
-- **Purpose:** the page's own yes/no dialog. It is a replacement for the browser's
-  `confirm()`, which some embedding contexts block silently.
-- **Contents:** `showConfirm`.
+With the confirmation dialog deleted (§3f), this folder holds one file. It keeps its own folder
+because it is still a widget, and a future one, such as the cost confirmation V3 or V4 may need,
+has an obvious home.
 
 **`ui/widgets/status-indicators.js`** (~100 lines, from [1026–1044](../../timeline.html#L1026), [1100–1133](../../timeline.html#L1100), [1155–1173](../../timeline.html#L1155), [1290–1302](../../timeline.html#L1290) and [1648–1657](../../timeline.html#L1648))
 - **Purpose:** the page's progress and status lines. It covers:
@@ -259,10 +243,10 @@ of reading every body.
   view named in the web address.
 - **Contents:** `applyExportText`, `tryRestoreSession`, `runDetectionPass`, `handleLoadClick`.
 
-**`ui/refresh-views.js`** (~15 lines, from [1667–1672](../../timeline.html#L1667), [1889–1893](../../timeline.html#L1889) and [2638–2642](../../timeline.html#L2638))
+**`ui/refresh-views.js`** (~15 lines, from [1667–1672](../../timeline.html#L1667) and [2638–2642](../../timeline.html#L2638))
 - **Purpose:** after any change to flags, recomputes them and redraws the calendar,
   conversation list, open conversation and review table. Today that sequence is copied in
-  three places.
+  three places; after the deletion in §3f, two remain.
 - **Contents:** `refreshAllViews`.
 
 **`ui/flag-edits.js`** (~45 lines, from [1658–1684](../../timeline.html#L1658) and [2635–2643](../../timeline.html#L2635))
@@ -272,13 +256,7 @@ of reading every body.
   gets redrawn.
 - **Contents:** `setRowOverrides`, `approveRow`, `onVisibilityToggleChanged`.
 
-**`ui/classify-run.js`** (~95 lines, from [1809–1901](../../timeline.html#L1809))
-- **Purpose:** the "Classify with AI" button. It asks for confirmation, sends your messages
-  in batches through `infra/anthropic-classifier.js`, records the results as automatic flags
-  and redraws.
-- **Contents:** `classifyWithAI`.
-
-**`ui/annotated-export.js`** (~50 lines, from [1902–1951](../../timeline.html#L1902))
+**`ui/annotated-export.js`** (~55 lines, from [1679–1684](../../timeline.html#L1679) and [1902–1951](../../timeline.html#L1902))
 - **Purpose:** the download button. It saves the conversations with both the automatic flags
   and your corrections written into each message, in a file this page can load again.
 - **Contents:** `exportAnnotatedConversations`.
@@ -297,7 +275,7 @@ of reading every body.
 - **Contents:** every top-level `addEventListener` call, the `setFlagEditHandlers` call, and
   the startup call to `tryRestoreSession`.
 
-That makes 28 files. The largest is `ui/views/review.js` at about 285 lines, under the 300–400
+That makes 23 files. The largest is `ui/views/review.js` at about 285 lines, under the 300–400
 soft target.
 
 ## 3. Edits the split forces
@@ -341,6 +319,31 @@ The page draws the same thing at the same point, after the computation finishes.
 
 **3e. The unused `analysisCache` is dropped.** It is declared at
 [line 2710](../../timeline.html#L2710), and nothing in the file reads or writes it.
+
+**3f. "Classify with AI" is deleted.** It calls `api.anthropic.com` directly from the browser
+([timeline.html:1745](../../timeline.html#L1745)), which cannot succeed from a page served over HTTP.
+The migration plan's V3 moves classification to Rust on Bedrock. Its
+[reference-implementation list (line 531)](2026-09-09-rust-aws-backend-migration.md#L531) links to
+this code at commit `64996c5`, so the prompt and error handling remain available for the port.
+Deleted, as one commit on the single-file page before anything moves (step D1 in §6):
+
+| What | Where now |
+|---|---|
+| The classification section: model id, batch size, prompt building, the API call, retry, the batch loop | [timeline.html:1685–1901](../../timeline.html#L1685) |
+| The `window.storage` checkpoint | [timeline.html:1580–1616](../../timeline.html#L1580) |
+| The confirmation dialog, `showConfirm`, whose only caller is the batch loop ([line 1816](../../timeline.html#L1816)) | [timeline.html:912–938](../../timeline.html#L912) |
+| The button's event listener | [timeline.html:2633](../../timeline.html#L2633) |
+| The button, its explanation and its progress bar | [timeline.html:833–849](../../timeline.html#L833) |
+| The dialog's markup | [timeline.html:898–907](../../timeline.html#L898) |
+| The CSS used only by those: `.llm-classify-*` and `.modal-*` | [timeline.html:554–577](../../timeline.html#L554), [408–441](../../timeline.html#L408) |
+
+Two neighbors stay, because they sit inside the deleted ranges' edges but belong to other code:
+- `patchFlagsToBackend`'s comment, at [lines 1617–1623](../../timeline.html#L1617).
+- `exportAnnotatedConversations`'s comment, at [lines 1679–1684](../../timeline.html#L1679). It is
+  separated from its function by the classification section today.
+
+The `.is-error` progress-bar style ([line 547](../../timeline.html#L547)) also stays, because the load
+progress bar uses it ([line 1121](../../timeline.html#L1121)).
 
 ## 4. How the loops between files are resolved
 
@@ -401,10 +404,9 @@ reason is readability, which prompted this plan. A reader who searches for
 An event named by a string can have any number of listeners anywhere, found only by searching
 for the string.
 
-The same redraw sequence is copied in `setRowOverrides`, `classifyWithAI`
-([lines 1889–1893](../../timeline.html#L1889)) and `onVisibilityToggleChanged`
-([lines 2638–2642](../../timeline.html#L2638)). It becomes one function, `refreshAllViews`, in
-`ui/refresh-views.js`, and all three call it. `applyExportText`'s redraw
+The same redraw sequence is copied in `setRowOverrides` and `onVisibilityToggleChanged`
+([lines 2638–2642](../../timeline.html#L2638)); a third copy goes with `classifyWithAI` (§3f). It
+becomes one function, `refreshAllViews`, in `ui/refresh-views.js`, and both call it. `applyExportText`'s redraw
 ([lines 1244–1247](../../timeline.html#L1244)) is different: it also redraws the subtitle and
 does not reopen a conversation. It stays as it is.
 
@@ -462,7 +464,6 @@ row reads "this file imports these":
 | `ui/router.js` | `ui/navigation/tabs.js`, `ui/navigation/location.js`, `ui/views/conversations.js`, `ui/views/analytics.js` |
 | `ui/load-flow.js` | `ui/router.js` (a restored session reopens the view named in the address, [timeline.html:1280](../../timeline.html#L1280)), `ui/widgets/status-indicators.js`, `ui/views/header.js`, `ui/views/calendar.js`, `ui/views/conversations.js`, `ui/views/review.js` |
 | `ui/flag-edits.js` | `ui/refresh-views.js`, `ui/widgets/status-indicators.js` |
-| `ui/classify-run.js` | `ui/refresh-views.js`, `ui/widgets/confirm-modal.js` |
 | `ui/annotated-export.js` | `ui/widgets/status-indicators.js` |
 | `ui/refresh-views.js` | `ui/views/calendar.js`, `ui/views/conversations.js`, `ui/views/review.js` |
 | `ui/views/calendar.js` | `ui/views/review.js`, `ui/render/markup.js` |
@@ -513,7 +514,8 @@ and some tests could still pass against the blank parts of the page.
   approved it on 2026-09-30.
 
 **V3. Measure baseline coverage.** Run the whole suite with Playwright's Chromium coverage
-collection on the single-file page. Record which of the 85 functions never run, and the line
+collection on the single-file page, after step D1's deletion. Record which of the remaining
+functions never run, and the line
 coverage within those that do. Write the result to
 `docs/analysis/2026-09-30-timeline-script-baseline-coverage.md`. I have not measured this yet;
 the list below comes from searching the test files for element names, not from running
@@ -536,9 +538,6 @@ untested:
   the guard.
 - The review filter banner's buttons: previous day, next day, clear, view the whole
   conversation, view the whole day.
-- The "Classify with AI" button. Asserts the confirmation dialog appears and that Cancel leaves
-  every flag unchanged. The success path cannot run over HTTP (see Out of scope), so it is not
-  verified. §7 says so.
 
 V3's measurement is the authority. Any function it shows never running gets a test here, or a
 written reason in the analysis doc why no test can reach it over HTTP.
@@ -583,8 +582,12 @@ They call only the modules' exported functions. Coverage comes from
 
 One commit per step, and each step passes V5 and V6 before it is committed:
 
-- **V1–V4.** Test harness over HTTP, the error check, the baseline coverage, and the
-  characterization tests, all against the unchanged page. Several commits.
+- **V1–V2.** Test harness over HTTP and the uncaught-error check, against the unchanged page.
+- **D1.** Delete "Classify with AI" (§3f) on the single-file page. The whole suite passes
+  afterward, and a search of the page for `classifyAi`, `confirmModal`, `showConfirm` and
+  `window.storage` finds nothing.
+- **V3–V4.** Baseline coverage and the characterization tests, against the page as D1 left
+  it.
 - **S1.** Change `<script>` to `<script type="module" src="frontend/main.js">`, with
   `main.js` holding the whole script unchanged. This proves the loading path before anything
   moves.
@@ -603,8 +606,6 @@ One commit per step, and each step passes V5 and V6 before it is committed:
 
 ## 7. What this verification will not show
 
-- **"Classify with AI" succeeding.** It cannot succeed over HTTP. Only its confirm-and-cancel
-  path is tested.
 - **Anything against the deployed AWS backend.** The end-to-end tests use the local dev
   backend and its dev login. Nothing in [infra/template.yaml](../../infra/template.yaml) serves this
   page, so there is no deployed copy to test.
@@ -615,15 +616,15 @@ One commit per step, and each step passes V5 and V6 before it is committed:
 ### C1 [RESOLVED]: The loading approach decides whether the end-to-end tests change
 Original concern: modules do not load from `file://`, which is how both specs open the page.
 **Resolution:** you answered that the page is served only over HTTP. The specs move to HTTP in
-[V1 (line 498)](2026-09-30-split-timeline-script.md#L498), and loading is plain modules with no build
-step, per [Serving (line 20)](2026-09-30-split-timeline-script.md#L20).
+[V1 (line 499)](2026-09-30-split-timeline-script.md#L499), and loading is plain modules with no build
+step, per [Serving (line 24)](2026-09-30-split-timeline-script.md#L24).
 
 ### C2 [RESOLVED]: Splitting may break single-file artifact hosting
 **Resolution:** you answered that single-file hosting is no longer needed. Every statement of it
 as a goal was removed. What remains are facts about code that depends on it:
-- "Classify with AI" cannot work over HTTP, recorded under
-  [Out of scope (line 24)](2026-09-30-split-timeline-script.md#L24).
-- `infra/artifact-storage.js` does nothing over HTTP.
+- "Classify with AI" cannot work over HTTP, and `window.storage`, which its checkpoint used,
+  does not exist there.
+- Revision 4 deletes both; see C15.
 
 ### C3 [RESOLVED]: A naive split creates circular imports
 Original concern: I read that the review table calls `setRowOverrides`, which calls
@@ -639,23 +640,24 @@ showed revision 1 was also incomplete: the address writer reads `currentConv` an
 - The reader and writer are split, with the guard behind `whileApplyingHash`.
 
 All three loops are explained with call sites in
-[§4 (line 345)](2026-09-30-split-timeline-script.md#L345). Circular-import detection in
-[V7 (line 561)](2026-09-30-split-timeline-script.md#L561) keeps the result checked.
+[§4 (line 348)](2026-09-30-split-timeline-script.md#L348). Circular-import detection in
+[V7 (line 560)](2026-09-30-split-timeline-script.md#L560) keeps the result checked.
 
 ### C4 [RESOLVED]: Imported variables cannot be reassigned
 Original concern: `applyExportText` reassigns seven shared globals, which modules forbid.
-**Resolution:** a single `state` object; [3a (line 305)](2026-09-30-split-timeline-script.md#L305).
+**Resolution:** a single `state` object; [3a (line 283)](2026-09-30-split-timeline-script.md#L283).
 
 ### C5 [RESOLVED]: Infra functions reached into the page
 Original concern: `ensureAuthToken` reads a text box and `patchFlagsToBackend` writes the save
 indicator, which would make `infra/` depend on the DOM.
 **Resolution:** a parameter and a return value respectively;
-[3b (line 311)](2026-09-30-split-timeline-script.md#L311).
+[3b (line 289)](2026-09-30-split-timeline-script.md#L289).
 
 ### C6 [RESOLVED]: The first draft had about 29 files, several under 15 lines
 **Resolution:** save status merged into `ui/widgets/status-indicators.js`, and `pearsonR`
-joined `core/analyses.js`. Revision 3 has 28 files. Two of them are about 10 lines:
-`ui/navigation/tabs.js` and `ui/views/header.js`. You chose those groupings for clarity of
+joined `core/analyses.js`. Revision 3 had 28 files; revision 4's deletion (C15) leaves 23. Two
+of them are about 10 lines, `ui/navigation/tabs.js` and `ui/views/header.js`, and `ui/widgets/`
+holds a single file. You chose those groupings for clarity of
 purpose over file count; see C11.
 
 ### C7 [RESOLVED, gated]: 100% coverage of the browser-side layers is not yet demonstrated
@@ -663,8 +665,8 @@ Original concern: the project rule requires it, and nobody has measured what the
 suite covers.
 **Resolution:** coverage is measured before the split, and gaps are closed with
 characterization tests before any code moves:
-[V3–V4 (line 515)](2026-09-30-split-timeline-script.md#L515). It is measured again after
-([V8 (line 571)](2026-09-30-split-timeline-script.md#L571)). **Gate:** V3's numbers; any function
+[V3–V4 (line 516)](2026-09-30-split-timeline-script.md#L516). It is measured again after
+([V8 (line 570)](2026-09-30-split-timeline-script.md#L570)). **Gate:** V3's numbers; any function
 unreachable over HTTP gets reported, not tested around.
 
 ### C8 [OPEN]: Line ranges and purposes come from pattern matching and comments, not from reading every function
@@ -679,9 +681,9 @@ purposes are reported in that step's commit message.
 ### C9 [RESOLVED]: No explanation of how the result is verified
 Original concern: you pointed out that revision 1 did not explain how we would know the
 program still works.
-**Resolution:** [§5 (line 480)](2026-09-30-split-timeline-script.md#L480) sets out
+**Resolution:** [§5 (line 481)](2026-09-30-split-timeline-script.md#L481) sets out
 tests-before-moving, moved-versus-changed diffs, structural checks and before-and-after
-coverage. [§7 (line 604)](2026-09-30-split-timeline-script.md#L604) states what it will not show.
+coverage. [§7 (line 607)](2026-09-30-split-timeline-script.md#L607) states what it will not show.
 
 ### C10 [OPEN]: The characterization test list is based on a keyword search
 I searched the spec files for element ids such as `toggleShowAuto` and `classifyAiBtn` and
@@ -699,11 +701,11 @@ application layer. Meanwhile `ui/` mixed four views with six non-view pieces.
 - `page-chrome` was dissolved: `switchTab` went to `ui/navigation/tabs.js`, and `renderSubtitle`
   became the view `ui/views/header.js`.
 
-See [§1 (line 35)](2026-09-30-split-timeline-script.md#L35) and
-[§2 (line 79)](2026-09-30-split-timeline-script.md#L79).
+See [§1 (line 39)](2026-09-30-split-timeline-script.md#L39) and
+[§2 (line 83)](2026-09-30-split-timeline-script.md#L83).
 
 ### C12 [RESOLVED]: The inventory named functions but not what each file is for
-**Resolution:** every file in [§2 (line 79)](2026-09-30-split-timeline-script.md#L79) now opens
+**Resolution:** every file in [§2 (line 83)](2026-09-30-split-timeline-script.md#L83) now opens
 with a purpose statement, as you asked.
 
 ### C13 [RESOLVED]: Revision 2 placed the analysis computations in `core/`, which they could not join as written
@@ -711,7 +713,7 @@ Original concern: found while writing the purpose statements. Each `compute…An
 function calls its own renderer, and runs its loop through `computeWithProgress`, which uses
 the browser-only `requestAnimationFrame`. In `core/` they would have imported views and
 failed under Node.
-**Resolution:** the edit in [3d (line 321)](2026-09-30-split-timeline-script.md#L321).
+**Resolution:** the edit in [3d (line 299)](2026-09-30-split-timeline-script.md#L299).
 `computeWithProgress` moves to `ui/views/analytics.js`, and `requestAnimationFrame` is added to
 the `core/` layer check in V7. The alternative was keeping computation and drawing together in
 `ui/views/analytics.js` with no edit. That would give one ~350-line file with nothing testable
@@ -720,5 +722,24 @@ in Node, so I rejected it.
 ### C14 [RESOLVED]: `analysisCache` is dead code
 Original concern: it is declared at [timeline.html:2710](../../timeline.html#L2710) and never used.
 Carrying it into a new file would suggest it matters.
-**Resolution:** dropped; [3e (line 342)](2026-09-30-split-timeline-script.md#L342). Revert this if
+**Resolution:** dropped; [3e (line 320)](2026-09-30-split-timeline-script.md#L320). Revert this if
 you'd rather the split carry it unchanged.
+
+### C15 [RESOLVED]: "Classify with AI" would have been moved and tested though it cannot work and V3 replaces it
+Original concern: you asked whether the layout supports a Bedrock-backed classifier and which
+files would become obsolete. Four would have become obsolete:
+- `core/classify-prompt.js`
+- `infra/anthropic-classifier.js`
+- `infra/artifact-storage.js`
+- the batch loop in `ui/classify-run.js`
+
+The migration plan's V3 already moves classification to Rust. You wanted instructive code,
+especially the prompt, kept for the port, but not obsolete code kept in the tree.
+**Resolution:** you chose to delete it in this split. The deletion is
+[3f (line 323)](2026-09-30-split-timeline-script.md#L323), done as step D1 in
+[§6 (line 581)](2026-09-30-split-timeline-script.md#L581). The migration plan's V3 now links to
+the deleted code at commit `64996c5`, which is already on GitHub, with current line numbers
+([reference list (line 531)](2026-09-09-rust-aws-backend-migration.md#L531)). A future Bedrock button
+fits the layout without a new folder: network calls in `infra/api-client.js`, and the button
+logic in a new `ui/classify-run.js` that starts a run and polls it the way `runDetectionPass`
+does.
