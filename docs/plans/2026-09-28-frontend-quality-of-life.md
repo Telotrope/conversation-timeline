@@ -483,6 +483,12 @@ behind the quality-of-life phases.
    waiting for reachability before driving the browser did. **Not root-caused** — worked around, not
    explained. Worth isolating before shipping, since a user hitting this sees only "Is the backend
    running?" when it is.
+3. **Friction ranking can only be sorted by % flagged.** Added 2026-09-30 at the user's request.
+   It should sort by any column, and needs a new start-date column (a session's first message; a
+   conversation's earliest session). Today `computeFrictionAnalysis` in
+   [frontend/core/analyses.js](../../frontend/core/analyses.js) sorts once by percentage, and
+   `renderFrictionResult` in [frontend/ui/views/analytics.js](../../frontend/ui/views/analytics.js)
+   draws fixed headers.
 
 ## Tabled at the user's direction
 
