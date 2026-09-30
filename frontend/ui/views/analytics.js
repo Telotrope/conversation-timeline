@@ -57,8 +57,22 @@ function setAnalyticsProgress(pct){
   if(label) label.textContent = `Computing… ${pct}%`;
 }
 
+// The options the shown analysis last ran with (e.g. by session or by
+// month), so rerunAnalysis can redraw it the same way.
+let lastOpts = {};
+// Counts runs, so a slower earlier run can't draw over a later one.
+let runCount = 0;
+
+// Recomputes the chosen analysis, if there is one, after the flags or the
+// show switches change.
+export function rerunAnalysis(){
+  if(state.selectedAnalysis) runAnalysis(state.selectedAnalysis, lastOpts);
+}
+
 export function runAnalysis(name, opts){
   opts = opts || {};
+  lastOpts = opts;
+  const thisRun = ++runCount;
   state.selectedAnalysis = name;
   rememberLocation();
   document.querySelectorAll('.analytics-item').forEach(b=>{
@@ -77,7 +91,9 @@ export function runAnalysis(name, opts){
   // The computation runs in chunks, yielding to the browser between them so
   // the progress bar moves; drawing happens once it finishes.
   const runChunked = (items, fn) => computeWithProgress(items, fn, setAnalyticsProgress);
-  compute(opts, runChunked).then(render);
+  compute(opts, runChunked).then(result => {
+    if(thisRun === runCount) render(result);
+  });
 }
 
 function renderFrictionResult({ rows, granularity }){

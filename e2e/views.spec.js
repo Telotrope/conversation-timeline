@@ -848,6 +848,25 @@ test('an api_base query parameter points the page at that backend', async ({ pag
   await expect(page.locator('#convItems .conv-item')).not.toHaveCount(0);
 });
 
+test('the shown analysis updates when the show switches change', async ({ page }) => {
+  await loadFixture(page, { detect: true });
+  await runAnalysis(page, 'friction');
+  await page.click('#frictionBySession');
+  await waitForAnalysis(page);
+  expect(await page.locator('.friction-row').count()).toBeGreaterThan(0);
+
+  // Nothing is reviewed, so with only your tags shown nothing is ranked --
+  // and the by-session choice is kept.
+  await page.uncheck('#toggleShowAuto');
+  await waitForAnalysis(page);
+  await expect(page.locator('.friction-row')).toHaveCount(0);
+  await expect(page.locator('#frictionBySession')).toHaveClass(/active/);
+
+  await page.check('#toggleShowAuto');
+  await waitForAnalysis(page);
+  expect(await page.locator('.friction-row').count()).toBeGreaterThan(0);
+});
+
 test('a session crossing midnight is one session, drawn on both days', async ({ page }, testInfo) => {
   // The browser runs in UTC here, so these straddle its midnight.
   const file = writeExport(testInfo, 'midnight.json', [{

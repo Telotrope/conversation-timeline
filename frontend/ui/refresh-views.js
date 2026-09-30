@@ -1,8 +1,10 @@
 // After any change to flags, recomputes them and redraws the calendar, the
-// conversation list, the open conversation and the review table.
+// conversation list, the open conversation, the review table and the chosen
+// analysis.
 
 import { attachFlags } from '../core/flags.js';
 import { state } from '../core/state.js';
+import { rerunAnalysis } from './views/analytics.js';
 import { renderCalendar } from './views/calendar.js';
 import { renderConvList, selectConversation } from './views/conversations.js';
 import { renderReviewTable } from './views/review.js';
@@ -15,4 +17,5 @@ export function refreshAllViews(){
   renderConvList(document.getElementById('convSearch').value);
   if(state.selectedConversation !== null) selectConversation(state.selectedConversation);
   renderReviewTable();
+  rerunAnalysis();
 }
