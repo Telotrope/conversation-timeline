@@ -528,13 +528,25 @@ that distinction the way the in-memory `ObjectStore` fake already does for presi
 doesn't remove the two-shape reality, only its visibility.
 
 ### V3 — Bedrock-based classification
+**Reference implementation.** The browser-side "Classify with AI" code is deleted from the
+working tree by [2026-09-30-split-timeline-script.md](2026-09-30-split-timeline-script.md), because it
+cannot work from a page served over HTTP. The links in this section are pinned to commit
+`64996c5`, the last commit to change `timeline.html` before that deletion. They show the code
+exactly as it last ran:
+- model id and batch size: [timeline.html:1690-1691](https://github.com/Telotrope/conversation-timeline/blob/64996c536e3c80f6de94bf96ef2941e2006c5264/timeline.html#L1690-L1691)
+- prompt building and escaping: [timeline.html:1704-1740](https://github.com/Telotrope/conversation-timeline/blob/64996c536e3c80f6de94bf96ef2941e2006c5264/timeline.html#L1704-L1740)
+- the API call and its response checks: [timeline.html:1741-1797](https://github.com/Telotrope/conversation-timeline/blob/64996c536e3c80f6de94bf96ef2941e2006c5264/timeline.html#L1741-L1797)
+- retry once per batch: [timeline.html:1798-1808](https://github.com/Telotrope/conversation-timeline/blob/64996c536e3c80f6de94bf96ef2941e2006c5264/timeline.html#L1798-L1808)
+- the batch loop, with systemic-failure abort and checkpointing: [timeline.html:1809-1901](https://github.com/Telotrope/conversation-timeline/blob/64996c536e3c80f6de94bf96ef2941e2006c5264/timeline.html#L1809-L1901)
+- the `window.storage` checkpoint: [timeline.html:1580-1623](https://github.com/Telotrope/conversation-timeline/blob/64996c536e3c80f6de94bf96ef2941e2006c5264/timeline.html#L1580-L1623)
+
 **Adds**: server-side port of `classifyBatchWithAI`/`classifyBatchWithRetry`
-([timeline.html:65417-65531](timeline.html#L65417)) calling `aws-sdk-bedrockruntime`'s `converse`
+([timeline.html:1741-1808](https://github.com/Telotrope/conversation-timeline/blob/64996c536e3c80f6de94bf96ef2941e2006c5264/timeline.html#L1741-L1808)) calling `aws-sdk-bedrockruntime`'s `converse`
 API instead of a client-side `fetch()` to `api.anthropic.com` — the direct fix for the CORS/no-API-
 key dead end at [timeline-project-decisions.md:388-393](timeline-project-decisions.md#L388). Batch
 orchestration via the SQS-checkpoint design (§1.1). **Prompt hardening is preserved verbatim**:
 the XML `<message index="N">` tags and `escapeForPromptTags`
-([timeline.html:65428-65464](timeline.html#L65428)) carry over unchanged, not redesigned.
+([timeline.html:1704-1740](https://github.com/Telotrope/conversation-timeline/blob/64996c536e3c80f6de94bf96ef2941e2006c5264/timeline.html#L1704-L1740)) carry over unchanged, not redesigned.
 
 **Files/modules**: `backend/timeline-core/src/classify.rs` (prompt building, pure/testable),
 `backend/timeline-api/src/bedrock.rs` (SDK call + retry/checkpoint), new SQS queue, new
@@ -547,7 +559,7 @@ table, IAM scoped to `bedrock:Converse` on the specific model ARN.
 **Tests** (per §2.1, no LocalStack Bedrock emulation available):
 - `wiremock` unit tests: prompt-building snapshot tests (`insta`), and response-parsing tests
   covering every documented failure mode at
-  [timeline.html:65478-65519](timeline.html#L65478) (network error, non-JSON response, API-level
+  [timeline.html:1754-1795](https://github.com/Telotrope/conversation-timeline/blob/64996c536e3c80f6de94bf96ef2941e2006c5264/timeline.html#L1754-L1795) (network error, non-JSON response, API-level
   error, array-length mismatch, non-array response) — these were real bugs once
   ([timeline-project-decisions.md:369-382](timeline-project-decisions.md#L369)) and must not
   regress.
@@ -556,7 +568,7 @@ table, IAM scoped to `bedrock:Converse` on the specific model ARN.
   text, checked in at `backend/tests/fixtures/bedrock_converse_sample.json`.
 - A small number of real-Bedrock integration tests, run manually/nightly given per-call cost.
 - Regression tests: retry-once-per-batch, abort-after-first-systemic-failure, positional-partial-
-  application ([timeline-project-decisions.md:305-310](timeline-project-decisions.md#L305)) ported
+  application ([timeline-project-decisions.md:307-310](timeline-project-decisions.md#L307)) ported
   as literal cases against the mocked HTTP layer.
 
 ### V4 — Payment ($5 charge) and product gating
@@ -656,7 +668,7 @@ different timezone sensitivity — split them:
 ### 4.4 Prompt-injection hardening (Bedrock-side)
 The trust boundary is explicit: untrusted user message text → Bedrock prompt text. The existing
 XML-tag-delimiter + escaping approach
-([timeline.html:65428-65464](timeline.html#L65428),
+([timeline.html:1704-1740](https://github.com/Telotrope/conversation-timeline/blob/64996c536e3c80f6de94bf96ef2941e2006c5264/timeline.html#L1704-L1740),
 [timeline-project-decisions.md §5.4/§10](timeline-project-decisions.md#L278)) is preserved
 verbatim in the Rust port, plus the V5 adversarial test named above.
 
