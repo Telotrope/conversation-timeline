@@ -138,32 +138,51 @@ others — about 22% to 36% more. A run that spent fifty times the wall clock *t
 produced far more than a quarter more tokens. Fifty times the time for a quarter more output means
 the instance was **blocked, not working**.
 
-### The leading explanation
+### Diagnosed, not guessed: exactly 600 seconds, three times each
 
-Both slow instances reported the same thing: the tool they were told to write with failed **three
-times each**, with `PreToolUse hook did not respond before its timeout (host client may be
-unreachable)`, and both fell back to a shell command to create the file. The tool-call counts
-corroborate it exactly — 7 calls for each slow run against 4 for each fast one, a difference of
-precisely three.
+The saved run records carry a timestamp on every event. Extracting only the timing skeleton — no
+content — gives the whole story:
 
-The arithmetic fits a fixed timeout:
+**C-01**
 
-- C-01: (1,945.9 s − ~40 s of normal work) ÷ 3 blocked calls ≈ **635 s per block**
-- C-02: (2,010.3 s − ~40 s of normal work) ÷ 3 blocked calls ≈ **657 s per block**
+| Event | Time | Gap |
+|---|---|---|
+| reads finish, thinking begins | 01:41:05 | — |
+| first write attempted | 01:42:39 | 87.9 s of thinking |
+| write fails | 01:52:39 | **600.0 s** |
+| write attempted again | 01:52:48 | |
+| write fails | 02:02:48 | **600.0 s** |
+| write attempted again | 02:02:55 | |
+| write fails | 02:12:55 | **600.0 s** |
+| falls back to a shell command | 02:13:06 | |
+| file written | 02:13:09 | 3.0 s |
 
-Both land near ten and a half minutes, which is what a fixed timeout hit three times would look
-like. The same hook failure occurred twice in the coordinating session itself, on a different tool,
-so the fault is recurrent and environmental.
+**C-02** is the same shape: 157.9 s of thinking, then three failed writes at **600.0 s, 600.1 s,
+600.1 s**, then a shell command that succeeded in 2.5 s.
 
-**Conclusion: there is no usable timing comparison between the conditions.** The difference is
-explained by an environment fault that happened to strike two runs, not by the instruction under
-test. Reporting a fifty-fold slowdown as an effect of condition C would be wrong.
+Six blocked calls, each lasting 600 seconds to a hundredth of a second. That is a fixed ten-minute
+timeout, not a variable delay, and 3 × 600 s = 1,800 s accounts for the entire gap. The tool that
+blocked needs the editor to answer; no hook is configured in any settings file, and the error text
+names the host client as possibly unreachable. The same fault hit the coordinating session twice on
+a different tool.
 
-**What is not explained:** why only the C runs hit the outage. With n=2 this cannot be settled. One
-possibility consistent with the timestamps is that the outage began just after 01:41:26, when the
-last fast run wrote successfully, and that the C instances — having more to work out under a
-restrictive rule — reached their first write a few seconds later and fell inside the window. That
-is a hypothesis fitted to six data points, not a finding.
+### What that leaves, which is a real result
+
+Subtracting the 1,800 seconds of blocked time gives the model's actual working time:
+
+| Condition | Working time |
+|---|---|
+| baseline | 42.6 s, 34.3 s |
+| user's criterion | 42.3 s, 37.4 s |
+| lookup rule | **145.9 s, 210.1 s** |
+
+So the lookup rule is roughly **four to five times slower in real model work** — visible directly
+as 87.9 s and 157.9 s spent thinking before the first write attempt, against whole runs of 34–43 s
+for the other conditions. This supersedes the earlier statement in this file that no timing
+conclusion was available. One was, once the harness fault was separated out.
+
+n=2. The direction is consistent across both runs and has an obvious cause — a rule that must be
+checked against every word costs time per word — but two runs cannot fix the size of it.
 
 ## Findings
 
