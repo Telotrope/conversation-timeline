@@ -2,3 +2,6 @@ node_modules/
 test-results/
 playwright-report/
 .dev-state/
+
+# Personal conversation export used for manual testing; never commit.
+real-flags.json
