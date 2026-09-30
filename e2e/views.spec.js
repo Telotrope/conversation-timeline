@@ -15,6 +15,8 @@ const { test, expect } = require('@playwright/test');
 const { spawn } = require('child_process');
 const { failOnPageErrors } = require('./page-health');
 const { collectCoverage } = require('./coverage');
+const { syntheticExport } = require('./synthetic-export');
+const fs = require('fs');
 
 const BACKEND_DIR = path.resolve(__dirname, '..', 'backend');
 // Served over HTTP by the static server in playwright.config.js, the same
@@ -485,4 +487,400 @@ test('"Load a different file" stops the session coming back', async ({ page }) =
   // standing decision, not one you have to repeat on every reload.
   await expect(page.locator('#loadScreen')).toBeVisible({ timeout: 30_000 });
   await expect(page.locator('#restoredNotice')).toBeHidden();
+});
+
+// ---------------------------------------------------------------------------
+// Paths the module split rewires, and the load-screen and save failures the
+// suite above never reaches. Written against the single-file page before any
+// of its script moved (docs/plans/2026-09-30-split-timeline-script.md, V4),
+// so they record what the page did then and must keep passing unchanged.
+// ---------------------------------------------------------------------------
+
+// Loads any export file through the real backend, like loadFixture does for
+// the checked-in fixture. `url` lets a test open the page with a query.
+async function loadFile(page, file, { detect = false, sub = uniqueSub(), url = TIMELINE_HTML } = {}) {
+  await page.goto(url);
+  await page.fill('#devLoginSub', sub);
+  await page.setInputFiles('#loadConvFile', file);
+  if (detect) await page.check('#autoDetectCheckbox');
+  await page.click('#loadBtn');
+}
+
+function writeExport(testInfo, name, conversations) {
+  const file = testInfo.outputPath(name);
+  fs.writeFileSync(file, syntheticExport(conversations));
+  return file;
+}
+
+// Analyses paint a progress bar first; they are done when it is gone.
+async function waitForAnalysis(page) {
+  await expect(page.locator('#analyticsMain .progress-wrap')).toHaveCount(0, { timeout: 30_000 });
+}
+
+async function runAnalysis(page, name) {
+  await page.click('button[data-tab="analytics"]');
+  await page.click(`.analytics-item[data-analysis="${name}"]`);
+  await waitForAnalysis(page);
+}
+
+const reviewBanner = (page) => page.locator('#reviewFilterBanner');
+
+// The calendar bar with the most messages. The first bar can be a session
+// holding only Claude's messages, which opens an empty review table since the
+// review tab lists only yours.
+async function busiestBar(page) {
+  const idx = await page.locator('#calendarBody .bar').evaluateAll((bars) => {
+    const count = (b) => Number((b.getAttribute('title').match(/(\d+) messages/) || [0, 0])[1]);
+    return bars.reduce((best, b) => (count(b) > count(best) ? b : best)).dataset.blockIdx;
+  });
+  return page.locator(`#calendarBody .bar[data-block-idx="${idx}"]`);
+}
+
+async function expectReviewOpenOnSession(page) {
+  await expect(page.locator('#view-review')).toHaveClass(/active/);
+  await expect(reviewBanner(page)).toContainText('Time span');
+}
+
+test('ticking a flag box redraws the calendar, the conversation list and the open conversation', async ({ page }) => {
+  // No detection, so nothing is flagged until the box is ticked.
+  await loadFixture(page);
+  const idx = await firstNonEmptyConversationIndex(page);
+  await page.click('button[data-tab="conversations"]');
+  await page.click(`.conv-item[data-idx="${idx}"]`);
+
+  const calendarCritical = page.locator('#calendarBody .flag-icon.critical');
+  const listCritical = page.locator(`.conv-item[data-idx="${idx}"] .flag-icon.critical`);
+  await expect(calendarCritical).toHaveCount(0);
+  await expect(listCritical).toHaveCount(0);
+  await expect(page.locator('#convDetail')).not.toContainText('critical');
+
+  // Opens the review tab on this conversation, so the first row is its.
+  await page.click('#chatReviewLink');
+  await expect(page.locator('#view-review')).toHaveClass(/active/);
+  await page.locator('#reviewTable input[data-type="critical"]').first().check();
+
+  await expect(page.locator('#saveStatus')).toHaveText('Saved.');
+  await expect(page.locator('#reviewTable input[data-type="critical"]').first()).toBeChecked();
+  await expect(page.locator('#reviewTable .flag-checkbox.is-override').first()).toContainText('you');
+  await expect(calendarCritical).not.toHaveCount(0);
+  await expect(listCritical).toHaveCount(1);
+  await expect(page.locator('#convDetail')).toContainText('1 critical');
+});
+
+test('the show switches change what every view counts', async ({ page }) => {
+  await loadFixture(page, { detect: true });
+  const calendarFlags = page.locator('#calendarBody .flag-icon');
+  const listFlags = page.locator('#convItems .flag-icon');
+  const before = await calendarFlags.count();
+  expect(before).toBeGreaterThan(0);
+  await page.click('button[data-tab="review"]');
+
+  // Only your own tags: nothing is yours yet, so nothing is flagged anywhere.
+  await page.uncheck('#toggleShowAuto');
+  await expect(calendarFlags).toHaveCount(0);
+  await expect(listFlags).toHaveCount(0);
+  await expect(page.locator('#reviewTable input[type="checkbox"]:checked')).toHaveCount(0);
+  await expect(page.locator('#reviewTable .flag-checkbox .src').first()).toHaveText('untagged');
+
+  await page.check('#toggleShowAuto');
+  await expect(calendarFlags).toHaveCount(before);
+
+  // Only automatic tags: read-only boxes and no Approve buttons.
+  await page.uncheck('#toggleShowUser');
+  await expect(page.locator('#reviewTable .approve-btn')).toHaveCount(0);
+  await expect(page.locator('#reviewTable input[type="checkbox"]').first()).toBeDisabled();
+  await page.check('#toggleShowUser');
+  await expect(page.locator('#reviewTable .approve-btn').first()).toBeVisible();
+
+  const replies = page.locator('#reviewTable .claude-reply-row');
+  await expect(replies).toHaveCount(0);
+  await page.check('#toggleShowReplies');
+  expect(await replies.count()).toBeGreaterThan(0);
+  await page.uncheck('#toggleShowReplies');
+  await expect(replies).toHaveCount(0);
+});
+
+test('a calendar session opens the review tab on that session, and the banner widens it', async ({ page }) => {
+  await loadFixture(page, { detect: true });
+
+  // Dispatched on the bar itself so a flag icon inside it can't take the click.
+  await (await busiestBar(page)).dispatchEvent('click');
+  await expectReviewOpenOnSession(page);
+  await expect(page.locator('#reviewTable tr.row-highlight')).not.toHaveCount(0);
+
+  await page.click('#viewEntireConvBtn');
+  await expect(reviewBanner(page)).not.toContainText('Time span');
+  await expect(reviewBanner(page)).toContainText('Conversation:');
+
+  await page.click('#clearReviewFilter');
+  await expect(reviewBanner(page)).toBeHidden();
+});
+
+test('a calendar flag opens its session with the flagged messages highlighted', async ({ page }) => {
+  await loadFixture(page, { detect: true });
+
+  await page.locator('#calendarBody .bar-flags .flag-icon').first().click();
+  await expectReviewOpenOnSession(page);
+  await expect(page.locator('#reviewTable tr.row-highlight')).not.toHaveCount(0);
+});
+
+test('the day banner steps between days, and a session widens to its whole day', async ({ page }) => {
+  await loadFixture(page);
+
+  await (await busiestBar(page)).dispatchEvent('click');
+  await expectReviewOpenOnSession(page);
+  await page.click('#viewEntireDayBtn');
+  await expect(reviewBanner(page)).toContainText('Day:');
+
+  const day = reviewBanner(page).locator('strong');
+  const start = await day.textContent();
+  await page.click('#nextDayBtn');
+  await expect(day).not.toHaveText(start);
+  await page.click('#prevDayBtn');
+  await expect(day).toHaveText(start);
+
+  await page.click('#clearReviewFilter');
+  await expect(reviewBanner(page)).toBeHidden();
+});
+
+test('a conversation\'s sessions, flags and review link open the review tab', async ({ page }) => {
+  await loadFixture(page, { detect: true });
+  await page.click('button[data-tab="conversations"]');
+  await page.locator('.conv-item:has(.flag-icon)').first().click();
+  await expect(page.locator('#convDetail .summary', { hasText: 'click a flag' })).toBeVisible();
+
+  await page.locator('#convDetail .session-row').first().dispatchEvent('click');
+  await expectReviewOpenOnSession(page);
+
+  await page.click('button[data-tab="conversations"]');
+  await page.locator('#convDetail .flag-icon[data-flag-type]').first().click();
+  await expectReviewOpenOnSession(page);
+  await expect(page.locator('#reviewTable tr.row-highlight')).not.toHaveCount(0);
+
+  await page.click('button[data-tab="conversations"]');
+  await page.click('#chatReviewLink');
+  await expect(page.locator('#view-review')).toHaveClass(/active/);
+  await expect(reviewBanner(page)).toContainText('Conversation:');
+  await expect(reviewBanner(page)).not.toContainText('Time span');
+});
+
+test('friction ranking switches granularity and its rows open the review tab', async ({ page }) => {
+  await loadFixture(page, { detect: true });
+  await runAnalysis(page, 'friction');
+
+  await page.click('#frictionBySession');
+  await waitForAnalysis(page);
+  await page.locator('.friction-row').first().click();
+  await expectReviewOpenOnSession(page);
+
+  await runAnalysis(page, 'friction');
+  await page.click('#frictionByConv');
+  await waitForAnalysis(page);
+  await page.locator('.friction-row').first().click();
+  await expect(page.locator('#view-review')).toHaveClass(/active/);
+  await expect(reviewBanner(page)).toContainText('Conversation:');
+  await expect(reviewBanner(page)).not.toContainText('Time span');
+});
+
+test('flag rate over time switches between weeks and months', async ({ page }) => {
+  await loadFixture(page, { detect: true });
+  await runAnalysis(page, 'trend');
+
+  await page.click('#trendMonthly');
+  await waitForAnalysis(page);
+  await expect(page.locator('#trendChart svg')).toBeVisible();
+  await page.click('#trendWeekly');
+  await waitForAnalysis(page);
+  await expect(page.locator('#trendChart svg')).toBeVisible();
+});
+
+for (const [analysis, chart] of [['length', '#lengthChart'], ['idlegap', '#idleGapChart']]) {
+  test(`a point on the "${analysis}" scatter plot opens its session in the review tab`, async ({ page }) => {
+    await loadFixture(page, { detect: true });
+    await runAnalysis(page, analysis);
+
+    await page.locator(`${chart} .data-point[data-idx]`).first().dispatchEvent('click');
+    await expectReviewOpenOnSession(page);
+  });
+}
+
+test('opening the page at an analysis address restores the session into that analysis', async ({ page }) => {
+  await loadFixture(page);
+
+  await page.evaluate(() => { location.hash = '#analytics/trend'; });
+  await page.reload();
+  await expect(page.locator('#restoredNotice')).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('#view-analytics')).toHaveClass(/active/);
+  await expect(page.locator('.analytics-item[data-analysis="trend"]')).toHaveClass(/active/);
+  await waitForAnalysis(page);
+  await expect(page.locator('#trendChart')).toBeVisible();
+  expect(await page.evaluate(() => location.hash)).toBe('#analytics/trend');
+});
+
+test('opening the page at a conversation address restores the session into that conversation', async ({ page }) => {
+  await loadFixture(page);
+  const idx = await firstNonEmptyConversationIndex(page);
+  // The item's own text nodes hold the name; its children hold icons and counts.
+  const name = await page.locator(`.conv-item[data-idx="${idx}"]`).evaluate((el) =>
+    [...el.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE).map((n) => n.textContent).join('').trim());
+
+  await page.evaluate((i) => { location.hash = `#conversations/${i}`; }, idx);
+  await page.reload();
+  await expect(page.locator('#restoredNotice')).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('#view-conversations')).toHaveClass(/active/);
+  await expect(page.locator('#convDetail h3')).toHaveText(name);
+  expect(await page.evaluate(() => location.hash)).toBe(`#conversations/${idx}`);
+});
+
+test('an approved flag is written into the annotated export as yours', async ({ page }) => {
+  await loadFixture(page);
+  await page.click('button[data-tab="review"]');
+  await page.locator('.approve-btn').first().click();
+  await expect(page.locator('#saveStatus')).toHaveText('Saved.');
+
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.click('#exportAnnotatedBtn'),
+  ]);
+  const chunks = [];
+  for await (const chunk of await download.createReadStream()) chunks.push(chunk);
+  const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  const yours = parsed.conversations
+    .flatMap((c) => c.chat_messages || [])
+    .filter((m) => m._claude_timeline_user);
+  expect(yours).toHaveLength(1);
+});
+
+test('a failed save says so and names the error', async ({ page }) => {
+  await loadFixture(page);
+  await page.route(`${API_BASE}/conversations/**/flags`, (route) =>
+    route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"disk full"}' }));
+  await page.click('button[data-tab="review"]');
+  await page.locator('.approve-btn').first().click();
+  await expect(page.locator('#saveStatus')).toHaveText(/^Could not save to the server: /);
+});
+
+test('pressing Load with no file chosen asks for one', async ({ page }) => {
+  await page.goto(TIMELINE_HTML);
+  await page.click('#loadBtn');
+  await expect(page.locator('#loadStatus')).toHaveText('Choose a conversations.json file first.');
+});
+
+test('an export with no conversations is reported, not shown', async ({ page }, testInfo) => {
+  await loadFile(page, writeExport(testInfo, 'empty.json', []));
+  await expect(page.locator('#loadStatus')).toContainText('contained no conversations');
+  await expect(page.locator('#loadProgressFill')).toHaveClass(/is-error/);
+  await expect(page.locator('#mainContent')).toBeHidden();
+});
+
+test('a refused upload reports the server\'s own message', async ({ page }) => {
+  await page.route(`${API_BASE}/uploads`, (route) =>
+    route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"uploads paused"}' }));
+  await loadFile(page, FIXTURE);
+  await expect(page.locator('#loadStatus')).toContainText('starting the upload');
+  await expect(page.locator('#loadStatus')).toContainText('uploads paused');
+  await expect(page.locator('#loadProgressFill')).toHaveClass(/is-error/);
+});
+
+test('a refusal with a plain-text body reports that text', async ({ page }) => {
+  await page.route(`${API_BASE}/uploads`, (route) =>
+    route.fulfill({ status: 503, contentType: 'text/plain', body: 'down for maintenance' }));
+  await loadFile(page, FIXTURE);
+  await expect(page.locator('#loadStatus')).toContainText('starting the upload failed (503): down for maintenance');
+});
+
+test('an upload the server rejects mid-transfer reports its status', async ({ page }) => {
+  await page.route(/\/_dev\/local-storage\/put\//, (route) => route.fulfill({ status: 500, body: 'no space' }));
+  await loadFile(page, FIXTURE);
+  await expect(page.locator('#loadStatus')).toContainText('uploading the file failed (500): no space');
+});
+
+test('an upload cut off mid-transfer suggests the backend may be down', async ({ page }) => {
+  await page.route(/\/_dev\/local-storage\/put\//, (route) => route.abort());
+  await loadFile(page, FIXTURE);
+  await expect(page.locator('#loadStatus')).toContainText('Is the backend running');
+});
+
+test('an unreachable backend is reported with a hint', async ({ page }) => {
+  await page.route(`${API_BASE}/**`, (route) => route.abort());
+  await loadFile(page, FIXTURE);
+  await expect(page.locator('#loadStatus')).toContainText('Is the backend running');
+  await expect(page.locator('#loadProgressFill')).toHaveClass(/is-error/);
+});
+
+test('a session that cannot be fetched on reload falls back to the load screen', async ({ page }) => {
+  await loadFixture(page);
+  await page.route(`${API_BASE}/export`, (route) => route.abort());
+  await page.reload();
+  await expect(page.locator('#loadScreen')).toBeVisible();
+  await expect(page.locator('#restoredNotice')).toBeHidden();
+});
+
+test('an api_base query parameter points the page at that backend', async ({ page }) => {
+  // Trailing slashes are trimmed so paths can be appended directly.
+  await loadFile(page, FIXTURE, { url: `${TIMELINE_HTML}?api_base=${encodeURIComponent(API_BASE + '/')}` });
+  await expect(page.locator('#mainContent')).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('#convItems .conv-item')).not.toHaveCount(0);
+});
+
+test('Markdown in a message renders as headings, lists and code', async ({ page }, testInfo) => {
+  const at = new Date('2026-03-02T15:00:00Z');
+  const file = writeExport(testInfo, 'markdown.json', [{
+    name: 'Markdown sample',
+    messages: [{
+      sender: 'human',
+      at,
+      text: '# A heading\n\n- first bullet\n- second bullet\n\n1. first step\n2. second step\n\nPlain with **bold** and `code`.',
+    }],
+  }]);
+  await loadFile(page, file);
+  await expect(page.locator('#mainContent')).toBeVisible({ timeout: 30_000 });
+  await page.click('button[data-tab="review"]');
+
+  const text = page.locator('#reviewTable .msg-text').first();
+  await expect(text.locator('div', { hasText: 'A heading' })).toBeVisible();
+  await expect(text.locator('ul li')).toHaveCount(2);
+  await expect(text.locator('ol li')).toHaveCount(2);
+  await expect(text.locator('strong')).toHaveText('bold');
+  await expect(text.locator('code')).toHaveText('code');
+
+  // A single session has no earlier session to measure idle time from.
+  await runAnalysis(page, 'idlegap');
+  await expect(page.locator('#idleGapChart')).toHaveText('Not enough data yet.');
+});
+
+test('an export holding only Claude\'s messages has nothing to chart', async ({ page }, testInfo) => {
+  const file = writeExport(testInfo, 'assistant-only.json', [{
+    name: 'Only replies',
+    messages: [{ sender: 'assistant', at: new Date('2026-03-02T15:00:00Z'), text: 'a reply with no question' }],
+  }]);
+  await loadFile(page, file);
+  await expect(page.locator('#mainContent')).toBeVisible({ timeout: 30_000 });
+  await runAnalysis(page, 'trend');
+  await expect(page.locator('#trendChart')).toHaveText('Not enough data yet.');
+});
+
+test('analyses over hundreds of messages still complete', async ({ page }, testInfo) => {
+  // More than the 400 items computeWithProgress handles per animation frame,
+  // spread over sessions of different lengths and flag rates.
+  const conversations = [];
+  const base = Date.parse('2026-01-05T14:00:00Z');
+  for (let c = 0; c < 30; c++) {
+    const messages = [];
+    const count = 4 + (c % 7) * 5;
+    for (let i = 0; i < count; i++) {
+      const at = new Date(base + c * 86_400_000 + i * 60_000);
+      const shouting = i % (c % 5 + 2) === 0;
+      messages.push({ sender: 'human', at, text: shouting ? `this is BROKEN again, attempt ${i}` : `a calm note number ${i}` });
+      messages.push({ sender: 'assistant', at: new Date(at.getTime() + 20_000), text: `reply ${i}` });
+    }
+    conversations.push({ name: `Synthetic ${c}`, messages });
+  }
+  await loadFile(page, writeExport(testInfo, 'many.json', conversations), { detect: true });
+  await expect(page.locator('#mainContent')).toBeVisible({ timeout: 60_000 });
+
+  for (const analysis of ANALYSES) {
+    await runAnalysis(page, analysis);
+    expect((await page.locator('#analyticsMain').innerText()).trim(), analysis).toMatch(/\d/);
+  }
 });
