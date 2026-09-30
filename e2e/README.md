@@ -30,9 +30,11 @@ npm install
 npm test
 ```
 
-The test suite starts `timeline-api` in the background (polling the port, not sleeping), drives
-`timeline.html` (opened as a local `file://` page, the same way a user opening this file by hand
-would see it) through the real upload flow, and tears the server down afterward. On failure,
+The test suite starts `timeline-api` in the background (polling the port, not sleeping), serves
+the repo root over HTTP on port 8123 (Playwright's `webServer` setting in
+[playwright.config.js](playwright.config.js)), drives `timeline.html` through the real upload flow,
+and tears both servers down afterward. The page is served rather than opened as a `file://` page
+because its scripts are JavaScript modules, which browsers refuse to load from disk. On failure,
 Playwright saves a screenshot (see its own output for the path).
 
 ## What's covered

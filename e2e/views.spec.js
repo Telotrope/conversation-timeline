@@ -15,7 +15,9 @@ const { test, expect } = require('@playwright/test');
 const { spawn } = require('child_process');
 
 const BACKEND_DIR = path.resolve(__dirname, '..', 'backend');
-const TIMELINE_HTML = 'file://' + path.resolve(__dirname, '..', 'timeline.html');
+// Served over HTTP by the static server in playwright.config.js, the same
+// way the page is served everywhere else.
+const TIMELINE_HTML = 'http://127.0.0.1:8123/timeline.html';
 const FIXTURE = path.resolve(
   __dirname, '..', 'backend', 'timeline-core', 'tests', 'fixtures', 'sample_conversations.json'
 );
