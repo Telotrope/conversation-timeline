@@ -165,8 +165,17 @@ function renderLengthResult({ points }){
   renderScatterChartSVG(document.getElementById('lengthChart'), points, {
     xLabel: 'Session length (minutes)',
     yLabel: '% of session flagged',
+    xTooltip: x => `${x.toFixed(0)} min long`,
     onPointClick: p => jumpToReview({ conv: p.conv, rangeStart: p.rangeStart, rangeEnd: p.rangeEnd, flagType: 'all' }),
   });
+}
+
+// One bar of the time-of-day charts. A bucket with no counted messages has
+// no rate, so it gets no bar rather than a misleading 0%.
+function bucketBar(label, name, b){
+  if(!b.total) return { label, value: null };
+  const pct = b.flagged / b.total * 100;
+  return { label, value: pct, tooltip: `${name} — ${pct.toFixed(1)}% (${b.flagged}/${b.total})` };
 }
 
 function renderTimeOfDayResult({ byHour, byDow }){
@@ -181,11 +190,11 @@ function renderTimeOfDayResult({ byHour, byDow }){
     <div id="dowChart"></div>`;
 
   renderBarChartSVG(document.getElementById('hourChart'),
-    byHour.map((b,h)=>({ label: h % 3 === 0 ? h+':00' : '', value: b.total ? b.flagged/b.total*100 : 0, tooltip: `${h}:00 — ${b.total ? (b.flagged/b.total*100).toFixed(1) : 0}% (${b.flagged}/${b.total})` })),
+    byHour.map((b,h)=>bucketBar(h % 3 === 0 ? h+':00' : '', `${h}:00`, b)),
     { yLabel: '% flagged' });
 
   renderBarChartSVG(document.getElementById('dowChart'),
-    byDow.map((b,i)=>({ label: dowNames[i], value: b.total ? b.flagged/b.total*100 : 0, tooltip: `${dowNames[i]} — ${b.total ? (b.flagged/b.total*100).toFixed(1) : 0}% (${b.flagged}/${b.total})` })),
+    byDow.map((b,i)=>bucketBar(dowNames[i], dowNames[i], b)),
     { yLabel: '% flagged' });
 }
 
@@ -205,6 +214,7 @@ function renderIdleGapResult({ points, excludedCount, uncountedCount }){
     xLabel: 'Hours since previous session ended (log scale)',
     yLabel: '% of session flagged',
     xScale: 'log',
+    xTooltip: x => `${x.toFixed(1)} h after the previous session`,
     onPointClick: p => jumpToReview({ conv: p.conv, rangeStart: p.rangeStart, rangeEnd: p.rangeEnd, flagType: 'all' }),
   });
 }

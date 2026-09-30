@@ -12,7 +12,8 @@ export function renderBarChartSVG(container, bars, opts){
   opts = opts || {};
   const W = 700, H = 220, padL = 36, padR = 12, padT = 12, padB = 28;
   const plotW = W - padL - padR, plotH = H - padT - padB;
-  const maxVal = Math.max(1, ...bars.map(b=>b.value));
+  // A bar whose value is null has nothing to measure and is not drawn.
+  const maxVal = Math.max(1, ...bars.filter(b=>b.value !== null).map(b=>b.value));
   const barW = plotW / bars.length;
 
   let svg = `<svg class="chart-svg" viewBox="0 0 ${W} ${H}" style="width:100%; height:auto;">`;
@@ -26,7 +27,7 @@ export function renderBarChartSVG(container, bars, opts){
     const x = padL + i*barW;
     const barH = (b.value / maxVal) * plotH;
     const y = padT + plotH - barH;
-    svg += `<rect class="data-bar" x="${x+barW*0.15}" y="${y}" width="${barW*0.7}" height="${Math.max(barH,0.5)}"><title>${escapeHtml(b.tooltip||String(b.value))}</title></rect>`;
+    if(b.value !== null) svg += `<rect class="data-bar" x="${x+barW*0.15}" y="${y}" width="${barW*0.7}" height="${Math.max(barH,0.5)}"><title>${escapeHtml(b.tooltip||String(b.value))}</title></rect>`;
     if(b.label) svg += `<text x="${x+barW/2}" y="${H-8}" text-anchor="middle">${escapeHtml(b.label)}</text>`;
   });
   svg += `<line class="axis-line" x1="${padL}" y1="${padT+plotH}" x2="${W-padR}" y2="${padT+plotH}"/>`;
@@ -96,7 +97,7 @@ export function renderScatterChartSVG(container, points, opts){
     const xv = useLog ? Math.log10(p.x) : p.x;
     const cx = padL + ((xv - minX) / rangeX) * plotW;
     const cy = padT + plotH - (p.y / maxY) * plotH;
-    svg += `<circle class="data-point" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="4" style="cursor:pointer; opacity:0.75;" data-idx="${i}"><title>${escapeHtml(p.label||'')} — ${p.y.toFixed(1)}%</title></circle>`;
+    svg += `<circle class="data-point" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="4" style="cursor:pointer; opacity:0.75;" data-idx="${i}"><title>${escapeHtml(p.label||'')} — ${opts.xTooltip ? escapeHtml(opts.xTooltip(p.x)) + ', ' : ''}${p.y.toFixed(1)}% flagged</title></circle>`;
   });
   svg += `<text x="${padL}" y="${H-4}" text-anchor="start">${escapeHtml(opts.xLabel||'')}</text>`;
   svg += `<line class="axis-line" x1="${padL}" y1="${padT+plotH}" x2="${W-padR}" y2="${padT+plotH}"/>`;
