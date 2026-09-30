@@ -131,16 +131,17 @@ function clearReviewFilters(){
   renderReviewTable();
 }
 
-// With only your tags shown, says once per row whether you have reviewed it.
+// Says once per row whether you have reviewed it, wherever your tags are
+// shown. A review covers all three flags, so a per-box label would repeat it.
 function reviewStatus(msg){
-  if(state.showAuto) return '';
+  if(!state.showUser) return '';
   const reviewed = isReviewed(msg);
   return `<span class="review-status${reviewed ? ' is-reviewed' : ''}">${reviewed ? 'Reviewed' : 'Not reviewed'}</span>`;
 }
 
 // Renders a flag's checkbox cell according to the current state.showAuto/state.showUser
 // state (see the four-row table in effectiveFlag's comment):
-//  - both on:  editable, labeled "auto"/"you"
+//  - both on:  editable; the row says once whether it is reviewed
 //  - auto only: read-only, shows auto value, no label
 //  - your tags only: editable, no label; the row says once whether it has
 //    been reviewed (see reviewStatus), since reviewing covers all three flags
@@ -158,11 +159,13 @@ function checkboxCell(msg, type){
       <input type="checkbox" data-id="${msg.id}" data-type="${type}" ${val ? 'checked' : ''}>
     </div>`;
   }
-  // both on
+  // Both on: the row's label says whether it is reviewed. Hovering a box
+  // whose value is automatic says where that value came from.
+  // TODO: check these hovers once AI classification (the migration plan's
+  // V3) adds a second source of automatic tags.
   const overridden = isOverridden(msg, type);
-  return `<div class="flag-checkbox${overridden ? ' is-override' : ''}">
-    <input type="checkbox" data-id="${msg.id}" data-type="${type}" ${val ? 'checked' : ''}>
-    <span class="src" ${overridden ? '' : autoTitle}>${overridden ? 'you' : (msg.auto_source === 'llm' ? 'AI' : 'auto')}</span>
+  return `<div class="flag-checkbox">
+    <input type="checkbox" data-id="${msg.id}" data-type="${type}" ${val ? 'checked' : ''} ${overridden ? '' : autoTitle}>
   </div>`;
 }
 

@@ -561,7 +561,7 @@ test('ticking a flag box redraws the calendar, the conversation list and the ope
 
   await expect(page.locator('#saveStatus')).toHaveText('Saved.');
   await expect(page.locator('#reviewTable input[data-type="critical"]').first()).toBeChecked();
-  await expect(page.locator('#reviewTable .flag-checkbox.is-override').first()).toContainText('you');
+  await expect(page.locator('#reviewTable tbody tr[data-msg-id]').first().locator('.review-status')).toHaveText('Reviewed');
   await expect(calendarCritical).not.toHaveCount(0);
   await expect(listCritical).toHaveCount(1);
   await expect(page.locator('#convDetail')).toContainText('1 critical');
@@ -611,6 +611,8 @@ test('with only your tags shown, each row says once whether you reviewed it', as
   await expect(page.locator('#saveStatus')).toHaveText('Saved.');
   await expect(page.locator('#reviewTable tbody tr[data-msg-id]').first().locator('.review-status')).toHaveText('Reviewed');
   await page.check('#toggleShowAuto');
+  await expect(page.locator('#reviewTable tbody tr[data-msg-id]').first().locator('.review-status')).toHaveText('Reviewed');
+  await page.uncheck('#toggleShowUser');
   await expect(page.locator('#reviewTable .review-status')).toHaveCount(0);
 });
 
