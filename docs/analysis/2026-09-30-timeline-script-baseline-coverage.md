@@ -95,7 +95,7 @@ Per file, end-to-end only (18 of 23 files at 100%):
 Line 982, a plain-text error body, was unreached in V4's run. It now runs, through the test
 added after that run.
 
-**Counting both suites together**, only the `infra/` and `ui/` rows above stay unreached: 12
+**Counting both suites together**, only the `infra/` and `ui/` rows above stay unreached: 13
 lines plus `xhr.onabort`. None of them can be reached through the page, for the reasons in the
 table of the 26 lines before the split.
 
