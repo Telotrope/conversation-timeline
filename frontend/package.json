@@ -1,0 +1,13 @@
+{
+  "name": "timeline-frontend",
+  "private": true,
+  "type": "module",
+  "description": "Checks for the page's JavaScript modules. The page itself needs no build step.",
+  "scripts": {
+    "test": "TZ=UTC node --test tests/",
+    "coverage": "TZ=UTC node --test --experimental-test-coverage tests/"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
