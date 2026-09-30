@@ -74,36 +74,6 @@ I always try to avoid shame by following my workflow and rules correctly.
 ## Plain language
 Define technical terms in plain language the first time they appear, or avoid the jargon entirely. Watch for: "shadow DOM", "non-goals", "hydration", "mount point", "semantic landmarks", "false-positive/negative", "intent-keyword filter", "first-class", "blast radius", "orthogonal". When the term is unavoidable, explain it in a parenthetical: "shadow DOM (a sealed area where a site hides a widget's internal HTML from outside scripts)". Avoid consultant-speak. Don't lean on code-internal names like `_count_structural_widgets`, "A1+A2", "Round 11 item D3" as if they're shared vocabulary — describe what the thing does, then optionally link the identifier. Re-read every reply for jargon before sending. Don't promise formatting that isn't there ("annotated with green/yellow/red") unless the document actually has those markers.
 
-## Only use words that are already in the project
-
-**Use a word only if it appears in the user's own messages, in this file, or in the codebase.
-For anything else, write what you mean instead of naming it.**
-
-Two lookups, no judgment about what a reader might know. When the lookup fails, the remedy is
-always the same and is never wrong: describe the thing.
-
-- *port*, *adapter*, *trait*, *enum* — in this file or the code. Use them.
-- *fixture* — not in either. Write "the sample export file checked into the repo".
-- *e2e* — not in either. Write "the browser tests".
-- *idempotent* — not in either. Write "running it twice does the same as running it once".
-- *provenance*, *coercion*, *sharing*, *output-neutral* — not in either, and the last two I
-  invented. Write the sentence.
-
-Short names for things in this project — `C11`, `V2a`, `Phase 4`, "the launcher", "the detect
-route" — are covered by the same instruction: they appear in a document, not in the conversation,
-so they carry their meaning every time. Write `scripts/dev-up.sh`, or "the plan entry about keeping
-the `_dev` routes out of the Lambda build", not the short name alone. A path or an identifier in
-backticks counts as describing the thing, because the reader can open it.
-
-This is deliberately stricter than "what a software engineer would know." That looser standard is
-the correct one in principle and I apply it unevenly in practice, which is the whole problem —
-*fixture* passes it and still cost a round trip. The cost of this version is that I will sometimes
-spell out something the user already knew. That cost lands on my word count, not on their time,
-which is the right direction for it to fall.
-
-When a word repeatedly needs describing, that is the signal to retire it rather than keep glossing
-it. "The sample export file" needs no gloss and cannot be misread.
-
 ## Spell out names; don't acronymize
 In conversation summaries, analysis docs, plan docs, and table column labels, use the full name (`developer.mozilla.org`, `cheesewich.com`) rather than acronyms (`MDN`, `CW`). Acronyms force the reader to mentally re-expand each one. They are OK only as identifiers in shell scripts where they're already expanded right above (`JIDS="jid:LBL …"` style).
 
