@@ -527,6 +527,159 @@ cheap-indexed-record access from bulk-blob access, or every adapter would have t
 that distinction the way the in-memory `ObjectStore` fake already does for presigned URLs — this
 doesn't remove the two-shape reality, only its visibility.
 
+### V2b — Test the real storage adapters against local stand-ins (closes C10)
+
+**Why this exists**: the S3 adapter ([timeline-storage/src/s3.rs](../../backend/timeline-storage/src/s3.rs))
+and the two DynamoDB adapters
+([conversations_table.rs](../../backend/timeline-storage/src/dynamo/conversations_table.rs),
+[message_flags_table.rs](../../backend/timeline-storage/src/dynamo/message_flags_table.rs)) are
+the only code between this app and real AWS storage, and none of it has ever run. `s3.rs`'s own
+header says so. Every test so far runs against the in-memory fakes, so nothing checks that the
+fakes behave like the real services. This increment runs the real adapter code against local
+programs that speak the same protocols as S3 and DynamoDB, with no Docker and no AWS account.
+
+**What this does not prove**: that real AWS behaves like the stand-ins. The one-time run against
+real S3 and DynamoDB in [§V2's test list](#v2--deployed-backend-storage-auth-uploadreview-flow-no-bedrock-no-payment)
+is still required before V2 is done. One known difference: against a local stand-in, the tests
+must put the bucket name in the URL path (`http://127.0.0.1:port/bucket/key`). Real S3 normally
+puts it in the host name (`bucket.s3.amazonaws.com/key`). So the address form our code will use in
+production is only tested by that real-AWS run. Also out of scope: the S3-event trigger, Cognito,
+and `sam deploy`.
+
+#### DynamoDB: Amazon's "DynamoDB Local"
+
+- **What it is**: a free program from AWS that behaves like DynamoDB on your machine. It's a
+  Java program, so it needs Java 17 or newer (AWS's download page says so).
+- **One-time setup, done by you** (it needs `sudo`): `sudo apt install openjdk-21-jre-headless`.
+  `apt` on this machine offers version 21.0.12. Java is not installed today; I checked.
+- **Fetching it**: a new script, `scripts/fetch-dynamodb-local.sh`, downloads AWS's
+  `dynamodb_local_latest.tar.gz`, checks it against AWS's published `.sha256` checksum, and
+  unpacks it into `backend/.tools/dynamodb-local/`. That folder is added to `.gitignore`. The script
+  does nothing if the right version is already there.
+- **Starting it from the tests**: a test-support module,
+  `timeline-storage/tests/support/dynamodb_local.rs`, starts
+  `java -Djava.library.path=… -jar DynamoDBLocal.jar -inMemory -port <free port>`. It waits until
+  a `ListTables` call succeeds, checking repeatedly with a 10-second limit rather than sleeping
+  for a fixed time. It stops the program when the test binary exits. Each test creates its own
+  tables under unique names, so tests can't see each other's data.
+- **Table shapes**: tests create tables with the same key layout as
+  [infra/template.yaml](../../infra/template.yaml) (`pk` as partition key and `sk` as sort key,
+  both strings). The layout is written in one test helper. The risk that it drifts from the
+  template is tracked as C16.
+- **If Java or the JAR is missing, the tests fail. They are not skipped.** The failure message
+  names the setup command and the fetch script. Skipping quietly would bring back the exact
+  situation that let these adapters go untested for three weeks. The cost is that
+  `cargo test --workspace` needs the one-time setup on any new machine. The alternative, putting
+  these tests behind a Cargo feature (a switch you turn on at build time) that is off by default,
+  is recorded in C17.
+- **License**: DynamoDB Local is free to download, but it isn't open source, and it isn't under one
+  of the permissive licenses the reuse rule in [CLAUDE.md](../../CLAUDE.md) lists. It is only ever
+  run as a test tool and never shipped or linked into the product. I have not read its license
+  text yet. That's tracked as C15, and needs your decision.
+
+#### S3: stand-in choice (needs your decision; see the options below)
+
+What our code needs from an S3 stand-in, taken from `s3.rs`: `PutObject`, `GetObject` (including a
+missing key reported as `ObjectStoreError::NotFound`), and **presigned PUT and GET URLs**. A
+presigned URL is a web address with a time-limited signature built in, so a browser can upload or
+download one file without holding AWS keys. Presigning is the adapter's riskiest code, because a
+wrong signature only shows up when the server checks it. So a stand-in that doesn't check
+signatures can't catch the most likely bug.
+
+I checked each candidate's license, activity and latest release on 2026-09-30, using the
+GitHub API, crates.io, PyPI and each project's own documentation.
+
+| Option | License | Activity | Runs how | Checks presigned signatures? |
+|---|---|---|---|---|
+| **A. `s3s` + `s3s-fs`** (Rust crates) | Apache-2.0 | v0.17.0, released 2026-09-24 | Inside the test process. No separate program | Yes, when a login check is turned on (`set_auth`). The crate has its own tests for presigned URLs |
+| **B. Moto server** (Python) | Apache-2.0 | v5.2.3. Very widely used (about 8,700 GitHub stars) | Separate program: `pip install moto[server]`, then `moto_server` | Not confirmed. Its docs don't say, and I didn't find the answer |
+| **C. VersityGW** (Go) | Apache-2.0 | v1.8.0, released 2026-09-04 | Separate program: one downloaded file, storing to a local folder | Its source has presigned-URL checking code (`presign-auth-reader.go`). I haven't run it |
+| **D. Adobe S3Mock** (Java) | Apache-2.0 | v5.2.3, released 2026-09-19 | Separate Java program (Docker is recommended) | **No.** Its README says presigned URLs are "accepted but not validated" |
+
+- **A. `s3s` + `s3s-fs`.**
+  - *For:* It runs inside `cargo test`, with no install, extra program or port to manage. It
+    checks presigned signatures, so a wrong signature fails the test. It stores files in a
+    temporary folder. Its minimum Rust version is 1.96, and we have 1.98.1.
+  - *Against:* `s3s-fs` calls itself "experimental" on crates.io. It's below version 1.0, so
+    upgrades may change its API (the functions our tests call). It's a small project (about 310
+    stars). Its maintainers warn it is "not a complete security boundary"; that doesn't matter
+    for tests. It adds build time for the test build only (an HTTP server library, among others).
+- **B. Moto server.**
+  - *For:* It's the most widely used AWS fake. It could later stand in for other AWS services as
+    well. Python 3.12 is already installed.
+  - *Against:* It's a second program the tests must start and stop, and a Python dependency in a
+    Rust project. I don't know whether it checks presigned signatures. Its docs warn that only
+    `localhost` works, not `127.0.0.1`.
+  - *My view:* recommended only if you'd rather use the most widely adopted tool.
+- **C. VersityGW.**
+  - *For:* It's a real S3 gateway meant for production, so it's likely the closest to real S3
+    behavior. It ships as a single downloaded file.
+  - *Against:* It's a separate program with the most setup of the four (access keys, a folder for
+    its account data, a storage folder). It's built to be a server, not a test fake.
+- **D. Adobe S3Mock.**
+  - *For:* It would reuse the Java we install for DynamoDB Local.
+  - *Against:* It doesn't check presigned signatures, which is the main thing we need to test. Its
+    README recommends running it in Docker.
+
+**Ruled out**:
+- MinIO: its license is AGPL-3.0, which the project's license rule forbids, and its GitHub
+  repository is archived.
+- `s3rver`: archived in August 2025. Its last release was in 2021.
+- LocalStack: its GitHub repository was archived in March 2026, and it needs Docker.
+- Scality CloudServer: needs Node 24 or newer. This machine has Node 18.
+- RustFS: only preview releases so far.
+- SeaweedFS: a whole distributed storage system, far more than a test needs.
+
+**Recommendation: A.** It is the only option that both checks presigned signatures and adds
+nothing to install. The section below assumes A. If you pick another option, only the "starting
+the stand-in" step changes. The tests themselves stay the same.
+
+#### Tests
+
+One **contract suite** per port: a set of tests describing what any correct implementation must
+do, written once and run against both the in-memory fake and the real adapter. This is what
+catches a fake that has drifted from the real service. The existing `memory_*.rs` tests in
+[timeline-storage/tests/](../../backend/timeline-storage/tests/) stay untouched, because committed
+tests aren't modified without your approval. Once the contract suites cover the same behavior,
+I'll say which of the old tests are redundant.
+
+- **`ObjectStore`** (fake and `S3ObjectStore`):
+  - `put` then `get` returns the same bytes.
+  - `get` of a missing key returns `NotFound`, not `Backend`.
+  - For the S3 adapter: `presign_put`, then an HTTP `PUT` to that URL with a plain HTTP client,
+    then `get`, returns the bytes. Likewise `put`, then `presign_get`, then an HTTP `GET`.
+  - For the S3 adapter: a presigned URL with one character of its signature changed is rejected.
+    Also, an expired URL is rejected. This proves the stand-in really checks signatures, so the
+    passing presign tests mean something.
+- **`UploadOutcomeStore` and `ConversationSummaryStore`** (fakes and `DynamoConversationsTable`):
+  - Outcome and summary round-trips.
+  - `get` of a missing item returns `NotFound`.
+  - `list_for_user` returns only that user's summaries.
+- **`MessageFlagsReader`, `AutoFlagWriter` and `UserFlagWriter`** (fake and
+  `DynamoMessageFlagsStore`):
+  - Automatic and user flags round-trip.
+  - Writing automatic flags never changes user flags, and the reverse (the two-field rule, §4.1),
+    checked by reading back what is stored rather than by inspecting the query text.
+  - `list_for_conversation` returns only that conversation's flags.
+- **Coverage**: `s3.rs` and both DynamoDB files reach 100% line coverage through these public-API
+  tests. If any line can't be reached, I'll report it as a finding. I won't add a test that
+  reaches into private code to force it.
+
+**New test-only dependencies** (all under licenses the project allows):
+- `s3s` and `s3s-fs` (Apache-2.0).
+- `hyper-util` (MIT), to serve `s3s` on a local port.
+- `reqwest` (MIT/Apache-2.0), to send the plain HTTP requests to presigned URLs.
+- `tempfile` (MIT/Apache-2.0), for the stand-in's storage folder.
+
+The exact versions get pinned when the code is written.
+
+**Done means**:
+- `cargo test --workspace` passes, including the new suites.
+- `cargo llvm-cov` shows the numbers above.
+- [backend/README.md](../../backend/README.md) documents the one-time setup.
+- The "zero test coverage" header in `s3.rs` is replaced with what is now tested and what isn't.
+- C10 is marked resolved, with links to these tests.
+
 ### V3 — Bedrock-based classification
 **Reference implementation.** The browser-side "Classify with AI" code is deleted from the
 working tree by [2026-09-30-split-timeline-script.md](2026-09-30-split-timeline-script.md), because it
@@ -956,6 +1109,37 @@ run against anything real — confirmed directly, not from memory, before writin
 S3-compatible option (needs more investigation) as a dedicated increment after V2a's read+write
 flow is committed. Explicitly **not part of V2a** — V2a stays in-memory-only, deliberately, per
 the container-free/AWS-free design already agreed for routine testing.
+**Update 2026-09-30:** the increment is now designed in §V2b. The S3 research is done. MinIO is
+also archived, and `s3rver` is archived too. §V2b compares four candidates and recommends `s3s` +
+`s3s-fs`. The trigger to mark this resolved: you pick an S3 option, and §V2b's "done means" list
+is met.
+
+### C15 [OPEN]: DynamoDB Local is not under a permissive open-source license
+AWS provides it free, but under its own license. It isn't one of the MIT/BSD/Apache-2.0/ISC
+licenses that the reuse rule in [CLAUDE.md](../../CLAUDE.md) lists, and I haven't read its terms.
+**Mitigation in plan:** §V2b uses it only as a test tool that is downloaded, never checked in,
+never linked into the product, and never shipped. **Open:** I read the license text that comes in
+the downloaded file before first use and report anything that bears on commercial use. You decide
+whether a non-open-source test tool is acceptable. Trigger: before §V2b's fetch script is first
+run. If you decline, the alternatives are Moto server (Apache-2.0), which also fakes DynamoDB, or
+testing the DynamoDB adapters only against real AWS.
+
+### C16 [OPEN]: The test tables' key layout is copied from the SAM template, not read from it
+§V2b's test helper creates tables with `pk`/`sk` string keys to match
+[infra/template.yaml](../../infra/template.yaml). If the template changes, the tests won't notice.
+Reading the template directly is harder than it looks: it uses CloudFormation tags such as
+`!Sub`, which ordinary YAML readers reject. **Mitigation in plan:** the layout lives in one helper
+with a comment pointing at the template lines. **Open:** trigger is the first change to a table's
+key layout in the template, or the real-AWS run in §V2, which would catch a mismatch for real.
+
+### C17 [OPEN]: Requiring Java for `cargo test --workspace`
+§V2b makes the DynamoDB tests fail, not skip, when Java or the DynamoDB Local JAR is missing. That
+means a fresh machine can't run the full test suite until the one-time setup is done. The
+alternative is a Cargo feature, off by default, that turns these tests on. That would keep plain
+`cargo test` working with no setup, but it risks the tests silently not running, which is how the
+adapters went untested in the first place. **Mitigation in plan:** the failure message names the
+exact setup command. **Open:** your call. Trigger: your review of §V2b, or the first time the setup
+requirement gets in the way (for example, a CI machine without Java).
 
 ### C11 [RESOLVED]: `UploadStatus`'s `Pending`/`Processing` are persisted but never read
 Confirmed by `grep`, not assumed: no route reads `UploadRecord.status`, and `process_upload`
