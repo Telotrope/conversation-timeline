@@ -23,14 +23,18 @@ const merged = new Map();
 for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.json'))) {
   const entries = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
   for (const entry of entries) {
-    if (!merged.has(entry.url)) {
-      merged.set(entry.url, {
+    // The same file loaded with a query string (?api_base=...) is the same
+    // code, so merge by path.
+    const u = new URL(entry.url);
+    const key = u.origin + u.pathname;
+    if (!merged.has(key)) {
+      merged.set(key, {
         source: entry.source,
         covered: new Uint8Array(entry.source.length),
         functions: new Map(),
       });
     }
-    const m = merged.get(entry.url);
+    const m = merged.get(key);
     if (m.source !== entry.source) {
       throw new Error(`${entry.url} changed between tests; rerun on a stable tree`);
     }
