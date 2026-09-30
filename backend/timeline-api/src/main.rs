@@ -85,6 +85,7 @@ fn build_local_state() -> (AppState, DevState) {
         object_store,
         upload_outcome_store: upload_outcome_store.clone(),
         conversation_summary_store,
+        user_flag_writer: flags_store.clone(),
         auto_flag_writer: flags_store.clone(),
         // Same underlying objects as the port handles above, held again as
         // the one capability that is not a storage port -- see

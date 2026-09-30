@@ -29,7 +29,8 @@ use timeline_core::flags::criticism::detect_critical;
 use timeline_core::ports::conversations::{ConversationSummary, ConversationSummaryStore};
 use timeline_core::ports::errors::{ObjectStoreError, StoreError};
 use timeline_core::ports::ids::{UploadId, UserId};
-use timeline_core::ports::message_flags::FlagSet;
+use timeline_core::model::{MessageId, Sender};
+use timeline_core::ports::message_flags::{FlagOverrides, FlagSet, UserFlagWriter};
 use timeline_core::ports::object_store::ObjectStore;
 use timeline_core::ports::uploads::{raw_object_key, UploadOutcome, UploadOutcomeStore};
 use timeline_core::{unwrap_uploaded_json, FormatError};
@@ -40,6 +41,9 @@ pub enum ProcessingError {
     Format(FormatError),
     Store(StoreError),
     ObjectStore(ObjectStoreError),
+    /// A message's `_claude_timeline_user` field is not a review this
+    /// project wrote: not an object of optional caps/critical/angry booleans.
+    ReviewField { message_id: MessageId, error: serde_json::Error },
 }
 
 impl fmt::Display for ProcessingError {
@@ -51,6 +55,9 @@ impl fmt::Display for ProcessingError {
             ProcessingError::Format(e) => write!(f, "{e}"),
             ProcessingError::Store(e) => write!(f, "{e}"),
             ProcessingError::ObjectStore(e) => write!(f, "{e}"),
+            ProcessingError::ReviewField { message_id, error } => {
+                write!(f, "message {message_id} has an unreadable _claude_timeline_user review: {error}")
+            }
         }
     }
 }
@@ -62,6 +69,7 @@ impl std::error::Error for ProcessingError {
             ProcessingError::Format(e) => Some(e),
             ProcessingError::Store(e) => Some(e),
             ProcessingError::ObjectStore(e) => Some(e),
+            ProcessingError::ReviewField { error, .. } => Some(error),
         }
     }
 }
@@ -89,8 +97,8 @@ pub fn heuristic_flags(text: &str) -> FlagSet {
     }
 }
 
-/// Reads the raw upload, parses and dedups it, writes one summary per
-/// conversation, then records a `Ready` outcome. On a parse failure a
+/// Reads the raw upload, parses and dedups it, stores any reviews embedded in
+/// it, writes one summary per conversation, then records a `Ready` outcome. On a parse failure a
 /// `Failed` outcome is recorded with the reason before the error is returned
 /// to the caller — callers should never need to separately record failure
 /// themselves.
@@ -106,6 +114,7 @@ pub async fn process_upload(
     object_store: &dyn ObjectStore,
     upload_outcome_store: &dyn UploadOutcomeStore,
     conversation_summary_store: &dyn ConversationSummaryStore,
+    user_flag_writer: &dyn UserFlagWriter,
     user_id: &UserId,
     upload_id: UploadId,
 ) -> Result<(), ProcessingError> {
@@ -132,6 +141,41 @@ pub async fn process_upload(
             return Err(ProcessingError::Format(e));
         }
     };
+
+    // Reviews you made earlier travel inside the file, in each message's
+    // `_claude_timeline_user` field. Stored here exactly as a tick in the page
+    // stores them, so the server's record of your reviews is the only one:
+    // detection, which creates records for every message, can't blank them.
+    // A field that isn't a review fails the upload, before anything is stored.
+    let mut reviews = Vec::new();
+    for conversation in &parsed.conversations {
+        for message in &conversation.chat_messages {
+            if message.sender != Sender::Human {
+                continue;
+            }
+            let Some(value) = message.extra.get("_claude_timeline_user") else {
+                continue;
+            };
+            let review: FlagOverrides = match serde_json::from_value(value.clone()) {
+                Ok(r) => r,
+                Err(error) => {
+                    let err = ProcessingError::ReviewField { message_id: message.uuid, error };
+                    upload_outcome_store
+                        .record_outcome(user_id, upload_id, UploadOutcome::Failed { reason: err.to_string() })
+                        .await?;
+                    return Err(err);
+                }
+            };
+            if review != FlagOverrides::default() {
+                reviews.push((conversation.uuid, message.uuid, review));
+            }
+        }
+    }
+    for (conversation_id, message_id, review) in reviews {
+        user_flag_writer
+            .set_user_flags(user_id, conversation_id, message_id, review)
+            .await?;
+    }
 
     let mut conversation_ids = Vec::with_capacity(parsed.conversations.len());
     for conversation in &parsed.conversations {

@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use axum::extract::FromRef;
 use timeline_core::ports::conversations::ConversationSummaryStore;
-use timeline_core::ports::message_flags::AutoFlagWriter;
+use timeline_core::ports::message_flags::{AutoFlagWriter, UserFlagWriter};
 use timeline_core::ports::object_store::ObjectStore;
 use timeline_core::ports::uploads::UploadOutcomeStore;
 use timeline_storage::memory::resettable::Resettable;
@@ -22,6 +22,8 @@ pub struct DevState {
     pub upload_outcome_store: Arc<dyn UploadOutcomeStore>,
     pub conversation_summary_store: Arc<dyn ConversationSummaryStore>,
     pub auto_flag_writer: Arc<dyn AutoFlagWriter>,
+    /// Upload processing stores the reviews embedded in an uploaded file.
+    pub user_flag_writer: Arc<dyn UserFlagWriter>,
     /// Every store `POST /_dev/reset` should empty. Held separately from the
     /// port handles above because emptying a store is not a storage-port
     /// capability -- see `timeline_storage::memory::resettable`. The same
@@ -56,5 +58,11 @@ impl FromRef<DevState> for Arc<dyn ConversationSummaryStore> {
 impl FromRef<DevState> for Arc<dyn AutoFlagWriter> {
     fn from_ref(state: &DevState) -> Self {
         state.auto_flag_writer.clone()
+    }
+}
+
+impl FromRef<DevState> for Arc<dyn UserFlagWriter> {
+    fn from_ref(state: &DevState) -> Self {
+        state.user_flag_writer.clone()
     }
 }
