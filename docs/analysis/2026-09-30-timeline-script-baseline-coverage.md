@@ -68,4 +68,47 @@ unchanged page, all from wrong assumptions in the tests:
 
 ## After the split
 
-(Added in step V8.)
+Measured at commit edc3a10, with the script split into 23 modules under
+[frontend/](../../frontend/). Counted code lines rise from 1,482 to 1,575 because `import` and
+`export` lines and the new helpers (`whileApplyingHash`, `setFlagEditHandlers`,
+`showFirstReviewPage`, `refreshAllViews`, `clearAuthToken`) are code too.
+
+| Suite | Tests | Result | Lines run |
+|---|---|---|---|
+| End-to-end | 47 | all passed | 1,553 of 1,575 (98.6%) |
+| Unit tests for `core/`, plus structural checks | 34 | all passed | 100% of every `core/` file's lines |
+
+**Every function that ran before the split still runs.** The only named functions no end-to-end
+test calls are the same two as before: `formatEta` and `xhr.onabort`.
+
+Per file, end-to-end only (18 of 23 files at 100%):
+
+| File | Lines run | Lines not run | Same case as before the split |
+|---|---|---|---|
+| core/export-format.js | 56 of 59 | 28–29, 33 | Bare-array export and the "neither shape" error (lines 847–848, 852). Unit tests run them. |
+| core/format.js | 25 of 31 | 14–19 | `formatEta` (1031–1037). Unit tests run it. |
+| infra/api-client.js | 84 of 90 | 78–79, 131–132, 136–137, `xhr.onabort` | Unreadable error body (984–985), no login token (1474–1476), no server-side id (1480–1482), aborted upload (1073). |
+| ui/annotated-export.js | 37 of 40 | 17–19 | Exporting with nothing loaded (1535–1537). |
+| ui/load-flow.js | 158 of 161 | 209–211 | Download without `Content-Length` (1295–1297). |
+| ui/widgets/status-indicators.js | 51 of 52 | 62 | Time-remaining estimate (1054). |
+
+Line 982, a plain-text error body, was unreached in V4's run. It now runs, through the test
+added after that run.
+
+**Counting both suites together**, only the `infra/` and `ui/` rows above stay unreached: 12
+lines plus `xhr.onabort`. None of them can be reached through the page, for the reasons in the
+table of the 26 lines before the split.
+
+### Branches the core unit tests don't take
+
+Line coverage of `core/` is 100%. Branch coverage is 96.2% for `core/analyses.js` and 97.6% for
+`core/flags.js`. Each of the three untaken branches guards a case real data can't produce:
+
+| Where | Branch | Why it never happens |
+|---|---|---|
+| core/analyses.js:49 | `b.count ? … : 0` in friction by session | `buildBlocks` never makes a session with no messages. |
+| core/analyses.js:86 | `total ? … : 0` in the trend | A bucket exists only once a message has been counted into it. |
+| core/flags.js:52 | `if(!best) return;` in `attachFlags` | The line above returns when the conversation has no sessions. Otherwise the first session is always closer than infinity, so `best` is always set. |
+
+They are unreachable code. Removing them is a behavior-free change outside this plan, so they
+stay for now.

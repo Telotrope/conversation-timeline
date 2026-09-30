@@ -65,7 +65,7 @@ http://localhost:8000/timeline.html?api_base=https://your-forwarded-url/for/port
 ```
 
 This is remembered in `localStorage`, so you don't need to repeat it on later loads (from the same
-browser) — see [timeline.html](timeline.html)'s `resolveApiBase` for exactly what it does. If
+browser) — see `resolveApiBase` in [frontend/infra/api-client.js](frontend/infra/api-client.js) for exactly what it does. If
 requests still fail after this, check your browser's Network tab: some proxy setups gate access
 behind their own login/session and will answer with their own error page instead of ever reaching
 `timeline-api`. `timeline-api` itself only ever answers with one of a small, specific set of

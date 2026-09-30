@@ -48,11 +48,32 @@ with only a console message, which a test looking elsewhere on the page could mi
   through the real `POST /uploads` → `PUT` → `GET /export` flow and confirms real conversation
   content renders; separately, confirms a flag confirmed via the review table's "Approve" button
   really reaches the backend (`PATCH .../flags`) and survives a reload.
+- `views.spec.js`: every view the upload flow never opens (calendar, conversations, review
+  controls, all five analyses, the annotated export), and the paths that cross between them:
+  flag edits redrawing every view, the show switches, jumps into the review tab, opening the
+  page at a conversation or analysis address, and the load-screen and save failures.
+  [synthetic-export.js](synthetic-export.js) builds the exports the checked-in fixture can't
+  supply (Markdown, Claude-only conversations, hundreds of messages).
+
+## Measuring coverage
+
+With `COVERAGE_DIR` set, every test records which lines of the page's own JavaScript ran
+([coverage.js](coverage.js)), and [coverage-report.js](coverage-report.js) merges the result:
+
+```
+COVERAGE_DIR=/some/empty/dir npm test
+node coverage-report.js /some/empty/dir ..
+```
+
+The last measurement, and why each remaining line is unreached, is in
+[docs/analysis/2026-09-30-timeline-script-baseline-coverage.md](../docs/analysis/2026-09-30-timeline-script-baseline-coverage.md).
+The page's pure data logic (`frontend/core/`) also has unit tests, run from `frontend/` with
+`npm test`, alongside checks of the modules' import structure.
 
 ## What's not covered
 
 - Real AWS/LocalStack — this only ever exercises the in-memory local-dev backend. See the
   migration plan's C10 for the (separate, not-yet-built) real-adapter testing story.
 - Nothing here runs as part of `cargo test --workspace` — different toolchain entirely. Treat it
-  as a required manual step before calling a `timeline.html`-touching change done, the same way
+  as a required manual step before calling a change to `timeline.html` or `frontend/` done, the same way
   the plan already treats LocalStack/real-AWS verification for the backend.
