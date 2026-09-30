@@ -553,12 +553,18 @@ and `sam deploy`.
 - **One-time setup, done by you** (it needs `sudo`): `sudo apt install openjdk-21-jre-headless`.
   `apt` on this machine offers version 21.0.12. Java is not installed today; I checked.
 - **Fetching it**: a new script, `scripts/fetch-dynamodb-local.sh`, downloads AWS's
-  `dynamodb_local_latest.tar.gz`, checks it against AWS's published `.sha256` checksum, and
-  unpacks it into `backend/.tools/dynamodb-local/`. That folder is added to `.gitignore`. The script
-  does nothing if the right version is already there.
+  `dynamodb_local_latest.tar.gz` and unpacks it into `backend/.tools/dynamodb-local/`. That folder
+  is added to `.gitignore`. The script does nothing if the right version is already there. AWS's
+  download address always serves the newest release, so the script checks the file against a
+  checksum written into the script itself. It doesn't use the checksum AWS publishes next to the
+  file, because that one changes with every release. The pinned checksum is `f80bcec4…c21163`,
+  for version 3.3.1 (dated 2026-05-28 in its release notes). I downloaded it on 2026-09-30, and
+  it matched AWS's published checksum. When AWS releases a new version, the script stops with a
+  message, instead of silently testing against a version nobody chose.
 - **Starting it from the tests**: a test-support module,
   `timeline-storage/tests/support/dynamodb_local.rs`, starts
-  `java -Djava.library.path=… -jar DynamoDBLocal.jar -inMemory -port <free port>`. It waits until
+  `java -Djava.library.path=… -jar DynamoDBLocal.jar -inMemory -disableTelemetry -port <free port>`. `-disableTelemetry`
+  is needed because DynamoDB Local sends usage data by default (see C15). It waits until
   a `ListTables` call succeeds, checking repeatedly with a 10-second limit rather than sleeping
   for a fixed time. It stops the program when the test binary exits. Each test creates its own
   tables under unique names, so tests can't see each other's data.
@@ -572,12 +578,12 @@ and `sam deploy`.
   `cargo test --workspace` needs the one-time setup on any new machine. The alternative, putting
   these tests behind a Cargo feature (a switch you turn on at build time) that is off by default,
   is recorded in C17.
-- **License**: DynamoDB Local is free to download, but it isn't open source, and it isn't under one
-  of the permissive licenses the reuse rule in [CLAUDE.md](../../CLAUDE.md) lists. It is only ever
-  run as a test tool and never shipped or linked into the product. I have not read its license
-  text yet. That's tracked as C15, and needs your decision.
+- **License**: DynamoDB Local is under AWS's own license, not an open-source one. I read it on
+  2026-09-30. The plan's use fits its terms: a separate program on our own machines, testing code
+  that will run against AWS, never checked in or shipped. It does require an AWS account in good
+  standing. Details and the remaining decision are in C15.
 
-#### S3: stand-in choice (needs your decision; see the options below)
+#### S3: stand-in choice (decided 2026-09-30: A, `s3s` + `s3s-fs`)
 
 What our code needs from an S3 stand-in, taken from `s3.rs`: `PutObject`, `GetObject` (including a
 missing key reported as `ObjectStoreError::NotFound`), and **presigned PUT and GET URLs**. A
@@ -630,9 +636,8 @@ GitHub API, crates.io, PyPI and each project's own documentation.
 - RustFS: only preview releases so far.
 - SeaweedFS: a whole distributed storage system, far more than a test needs.
 
-**Recommendation: A.** It is the only option that both checks presigned signatures and adds
-nothing to install. The section below assumes A. If you pick another option, only the "starting
-the stand-in" step changes. The tests themselves stay the same.
+**Decision: A**, chosen by you on 2026-09-30. It is the only option that both checks presigned
+signatures and adds nothing to install.
 
 #### Tests
 
@@ -1111,18 +1116,40 @@ flow is committed. Explicitly **not part of V2a** — V2a stays in-memory-only, 
 the container-free/AWS-free design already agreed for routine testing.
 **Update 2026-09-30:** the increment is now designed in §V2b. The S3 research is done. MinIO is
 also archived, and `s3rver` is archived too. §V2b compares four candidates and recommends `s3s` +
-`s3s-fs`. The trigger to mark this resolved: you pick an S3 option, and §V2b's "done means" list
-is met.
+`s3s-fs`, which you chose on 2026-09-30. The trigger to mark this resolved: §V2b's "done means"
+list is met.
 
 ### C15 [OPEN]: DynamoDB Local is not under a permissive open-source license
 AWS provides it free, but under its own license. It isn't one of the MIT/BSD/Apache-2.0/ISC
-licenses that the reuse rule in [CLAUDE.md](../../CLAUDE.md) lists, and I haven't read its terms.
-**Mitigation in plan:** §V2b uses it only as a test tool that is downloaded, never checked in,
-never linked into the product, and never shipped. **Open:** I read the license text that comes in
-the downloaded file before first use and report anything that bears on commercial use. You decide
-whether a non-open-source test tool is acceptable. Trigger: before §V2b's fetch script is first
-run. If you decline, the alternatives are Moto server (Apache-2.0), which also fakes DynamoDB, or
-testing the DynamoDB adapters only against real AWS.
+licenses that the reuse rule in [CLAUDE.md](../../CLAUDE.md) lists.
+
+**What the license says** (the "Amazon DynamoDB Local License Agreement", `LICENSE.txt` in the
+version 3.3.1 download; I read it on 2026-09-30 and am not a lawyer):
+- **You need an AWS account in good standing** to use it at all. The grant is personal and can't
+  be transferred, so every person or machine running the tests is its own licensee.
+- **Allowed use:** installing it on computers you own or control, only "for your internal
+  business purposes" and "in connection with the Services", meaning AWS. Testing code that will
+  run against real DynamoDB fits both.
+- **Forbidden:** building it into, or compiling it with, our own programs; redistributing it
+  (so no checking it into git, and no shipping it inside an image or installer); modifying it;
+  reverse engineering it.
+- **AWS can change or end it at any time**, including making the software stop working, and can
+  change the terms by posting new ones. Continuing to use it counts as accepting them.
+- You indemnify AWS (you cover its costs if your use leads to a claim). AWS's liability is capped
+  at $50.
+- **Telemetry:** the license doesn't mention it, but the release notes say version 2.1.0 added
+  telemetry, and the program's help text offers `-disableTelemetry`. The download bundles AWS's
+  Pinpoint client library, which suggests the data goes to AWS Pinpoint. That is inferred from the
+  file name; I have not traced it.
+- The bundled third-party libraries list Apache-2.0, MIT and EPL licenses. I found no GPL text.
+  That wouldn't matter anyway, since nothing is shipped.
+
+**Mitigation in plan:** §V2b runs it only as a separate program, fetched per machine into a
+folder git ignores, never linked or shipped, with `-disableTelemetry` on every launch, and with
+the version pinned by checksum. **Open:** the AWS-account requirement. You'll need an account for
+§V2's deploy anyway, but every machine that runs the tests, including any future CI (automated
+test) server, needs one too. Trigger: your approval of §V2b. If that's unacceptable, the
+alternative is Moto server (Apache-2.0), which also fakes DynamoDB.
 
 ### C16 [OPEN]: The test tables' key layout is copied from the SAM template, not read from it
 §V2b's test helper creates tables with `pk`/`sk` string keys to match
