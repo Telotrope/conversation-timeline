@@ -489,6 +489,12 @@ behind the quality-of-life phases.
    [frontend/core/analyses.js](../../frontend/core/analyses.js) sorts once by percentage, and
    `renderFrictionResult` in [frontend/ui/views/analytics.js](../../frontend/ui/views/analytics.js)
    draws fixed headers.
+4. **Check the review table's hover text once AI classification exists.** Added 2026-09-30 at
+   the user's request. Hovering a checkbox whose value is automatic says where it came from
+   ("automatic tag from keyword/sentiment heuristic"). Today only the scan produces automatic
+   tags; when AI classification on Bedrock arrives (the migration plan's V3), confirm the hover
+   names the right source. Marked with a TODO in
+   [frontend/ui/views/review.js](../../frontend/ui/views/review.js).
 
 ## Tabled at the user's direction
 
