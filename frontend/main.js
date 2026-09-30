@@ -1,92 +1,9 @@
-// --- Reading the processed export the backend sends back ---
-
-
-const FORMAT_VERSION = '2';
-
-function extractMessageText(m){
-  let text = '';
-  (m.content || []).forEach(piece => {
-    if(piece && piece.type === 'text') text += piece.text || '';
-  });
-  return text;
-}
-
-// Accepts either a raw Anthropic export (bare array of conversations) or a
-// file previously saved by this page (wrapped with a format-version marker).
-//
-// Deduplicating retried messages is the backend's job and happens at upload
-// time (timeline-core's dedup pass, reached through unwrap_uploaded_json), so
-// there is no second pass here. In the current flow the bare-array branch is
-// not reached at all: this function only ever sees GET /export's output,
-// which is always {"conversations": [...]}.
-function unwrapUploadedJSON(parsed){
-  if(Array.isArray(parsed)){
-    return { conversations: parsed, alreadyProcessed: false };
-  }
-  if(parsed && Array.isArray(parsed.conversations)){
-    return { conversations: parsed.conversations, alreadyProcessed: true };
-  }
-  throw new Error('Expected either a bare array of conversations or a {conversations: [...]} object.');
-}
-
-function parseUploadedConversations(rawText){
-  const parsedJSON = JSON.parse(rawText);
-  const { conversations: data, alreadyProcessed } = unwrapUploadedJSON(parsedJSON);
-
-  const conversations = [];
-  const messages = [];
-  const humanMessages = [];
-  const embeddedOverrides = {};
-
-  data.forEach((c, idx) => {
-    const msgs = c.chat_messages || [];
-    conversations.push({ name: c.name || '(untitled)', total_messages: msgs.length });
-    msgs.forEach((m, rawIndex) => {
-      const ts = m.created_at;
-      if(!ts) return;
-      messages.push({ conv: idx, ts });
-      if(m.sender === 'human'){
-        const text = extractMessageText(m);
-        const id = idx + '|' + ts;
-
-        // New schema: auto-detected and user-confirmed flags are stored in
-        // two entirely separate fields, so loading a file can never let an
-        // automatic pass clobber something the user explicitly decided.
-        const storedAuto = m._claude_timeline_auto || null;
-        const storedUser = m._claude_timeline_user || null;
-        // Backward compatibility with the previous single-field format.
-        const legacyFlags = m._claude_timeline_flags || null;
-
-        if(storedUser) embeddedOverrides[id] = storedUser;
-        else if(legacyFlags) embeddedOverrides[id] = legacyFlags;
-
-        // Automatic flags are whatever the backend computed and embedded.
-        // This page performs no detection of its own, and a message with no
-        // stored automatic flags simply has none -- which is the normal
-        // state until the user asks for a detection pass.
-        const defaultCaps = !!(storedAuto && storedAuto.caps);
-        const defaultCritical = !!(storedAuto && storedAuto.critical);
-        const defaultAngry = !!(storedAuto && storedAuto.angry);
-        const autoSource = storedAuto ? (storedAuto.source || 'heuristic') : 'none';
-
-        humanMessages.push({
-          id,
-          conv: idx,
-          ts,
-          text,
-          rawIndex,
-          default_caps: defaultCaps,
-          default_critical: defaultCritical,
-          default_angry: defaultAngry,
-          auto_source: autoSource,
-        });
-      }
-    });
-  });
-
-  return { conversations, messages, humanMessages, embeddedOverrides, rawData: data, alreadyProcessed };
-}
-
+import { computeFrictionAnalysis, computeIdleGapAnalysis, computeLengthAnalysis, computeTimeOfDayAnalysis, computeTrendAnalysis, pearsonR } from './core/analyses.js';
+import { buildBlocks, localDateKey } from './core/blocks.js';
+import { FORMAT_VERSION, extractMessageText, parseUploadedConversations } from './core/export-format.js';
+import { attachFlags, effectiveFlag, hasUserValue, isOverridden } from './core/flags.js';
+import { fmtClock, fmtDayHeading, fmtDuration, fmtMonthHeading, formatBytes, formatEta } from './core/format.js';
+import { state } from './core/state.js';
 
 function setLoadStatus(msg, isError){
   const el = document.getElementById('loadStatus');
@@ -196,23 +113,6 @@ function setLoadProgressIndeterminate(label){
   document.getElementById('loadProgressLabel').textContent = label;
 }
 
-function formatBytes(n){
-  if(n < 1024) return n + ' B';
-  if(n < 1024 * 1024) return (n / 1024).toFixed(0) + ' KB';
-  return (n / (1024 * 1024)).toFixed(1) + ' MB';
-}
-
-// Deliberately coarse. The estimate is derived from a few seconds of
-// observed throughput, so rendering it to a tenth of a second would claim a
-// precision it does not have.
-function formatEta(seconds){
-  if(!isFinite(seconds) || seconds < 0) return '';
-  if(seconds < 5) return 'almost done';
-  if(seconds < 60) return `about ${Math.round(seconds / 5) * 5} seconds left`;
-  if(seconds < 120) return 'about a minute left';
-  return `about ${Math.round(seconds / 60)} minutes left`;
-}
-
 // Estimates remaining time from a rolling window of recent progress events
 // rather than an average over the whole transfer -- a whole-transfer average
 // keeps reporting a stale rate long after the speed changes. Returns '' until
@@ -283,18 +183,18 @@ function applyExportText(text){
   const parsed = parseUploadedConversations(text);
   if(parsed.conversations.length === 0) return false;
 
-  CONVERSATIONS = parsed.conversations;
-  MESSAGES = parsed.messages;
-  HUMAN_MESSAGES = parsed.humanMessages;
-  HUMAN_BY_ID = new Map(HUMAN_MESSAGES.map(m => [m.id, m]));
-  BLOCKS = buildBlocks();
-  RAW_DATA = parsed.rawData;
+  state.conversations = parsed.conversations;
+  state.messages = parsed.messages;
+  state.humanMessages = parsed.humanMessages;
+  state.humanById = new Map(state.humanMessages.map(m => [m.id, m]));
+  state.blocks = buildBlocks();
+  state.rawData = parsed.rawData;
 
   // Your confirmed flags come from whatever the server's export embedded
   // (overrides you PATCHed to the backend earlier -- see
   // patchFlagsToBackend). There's no other recovery mechanism; see the
   // migration plan's V2a.
-  OVERRIDES = { ...parsed.embeddedOverrides };
+  state.overrides = { ...parsed.embeddedOverrides };
   const embeddedCount = Object.keys(parsed.embeddedOverrides).length;
 
   attachFlags();
@@ -509,139 +409,11 @@ document.getElementById('loadDifferentBtn').addEventListener('click', ()=>{
   window.location.hash = '';
 });
 
-let CONVERSATIONS = [];
-let RAW_DATA = null; // the parsed conversations.json array, kept as-is so we can re-export it annotated
-let MESSAGES = [];
-let HUMAN_MESSAGES = [];
-
-const GAP_THRESHOLD_SEC = 15 * 60; // idle gaps of 15+ minutes are excluded from session blocks
-
-// --- Overrides: your manual corrections to the auto-detected flags ---
-// Stored as { [messageId]: { critical: true/false, angry: true/false, caps: true/false } }
-// Only keys you've actually touched appear here; anything absent falls back
-// to the auto-detected default.
-let OVERRIDES = {};
-
-// Global visibility switches (session-only UI state, not saved to file).
-// These affect the *effective* value of every flag everywhere: Calendar,
-// Conversations, and Review all read through this, so counts/icons stay
-// consistent with whatever the switches currently show.
-let SHOW_AUTO = true;
-let SHOW_USER = true;
-let SHOW_REPLIES = false;
-
-function hasUserValue(msg, type){
-  const o = OVERRIDES[msg.id];
-  return !!(o && typeof o[type] === 'boolean');
-}
-
-function effectiveFlag(msg, type){
-  if(SHOW_AUTO && !SHOW_USER){
-    // Auto-only view: overrides are ignored entirely (not deleted, just not shown).
-    return msg['default_' + type];
-  }
-  if(!SHOW_AUTO && SHOW_USER){
-    // Your-tags-only view: auto is not used as a fallback; no stated
-    // preference just means "nothing", not "whatever auto thinks".
-    return hasUserValue(msg, type) ? OVERRIDES[msg.id][type] : false;
-  }
-  if(!SHOW_AUTO && !SHOW_USER) return false;
-  // Both on: normal behavior — your override wins if you've stated one.
-  return hasUserValue(msg, type) ? OVERRIDES[msg.id][type] : msg['default_' + type];
-}
-
-// "Overridden" in the ON/ON sense (used for the "auto"/"you" label).
-function isOverridden(msg, type){
-  return hasUserValue(msg, type);
-}
-
-let HUMAN_BY_ID = new Map();
-
-// Build per-conversation, per-*local*-day session blocks from raw message
-// timestamps. Bucketing happens here (client-side, in the viewer's local
-// timezone) rather than being precomputed server-side in UTC, so a day's
-// track always matches the same 0-24h window used to position its bars.
-// Within a day, a run of messages is split into a new block whenever the
-// gap since the previous message is 15 minutes or more, so idle time isn't
-// counted as "active" duration.
-function localDateKey(d){
-  const y = d.getFullYear();
-  const m = String(d.getMonth()+1).padStart(2,'0');
-  const day = String(d.getDate()).padStart(2,'0');
-  return `${y}-${m}-${day}`;
-}
-
-function buildBlocks(){
-  const byConvDay = new Map();
-  MESSAGES.forEach(m=>{
-    const d = new Date(m.ts);
-    const key = m.conv + '|' + localDateKey(d);
-    if(!byConvDay.has(key)) byConvDay.set(key, []);
-    byConvDay.get(key).push(d);
-  });
-
-  const blocks = [];
-  byConvDay.forEach((dates, key) => {
-    dates.sort((a,b)=>a-b);
-    const [convStr, date] = key.split('|');
-    const conv = parseInt(convStr, 10);
-
-    let runStart = 0;
-    for(let i=1; i<=dates.length; i++){
-      const gapSec = i < dates.length ? (dates[i]-dates[i-1])/1000 : Infinity;
-      if(gapSec >= GAP_THRESHOLD_SEC || i === dates.length){
-        const runDates = dates.slice(runStart, i);
-        const start = runDates[0];
-        const end = runDates[runDates.length-1];
-        blocks.push({
-          conv,
-          date,
-          start: start.toISOString(),
-          end: end.toISOString(),
-          duration_sec: Math.round((end-start)/1000),
-          count: runDates.length,
-        });
-        runStart = i;
-      }
-    }
-  });
-  return blocks;
-}
-
-let BLOCKS = buildBlocks();
-
-// Attach flags to whichever block each flagged human message falls within
-// (same conversation, timestamp inside [start, end]; if it lands in a gap
-// that got split out as idle time, attach to the nearest block instead).
-function attachFlags(){
-  BLOCKS.forEach(b=>{
-    b.criticalItems = [];
-    b.angryItems = [];
-    b.capsItems = [];
-    b.allHuman = [];
-  });
-  HUMAN_MESSAGES.forEach(msg=>{
-    const t = new Date(msg.ts).getTime();
-    const convBlocks = BLOCKS.filter(b => b.conv === msg.conv);
-    if(convBlocks.length === 0) return;
-    let best = null, bestDist = Infinity;
-    convBlocks.forEach(b=>{
-      const s = new Date(b.start).getTime(), e = new Date(b.end).getTime();
-      const dist = t < s ? s - t : (t > e ? t - e : 0);
-      if(dist < bestDist){ bestDist = dist; best = b; }
-    });
-    if(!best) return;
-    best.allHuman.push(msg);
-    if(effectiveFlag(msg, 'critical')) best.criticalItems.push(msg);
-    if(effectiveFlag(msg, 'angry')) best.angryItems.push(msg);
-    if(effectiveFlag(msg, 'caps')) best.capsItems.push(msg);
-  });
-  BLOCKS.forEach(b => b.allHuman.sort((a,c)=> new Date(a.ts) - new Date(c.ts)));
-}
+state.blocks = buildBlocks();
 attachFlags();
 
 // Persists your confirmed flags to the real backend. setRowOverrides (below) already
-// updates OVERRIDES and re-renders optimistically before calling this; a
+// updates state.overrides and re-renders optimistically before calling this; a
 // failed PATCH is surfaced via setSaveStatus, not silently swallowed, but
 // doesn't roll back the optimistic local update. See the migration plan's
 // V2a: this only persists for as long as the in-memory local-dev backend
@@ -651,7 +423,7 @@ async function patchFlagsToBackend(msg, values){
     setSaveStatus('Not saved to the server — log in first.');
     return;
   }
-  const conv = RAW_DATA && RAW_DATA[msg.conv];
+  const conv = state.rawData && state.rawData[msg.conv];
   const rawMsg = conv && conv.chat_messages && conv.chat_messages[msg.rawIndex];
   if(!conv || !rawMsg){
     setSaveStatus("Could not save — couldn't find this message's server-side id.");
@@ -681,19 +453,19 @@ function setSaveStatus(msg){
 // effective value for the other two. This is what "approving a row" means:
 // one click reviews the whole message, not just the box you touched.
 function setRowOverrides(id, changedType, changedValue){
-  const msg = HUMAN_BY_ID.get(id);
+  const msg = state.humanById.get(id);
   if(!msg) return;
   const values = {
     caps: changedType === 'caps' ? changedValue : effectiveFlag(msg, 'caps'),
     angry: changedType === 'angry' ? changedValue : effectiveFlag(msg, 'angry'),
     critical: changedType === 'critical' ? changedValue : effectiveFlag(msg, 'critical'),
   };
-  OVERRIDES[id] = values;
+  state.overrides[id] = values;
   attachFlags();
   patchFlagsToBackend(msg, values);
   renderCalendar();
   renderConvList(document.getElementById('convSearch').value);
-  if(currentConv !== null) selectConversation(currentConv);
+  if(state.selectedConversation !== null) selectConversation(state.selectedConversation);
   renderReviewTable();
 }
 
@@ -708,11 +480,11 @@ function approveRow(id){
 // one self-contained file carries the conversation data, the automatic
 // tags, and your corrections together.
 function exportAnnotatedConversations(){
-  if(!RAW_DATA){
+  if(!state.rawData){
     setSaveStatus('No conversation data loaded to annotate.');
     return;
   }
-  // Mutate RAW_DATA directly rather than deep-cloning it first — for a
+  // Mutate state.rawData directly rather than deep-cloning it first — for a
   // file this size, a stringify-then-reparse clone briefly needs 2-3x the
   // data's size in memory all at once (original + serialized string +
   // freshly parsed copy), which is enough to crash the tab outright on a
@@ -720,14 +492,14 @@ function exportAnnotatedConversations(){
   // we only ever add two clearly namespaced fields to human messages,
   // never remove or alter anything else, so doing it again on a later
   // export is harmless and idempotent.
-  const annotated = RAW_DATA;
+  const annotated = state.rawData;
   annotated.forEach((c, convIdx) => {
     (c.chat_messages || []).forEach(m => {
       if(m.sender !== 'human') return;
       const id = convIdx + '|' + m.created_at;
       delete m._claude_timeline_flags; // retire the old single-field format
 
-      const msg = HUMAN_BY_ID.get(id);
+      const msg = state.humanById.get(id);
       if(msg){
         m._claude_timeline_auto = {
           caps: msg.default_caps,
@@ -737,8 +509,8 @@ function exportAnnotatedConversations(){
         };
       }
 
-      if(OVERRIDES[id] && Object.keys(OVERRIDES[id]).length){
-        m._claude_timeline_user = OVERRIDES[id];
+      if(state.overrides[id] && Object.keys(state.overrides[id]).length){
+        m._claude_timeline_user = state.overrides[id];
       } else {
         delete m._claude_timeline_user;
       }
@@ -760,40 +532,19 @@ function exportAnnotatedConversations(){
 const PALETTE = ['#3C6E64','#A6752C','#7C5C8C','#4E7BA8','#B0553F','#5E8A4E','#8C6B4F','#3E6E8E','#9C5B6E','#6E7A3C'];
 function colorFor(idx){ return PALETTE[idx % PALETTE.length]; }
 
-function fmtDuration(sec){
-  if(sec < 60) return sec + 's';
-  const h = Math.floor(sec/3600);
-  const m = Math.floor((sec%3600)/60);
-  const s = sec%60;
-  if(h > 0) return `${h}h ${m}m`;
-  return `${m}m ${s}s`;
-}
-
-function fmtClock(iso){
-  return new Date(iso).toLocaleTimeString(undefined, {hour:'numeric', minute:'2-digit'});
-}
-function fmtDayHeading(dateStr){
-  const d = new Date(dateStr + 'T00:00:00');
-  return d.toLocaleDateString(undefined, {weekday:'long', month:'long', day:'numeric', year:'numeric'});
-}
-function fmtMonthHeading(dateStr){
-  const d = new Date(dateStr + 'T00:00:00');
-  return d.toLocaleDateString(undefined, {month:'long', year:'numeric'});
-}
-
 // --- Header stats ---
 function renderSubtitle(){
-  const totalMsgs = CONVERSATIONS.reduce((a,c)=>a+c.total_messages,0);
-  const dates = BLOCKS.map(b=>b.date).sort();
+  const totalMsgs = state.conversations.reduce((a,c)=>a+c.total_messages,0);
+  const dates = state.blocks.map(b=>b.date).sort();
   document.getElementById('subtitle').textContent =
-    `${CONVERSATIONS.length} conversations, ${totalMsgs.toLocaleString()} messages, ${dates[0]} to ${dates[dates.length-1]}.`;
+    `${state.conversations.length} conversations, ${totalMsgs.toLocaleString()} messages, ${dates[0]} to ${dates[dates.length-1]}.`;
 }
 
 // --- Calendar view ---
 function renderCalendar(){
   const byDay = {};
-  BLOCKS.forEach((b, i)=>{
-    b._idx = i; // stable reference back into BLOCKS for click handlers
+  state.blocks.forEach((b, i)=>{
+    b._idx = i; // stable reference back into state.blocks for click handlers
     (byDay[b.date] = byDay[b.date] || []).push(b);
   });
   const days = Object.keys(byDay).sort();
@@ -815,7 +566,7 @@ function renderCalendar(){
       const secOfDay = startOfDay.getHours()*3600 + startOfDay.getMinutes()*60 + startOfDay.getSeconds();
       const leftPct = (secOfDay/86400)*100;
       const widthPct = Math.max((b.duration_sec/86400)*100, 0.5);
-      const conv = CONVERSATIONS[b.conv];
+      const conv = state.conversations[b.conv];
       let tip = `${conv.name} · ${fmtClock(b.start)}–${fmtClock(b.end)} · ${fmtDuration(b.duration_sec)} · ${b.count} messages · click to review these messages`;
       const flagIcons = [];
       if(b.criticalItems.length){ flagIcons.push(`<span class="flag-icon critical" data-flag-type="critical" title="${b.criticalItems.length} critical — click to review">⚑</span>`); }
@@ -851,7 +602,7 @@ function renderCalendar(){
     el.addEventListener('click', (e)=>{
       e.stopPropagation();
       const bar = el.closest('.bar');
-      const b = BLOCKS[parseInt(bar.dataset.blockIdx, 10)];
+      const b = state.blocks[parseInt(bar.dataset.blockIdx, 10)];
       const type = el.dataset.flagType;
       const items = type === 'critical' ? b.criticalItems : type === 'angry' ? b.angryItems : b.capsItems;
       jumpToReview({
@@ -867,7 +618,7 @@ function renderCalendar(){
   // Bar click (not on a flag icon): jump to Review showing all messages in this session
   document.querySelectorAll('.bar').forEach(el=>{
     el.addEventListener('click', ()=>{
-      const b = BLOCKS[parseInt(el.dataset.blockIdx, 10)];
+      const b = state.blocks[parseInt(el.dataset.blockIdx, 10)];
       jumpToReview({
         conv: b.conv,
         rangeStart: new Date(b.start).getTime(),
@@ -888,12 +639,12 @@ function renderCalendar(){
 // --- Conversation list & detail ---
 function renderConvList(filter=''){
   const f = filter.trim().toLowerCase();
-  const items = CONVERSATIONS
+  const items = state.conversations
     .map((c, idx) => ({...c, idx}))
     .filter(c => c.name.toLowerCase().includes(f));
 
   document.getElementById('convItems').innerHTML = items.map(c => {
-    const convBlocks = BLOCKS.filter(b => b.conv === c.idx);
+    const convBlocks = state.blocks.filter(b => b.conv === c.idx);
     const totalSec = convBlocks.reduce((a,b)=>a+b.duration_sec, 0);
     const dayCount = convBlocks.length;
     const hasCrit = convBlocks.some(b => b.criticalItems.length);
@@ -914,15 +665,14 @@ function renderConvList(filter=''){
   });
 }
 
-let currentConv = null;
 function selectConversation(idx){
-  currentConv = idx;
+  state.selectedConversation = idx;
   rememberLocation();
   document.querySelectorAll('.conv-item').forEach(el=>{
     el.classList.toggle('selected', parseInt(el.dataset.idx,10) === idx);
   });
-  const conv = CONVERSATIONS[idx];
-  const convBlocks = BLOCKS.filter(b => b.conv === idx).sort((a,b)=> a.date.localeCompare(b.date));
+  const conv = state.conversations[idx];
+  const convBlocks = state.blocks.filter(b => b.conv === idx).sort((a,b)=> a.date.localeCompare(b.date));
   const totalSec = convBlocks.reduce((a,b)=>a+b.duration_sec, 0);
 
   const critCount = convBlocks.reduce((a,b)=> a + b.criticalItems.length, 0);
@@ -967,7 +717,7 @@ function selectConversation(idx){
   document.querySelectorAll('#convDetail .flag-icon[data-flag-type]').forEach(el=>{
     el.addEventListener('click', (e)=>{
       e.stopPropagation();
-      const b = BLOCKS[parseInt(el.dataset.blockIdx, 10)];
+      const b = state.blocks[parseInt(el.dataset.blockIdx, 10)];
       const type = el.dataset.flagType;
       const items = type === 'critical' ? b.criticalItems : type === 'angry' ? b.angryItems : b.capsItems;
       jumpToReview({
@@ -983,7 +733,7 @@ function selectConversation(idx){
   // Row click (not on a flag icon): jump to Review showing all messages in that session
   document.querySelectorAll('#convDetail .session-row').forEach(el=>{
     el.addEventListener('click', ()=>{
-      const b = BLOCKS[parseInt(el.dataset.blockIdx, 10)];
+      const b = state.blocks[parseInt(el.dataset.blockIdx, 10)];
       jumpToReview({
         conv: b.conv,
         rangeStart: new Date(b.start).getTime(),
@@ -1117,12 +867,12 @@ function switchTab(name){
 let APPLYING_HASH = false;
 
 function currentLocationHash(){
-  if(currentAnalysis && document.getElementById('view-analytics').classList.contains('active')){
-    return `#analytics/${currentAnalysis}`;
+  if(state.selectedAnalysis && document.getElementById('view-analytics').classList.contains('active')){
+    return `#analytics/${state.selectedAnalysis}`;
   }
   const active = document.querySelector('nav.tabs button.active');
   const tab = active ? active.dataset.tab : 'calendar';
-  if(tab === 'conversations' && currentConv !== null) return `#conversations/${currentConv}`;
+  if(tab === 'conversations' && state.selectedConversation !== null) return `#conversations/${state.selectedConversation}`;
   return `#${tab}`;
 }
 
@@ -1143,7 +893,7 @@ function applyLocationHash(){
     switchTab(tab);
     if(tab === 'conversations' && arg !== undefined){
       const idx = parseInt(arg, 10);
-      if(!isNaN(idx) && idx >= 0 && idx < CONVERSATIONS.length) selectConversation(idx);
+      if(!isNaN(idx) && idx >= 0 && idx < state.conversations.length) selectConversation(idx);
     }
     if(tab === 'analytics' && arg){
       const btn = document.querySelector(`.analytics-item[data-analysis="${arg}"]`);
@@ -1173,7 +923,7 @@ function getFilteredHumanMessages(){
   const search = document.getElementById('reviewSearch').value.trim().toLowerCase();
   const filter = document.getElementById('reviewFilter').value;
 
-  let results = HUMAN_MESSAGES.filter(m=>{
+  let results = state.humanMessages.filter(m=>{
     if(reviewDayFilter !== null){
       if(localDateKey(new Date(m.ts)) !== reviewDayFilter) return false;
     } else {
@@ -1199,7 +949,7 @@ function getFilteredHumanMessages(){
     // Day view: grouped by conversation name, chronological within each —
     // never interleaved across conversations.
     results = results.slice().sort((a,b)=>{
-      const nameA = CONVERSATIONS[a.conv].name, nameB = CONVERSATIONS[b.conv].name;
+      const nameA = state.conversations[a.conv].name, nameB = state.conversations[b.conv].name;
       if(nameA !== nameB) return nameA < nameB ? -1 : 1;
       return new Date(a.ts) - new Date(b.ts);
     });
@@ -1259,7 +1009,7 @@ function clearReviewFilters(){
   renderReviewTable();
 }
 
-// Renders a flag's checkbox cell according to the current SHOW_AUTO/SHOW_USER
+// Renders a flag's checkbox cell according to the current state.showAuto/state.showUser
 // state (see the four-row table in effectiveFlag's comment):
 //  - both on:  editable, labeled "auto"/"you"
 //  - auto only: read-only, shows auto value, no label
@@ -1268,12 +1018,12 @@ function clearReviewFilters(){
 function checkboxCell(msg, type){
   const val = effectiveFlag(msg, type);
   const autoTitle = msg.auto_source === 'llm' ? 'title="automatic tag from Claude, zero-shot"' : (msg.auto_source === 'heuristic' ? 'title="automatic tag from keyword/sentiment heuristic"' : '');
-  if(SHOW_AUTO && !SHOW_USER){
+  if(state.showAuto && !state.showUser){
     return `<div class="flag-checkbox">
       <input type="checkbox" disabled ${val ? 'checked' : ''}>
     </div>`;
   }
-  if(!SHOW_AUTO && SHOW_USER){
+  if(!state.showAuto && state.showUser){
     const stated = hasUserValue(msg, type);
     return `<div class="flag-checkbox">
       <input type="checkbox" data-id="${msg.id}" data-type="${type}" ${val ? 'checked' : ''}>
@@ -1314,7 +1064,7 @@ function renderReviewFilterBanner(){
     return;
   }
   el.style.display = 'flex';
-  const convName = reviewConvFilter !== null ? CONVERSATIONS[reviewConvFilter].name : null;
+  const convName = reviewConvFilter !== null ? state.conversations[reviewConvFilter].name : null;
   let label = '';
   if(convName) label += `Conversation: <strong>${escapeHtml(convName)}</strong>`;
   let dayKeyForButton = null;
@@ -1344,14 +1094,14 @@ function renderReviewFilterBanner(){
 }
 
 function renderReplyRow(msg){
-  if(!SHOW_REPLIES) return '';
-  const convMsgs = RAW_DATA[msg.conv] && RAW_DATA[msg.conv].chat_messages;
+  if(!state.showReplies) return '';
+  const convMsgs = state.rawData[msg.conv] && state.rawData[msg.conv].chat_messages;
   if(!convMsgs) return '';
   const next = convMsgs[msg.rawIndex + 1];
   if(!next || next.sender !== 'assistant') return '';
   const replyText = extractMessageText(next);
   if(!replyText) return '';
-  const colCount = (SHOW_AUTO || SHOW_USER) ? 6 : 3;
+  const colCount = (state.showAuto || state.showUser) ? 6 : 3;
   return `<tr class="claude-reply-row">
     <td colspan="${colCount}"><span class="who-label">Claude</span>${renderMarkdownLite(replyText)}</td>
   </tr>`;
@@ -1366,16 +1116,16 @@ function renderReviewTable(){
 
   document.getElementById('reviewCount').textContent = `${filtered.length} message${filtered.length===1?'':'s'}`;
 
-  const showFlagColumns = SHOW_AUTO || SHOW_USER;
+  const showFlagColumns = state.showAuto || state.showUser;
 
   const rows = pageItems.map(m => {
-    const conv = CONVERSATIONS[m.conv];
+    const conv = state.conversations[m.conv];
     const dt = new Date(m.ts);
     const flagCells = showFlagColumns ? `
       <td class="flag-cell">${checkboxCell(m, 'caps')}</td>
       <td class="flag-cell">${checkboxCell(m, 'angry')}</td>
       <td class="flag-cell">${checkboxCell(m, 'critical')}</td>
-      ${SHOW_USER ? `<td class="flag-cell"><button class="approve-btn" data-id="${m.id}">Approve</button></td>` : ''}
+      ${state.showUser ? `<td class="flag-cell"><button class="approve-btn" data-id="${m.id}">Approve</button></td>` : ''}
     ` : '';
     const mainRow = `<tr data-msg-id="${m.id}">
       <td class="when">${dt.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}<br>${dt.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})}</td>
@@ -1386,7 +1136,7 @@ function renderReviewTable(){
     return mainRow + renderReplyRow(m);
   }).join('');
 
-  const approveHeader = SHOW_USER ? '<th></th>' : '';
+  const approveHeader = state.showUser ? '<th></th>' : '';
   const flagHeaders = showFlagColumns ? `<th>All caps</th><th>Angry</th><th>Critical</th>${approveHeader}` : '';
 
   document.getElementById('reviewTable').innerHTML = `
@@ -1398,7 +1148,7 @@ function renderReviewTable(){
       <tbody>${rows}</tbody>
     </table>`;
 
-  if(showFlagColumns && SHOW_USER){
+  if(showFlagColumns && state.showUser){
     document.querySelectorAll('.flag-checkbox input:not([disabled])').forEach(cb=>{
       cb.addEventListener('change', (e)=>{
         const id = e.target.dataset.id;
@@ -1440,46 +1190,20 @@ document.getElementById('reviewFilter').addEventListener('change', ()=>{ reviewP
 document.getElementById('exportAnnotatedBtn').addEventListener('click', exportAnnotatedConversations);
 
 function onVisibilityToggleChanged(){
-  SHOW_AUTO = document.getElementById('toggleShowAuto').checked;
-  SHOW_USER = document.getElementById('toggleShowUser').checked;
+  state.showAuto = document.getElementById('toggleShowAuto').checked;
+  state.showUser = document.getElementById('toggleShowUser').checked;
   attachFlags();
   renderCalendar();
   renderConvList(document.getElementById('convSearch').value);
-  if(currentConv !== null) selectConversation(currentConv);
+  if(state.selectedConversation !== null) selectConversation(state.selectedConversation);
   renderReviewTable();
 }
 document.getElementById('toggleShowAuto').addEventListener('change', onVisibilityToggleChanged);
 document.getElementById('toggleShowUser').addEventListener('change', onVisibilityToggleChanged);
 document.getElementById('toggleShowReplies').addEventListener('change', ()=>{
-  SHOW_REPLIES = document.getElementById('toggleShowReplies').checked;
+  state.showReplies = document.getElementById('toggleShowReplies').checked;
   renderReviewTable();
 });
-
-// Nothing renders until a conversations.json file is loaded via the load
-// screen (see handleLoadClick above), which populates CONVERSATIONS/
-// MESSAGES/HUMAN_MESSAGES and then triggers the first render itself.
-
-// =====================================================================
-// Analytics tab
-// =====================================================================
-
-function isFlagged(msg){
-  return effectiveFlag(msg, 'critical') || effectiveFlag(msg, 'angry') || effectiveFlag(msg, 'caps');
-}
-
-function pearsonR(xs, ys){
-  const n = xs.length;
-  if(n < 2) return null;
-  const meanX = xs.reduce((a,b)=>a+b,0) / n;
-  const meanY = ys.reduce((a,b)=>a+b,0) / n;
-  let num = 0, denX = 0, denY = 0;
-  for(let i=0;i<n;i++){
-    const dx = xs[i]-meanX, dy = ys[i]-meanY;
-    num += dx*dy; denX += dx*dx; denY += dy*dy;
-  }
-  if(denX === 0 || denY === 0) return null;
-  return num / Math.sqrt(denX*denY);
-}
 
 // Processes `items` in chunks (yielding to the browser between chunks via
 // requestAnimationFrame) so a progress bar can actually animate and the
@@ -1513,8 +1237,6 @@ const ANALYTICS_META = {
   idlegap: { title: 'Idle time before a session', desc: 'Does picking a conversation back up after a long gap correlate with more friction?' },
 };
 
-let currentAnalysis = null;
-let analysisCache = {};
 
 function showAnalyticsProgress(){
   document.getElementById('analyticsMain').innerHTML = `
@@ -1532,65 +1254,32 @@ function setAnalyticsProgress(pct){
 
 function runAnalysis(name, opts){
   opts = opts || {};
-  currentAnalysis = name;
+  state.selectedAnalysis = name;
   rememberLocation();
   document.querySelectorAll('.analytics-item').forEach(b=>{
     b.classList.toggle('active', b.dataset.analysis === name);
   });
   showAnalyticsProgress();
 
-  const runner = {
-    friction: computeFrictionAnalysis,
-    trend: computeTrendAnalysis,
-    length: computeLengthAnalysis,
-    timeofday: computeTimeOfDayAnalysis,
-    idlegap: computeIdleGapAnalysis,
+  const [compute, render] = {
+    friction: [computeFrictionAnalysis, renderFrictionResult],
+    trend: [computeTrendAnalysis, renderTrendResult],
+    length: [computeLengthAnalysis, renderLengthResult],
+    timeofday: [computeTimeOfDayAnalysis, renderTimeOfDayResult],
+    idlegap: [computeIdleGapAnalysis, renderIdleGapResult],
   }[name];
 
-  runner(opts, setAnalyticsProgress);
+  // The computation runs in chunks, yielding to the browser between them so
+  // the progress bar moves; drawing happens once it finishes.
+  const runChunked = (items, fn) => computeWithProgress(items, fn, setAnalyticsProgress);
+  compute(opts, runChunked).then(render);
 }
 
 document.querySelectorAll('.analytics-item').forEach(btn=>{
   btn.addEventListener('click', ()=> runAnalysis(btn.dataset.analysis, {}));
 });
 
-// --- Friction ranking ---
-async function computeFrictionAnalysis(opts, onProgress){
-  const granularity = opts.granularity || 'conversation';
-  let rows;
-
-  if(granularity === 'conversation'){
-    const perConv = CONVERSATIONS.map(() => ({ total: 0, flagged: 0 }));
-    await computeWithProgress(HUMAN_MESSAGES, m => {
-      perConv[m.conv].total++;
-      if(isFlagged(m)) perConv[m.conv].flagged++;
-    }, onProgress);
-    rows = CONVERSATIONS.map((c, idx) => ({
-      label: c.name,
-      total: perConv[idx].total,
-      flagged: perConv[idx].flagged,
-      pct: perConv[idx].total ? (perConv[idx].flagged / perConv[idx].total * 100) : 0,
-      conv: idx,
-      rangeStart: null, rangeEnd: null,
-    })).filter(r => r.total > 0);
-  } else {
-    rows = await computeWithProgress(BLOCKS, b => ({
-      label: `${CONVERSATIONS[b.conv].name} — ${fmtDayHeading(b.date)}`,
-      total: b.count,
-      flagged: b.criticalItems.length + b.angryItems.length + b.capsItems.length > 0
-        ? b.allHuman.filter(isFlagged).length : 0,
-      pct: b.count ? (b.allHuman.filter(isFlagged).length / b.count * 100) : 0,
-      conv: b.conv,
-      rangeStart: new Date(b.start).getTime(),
-      rangeEnd: new Date(b.end).getTime(),
-    }), onProgress);
-  }
-
-  rows.sort((a,b)=> b.pct - a.pct);
-  renderFrictionResult(rows, granularity);
-}
-
-function renderFrictionResult(rows, granularity){
+function renderFrictionResult({ rows, granularity }){
   const meta = ANALYTICS_META.friction;
   const rowsHtml = rows.slice(0, 100).map(r => `
     <tr class="friction-row" data-conv="${r.conv}" data-start="${r.rangeStart||''}" data-end="${r.rangeEnd||''}">
@@ -1627,40 +1316,7 @@ function renderFrictionResult(rows, granularity){
   });
 }
 
-// --- Flag rate over time ---
-async function computeTrendAnalysis(opts, onProgress){
-  const granularity = opts.granularity || 'week';
-  function bucketKey(d){
-    if(granularity === 'month'){
-      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-    }
-    // ISO-ish week bucket: year + week number (Sunday-start, matching the rest of this page)
-    const first = new Date(d.getFullYear(), 0, 1);
-    const dayOfYear = Math.floor((d - first) / 86400000);
-    const week = Math.floor((dayOfYear + first.getDay()) / 7);
-    return `${d.getFullYear()}-W${String(week).padStart(2,'0')}`;
-  }
-
-  const buckets = new Map();
-  await computeWithProgress(HUMAN_MESSAGES, m => {
-    const key = bucketKey(new Date(m.ts));
-    if(!buckets.has(key)) buckets.set(key, {total:0, flagged:0});
-    const b = buckets.get(key);
-    b.total++;
-    if(isFlagged(m)) b.flagged++;
-  }, onProgress);
-
-  const keys = Array.from(buckets.keys()).sort();
-  const points = keys.map(k => ({
-    x: k,
-    y: buckets.get(k).total ? (buckets.get(k).flagged / buckets.get(k).total * 100) : 0,
-    total: buckets.get(k).total,
-    flagged: buckets.get(k).flagged,
-  }));
-  renderTrendResult(points, granularity);
-}
-
-function renderTrendResult(points, granularity){
+function renderTrendResult({ points, granularity }){
   const meta = ANALYTICS_META.trend;
   document.getElementById('analyticsMain').innerHTML = `
     <h3>${meta.title}</h3>
@@ -1678,23 +1334,7 @@ function renderTrendResult(points, granularity){
   });
 }
 
-// --- Session length vs. flag rate ---
-async function computeLengthAnalysis(opts, onProgress){
-  const points = await computeWithProgress(BLOCKS.filter(b=>b.count>0), b => {
-    const flaggedCount = b.allHuman.filter(isFlagged).length;
-    return {
-      x: b.duration_sec / 60, // minutes
-      y: flaggedCount / b.count * 100,
-      label: `${CONVERSATIONS[b.conv].name} — ${fmtDayHeading(b.date)}`,
-      conv: b.conv,
-      rangeStart: new Date(b.start).getTime(),
-      rangeEnd: new Date(b.end).getTime(),
-    };
-  }, onProgress);
-  renderLengthResult(points);
-}
-
-function renderLengthResult(points){
+function renderLengthResult({ points }){
   const meta = ANALYTICS_META.length;
   const r = pearsonR(points.map(p=>p.x), points.map(p=>p.y));
   document.getElementById('analyticsMain').innerHTML = `
@@ -1712,20 +1352,7 @@ function renderLengthResult(points){
   });
 }
 
-// --- Time of day & day of week ---
-async function computeTimeOfDayAnalysis(opts, onProgress){
-  const byHour = Array.from({length:24}, () => ({total:0, flagged:0}));
-  const byDow = Array.from({length:7}, () => ({total:0, flagged:0}));
-  await computeWithProgress(HUMAN_MESSAGES, m => {
-    const d = new Date(m.ts);
-    const h = d.getHours(), dow = d.getDay();
-    byHour[h].total++; byDow[dow].total++;
-    if(isFlagged(m)){ byHour[h].flagged++; byDow[dow].flagged++; }
-  }, onProgress);
-  renderTimeOfDayResult(byHour, byDow);
-}
-
-function renderTimeOfDayResult(byHour, byDow){
+function renderTimeOfDayResult({ byHour, byDow }){
   const meta = ANALYTICS_META.timeofday;
   const dowNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   document.getElementById('analyticsMain').innerHTML = `
@@ -1745,41 +1372,7 @@ function renderTimeOfDayResult(byHour, byDow){
     { yLabel: '% flagged' });
 }
 
-// --- Idle time before a session ---
-async function computeIdleGapAnalysis(opts, onProgress){
-  // For each session (block) after the first one in its conversation, the
-  // gap since the previous session in that same conversation ended.
-  const byConv = new Map();
-  BLOCKS.forEach(b => {
-    if(!byConv.has(b.conv)) byConv.set(b.conv, []);
-    byConv.get(b.conv).push(b);
-  });
-  byConv.forEach(list => list.sort((a,b)=> new Date(a.start) - new Date(b.start)));
-
-  const pairs = [];
-  byConv.forEach(list => {
-    for(let i=1;i<list.length;i++){
-      pairs.push({ prev: list[i-1], cur: list[i] });
-    }
-  });
-
-  const points = await computeWithProgress(pairs, ({prev, cur}) => {
-    const gapHours = (new Date(cur.start) - new Date(prev.end)) / 3600000;
-    const flaggedCount = cur.allHuman.filter(isFlagged).length;
-    return {
-      x: Math.max(gapHours, 0.01), // avoid log(0)
-      y: cur.count ? (flaggedCount / cur.count * 100) : 0,
-      label: `${CONVERSATIONS[cur.conv].name} — ${fmtDayHeading(cur.date)}`,
-      conv: cur.conv,
-      rangeStart: new Date(cur.start).getTime(),
-      rangeEnd: new Date(cur.end).getTime(),
-    };
-  }, onProgress);
-
-  renderIdleGapResult(points, BLOCKS.length - points.length);
-}
-
-function renderIdleGapResult(points, excludedCount){
+function renderIdleGapResult({ points, excludedCount }){
   const meta = ANALYTICS_META.idlegap;
   const logXs = points.map(p => Math.log10(p.x));
   const r = pearsonR(logXs, points.map(p=>p.y));
