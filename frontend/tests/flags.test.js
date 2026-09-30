@@ -1,7 +1,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { state } from '../core/state.js';
-import { hasUserValue, effectiveFlag, isOverridden, isFlagged, attachFlags } from '../core/flags.js';
+import { hasUserValue, effectiveFlag, isOverridden, isFlagged, attachFlags, isReviewed, countsTowardRates } from '../core/flags.js';
 import { resetState, human } from './fixtures.js';
 
 beforeEach(resetState);
@@ -67,4 +67,23 @@ test('attachFlags files each message under its session, or the nearest one', () 
   assert.deepEqual(first.capsItems, [inside]);
   assert.deepEqual(second.allHuman, [nearerSecond, after]);
   assert.deepEqual(other.allHuman, []);
+});
+
+test('a row is reviewed once any of its flags has your value', () => {
+  const m = human(0, '2026-01-01T10:00:00Z');
+  assert.equal(isReviewed(m), false);
+  state.overrides[m.id] = { caps: false };
+  assert.equal(isReviewed(m), true);
+});
+
+test('only messages with a value under the switches count toward rates', () => {
+  const reviewed = human(0, '2026-01-01T10:00:00Z');
+  const unreviewed = human(0, '2026-01-01T10:01:00Z');
+  state.overrides[reviewed.id] = { caps: false, angry: false, critical: false };
+  assert.equal(countsTowardRates(unreviewed), true);
+  state.showAuto = false;
+  assert.equal(countsTowardRates(reviewed), true);
+  assert.equal(countsTowardRates(unreviewed), false);
+  state.showUser = false;
+  assert.equal(countsTowardRates(reviewed), false);
 });

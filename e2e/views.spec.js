@@ -580,7 +580,7 @@ test('the show switches change what every view counts', async ({ page }) => {
   await expect(calendarFlags).toHaveCount(0);
   await expect(listFlags).toHaveCount(0);
   await expect(page.locator('#reviewTable input[type="checkbox"]:checked')).toHaveCount(0);
-  await expect(page.locator('#reviewTable .flag-checkbox .src').first()).toHaveText('untagged');
+  await expect(page.locator('#reviewTable .review-status').first()).toHaveText('Not reviewed');
 
   await page.check('#toggleShowAuto');
   await expect(calendarFlags).toHaveCount(before);
@@ -598,6 +598,31 @@ test('the show switches change what every view counts', async ({ page }) => {
   expect(await replies.count()).toBeGreaterThan(0);
   await page.uncheck('#toggleShowReplies');
   await expect(replies).toHaveCount(0);
+});
+
+test('with only your tags shown, each row says once whether you reviewed it', async ({ page }) => {
+  await loadFixture(page);
+  await page.click('button[data-tab="review"]');
+  await page.uncheck('#toggleShowAuto');
+  const firstRow = page.locator('#reviewTable tbody tr[data-msg-id]').first();
+  await expect(firstRow.locator('.review-status')).toHaveText('Not reviewed');
+  await expect(firstRow.locator('.flag-checkbox .src')).toHaveCount(0);
+  await firstRow.locator('.approve-btn').click();
+  await expect(page.locator('#saveStatus')).toHaveText('Saved.');
+  await expect(page.locator('#reviewTable tbody tr[data-msg-id]').first().locator('.review-status')).toHaveText('Reviewed');
+  await page.check('#toggleShowAuto');
+  await expect(page.locator('#reviewTable .review-status')).toHaveCount(0);
+});
+
+test('with only your tags shown, analytics leave out conversations you never reviewed', async ({ page }) => {
+  await loadFixture(page);
+  await page.uncheck('#toggleShowAuto');
+  await page.click('button[data-tab="review"]');
+  await page.click('#reviewTable .approve-btn >> nth=0');
+  await expect(page.locator('#saveStatus')).toHaveText('Saved.');
+  await runAnalysis(page, 'friction');
+  // One reviewed message, so exactly one conversation is ranked.
+  await expect(page.locator('.friction-row')).toHaveCount(1);
 });
 
 test('a calendar session opens the review tab on that session, and the banner widens it', async ({ page }) => {
@@ -821,6 +846,29 @@ test('an api_base query parameter points the page at that backend', async ({ pag
   await loadFile(page, FIXTURE, { url: `${TIMELINE_HTML}?api_base=${encodeURIComponent(API_BASE + '/')}` });
   await expect(page.locator('#mainContent')).toBeVisible({ timeout: 30_000 });
   await expect(page.locator('#convItems .conv-item')).not.toHaveCount(0);
+});
+
+test('a session crossing midnight is one session, drawn on both days', async ({ page }, testInfo) => {
+  // The browser runs in UTC here, so these straddle its midnight.
+  const file = writeExport(testInfo, 'midnight.json', [{
+    name: 'Late night',
+    messages: [
+      { sender: 'human', at: new Date('2026-03-02T23:55:00Z'), text: 'still up' },
+      { sender: 'human', at: new Date('2026-03-03T00:05:00Z'), text: 'and now it is tomorrow' },
+    ],
+  }]);
+  await loadFile(page, file);
+  await expect(page.locator('#mainContent')).toBeVisible({ timeout: 30_000 });
+
+  const bars = page.locator('#calendarBody .bar');
+  await expect(bars).toHaveCount(2);
+  const ids = await bars.evaluateAll((els) => els.map((e) => e.dataset.blockIdx));
+  expect(new Set(ids).size).toBe(1);
+  await expect(page.locator('#calendarBody .day-row .day-label')).toHaveCount(2);
+
+  await expect(page.locator('.conv-item .meta')).toContainText('2 messages · 2 days');
+  await bars.nth(1).dispatchEvent('click');
+  await expect(page.locator('#reviewCount')).toHaveText('2 messages');
 });
 
 test('Markdown in a message renders as headings, lists and code', async ({ page }, testInfo) => {

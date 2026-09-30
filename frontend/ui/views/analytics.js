@@ -173,13 +173,13 @@ function renderTimeOfDayResult({ byHour, byDow }){
     { yLabel: '% flagged' });
 }
 
-function renderIdleGapResult({ points, excludedCount }){
+function renderIdleGapResult({ points, excludedCount, uncountedCount }){
   const meta = ANALYTICS_META.idlegap;
   const logXs = points.map(p => Math.log10(p.x));
   const r = pearsonR(logXs, points.map(p=>p.y));
   document.getElementById('analyticsMain').innerHTML = `
     <h3>${meta.title}</h3>
-    <p class="analytics-desc">${meta.desc} X-axis is log-scaled (a session right after the last one looks very different from one picked up a week later). ${excludedCount} session${excludedCount===1?'':'s'} excluded as a conversation's first session (no prior gap to measure). Click a dot to open it in Review.</p>
+    <p class="analytics-desc">${meta.desc} X-axis is log-scaled (a session right after the last one looks very different from one picked up a week later). ${excludedCount} session${excludedCount===1?'':'s'} excluded as a conversation's first session (no prior gap to measure)${uncountedCount ? `, and ${uncountedCount} with no reviewed messages` : ''}. Click a dot to open it in Review.</p>
     <div class="stat-row">
       <div class="stat-block"><span class="num">${r===null?'—':r.toFixed(2)}</span><span class="label">correlation (r, log-gap)</span></div>
       <div class="stat-block"><span class="num">${points.length}</span><span class="label">sessions with a prior gap</span></div>

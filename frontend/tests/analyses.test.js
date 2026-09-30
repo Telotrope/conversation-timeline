@@ -82,10 +82,55 @@ test('idle gap measures from the previous session in the same conversation', asy
   assert.equal(excludedCount, 2);
 });
 
-test('idle gap floors a zero gap so a log scale can draw it', async () => {
-  state.blocks[1].start = state.blocks[0].end;
-  state.blocks[1].count = 0;
+test('the idle time before a session is the pause since the previous session ended', async () => {
+  // Busy's second session starts 20 minutes after its first one ended.
+  state.blocks[1].start = '2026-03-02T10:20:00Z';
   const { points } = await computeIdleGapAnalysis({}, runChunked);
-  assert.equal(points[0].x, 0.01);
-  assert.equal(points[0].y, 0);
+  assert.equal(points[0].x, 20 / 60);
+  assert.equal(points[0].y, 50);
+});
+
+// With automatic tags hidden, only reviewed messages count. Here only the
+// flagged message in Busy's second session and one other are reviewed.
+function reviewOnly() {
+  state.showAuto = false;
+  const [, a2, a3] = state.humanMessages;
+  state.overrides[a2.id] = { caps: false, angry: true, critical: false };
+  state.overrides[a3.id] = { caps: false, angry: false, critical: false };
+  attachFlags();
+}
+
+test('with only your tags, unreviewed conversations and sessions are left out', async () => {
+  reviewOnly();
+  const byConv = await computeFrictionAnalysis({}, runChunked);
+  assert.deepEqual(byConv.rows.map((r) => [r.label, r.total, r.flagged, r.pct]), [['Busy', 2, 1, 50]]);
+  const bySession = await computeFrictionAnalysis({ granularity: 'session' }, runChunked);
+  assert.deepEqual(bySession.rows.map((r) => [r.total, r.flagged]), [[2, 1]]);
+});
+
+test('with only your tags, the trend, length and time of day count reviewed messages only', async () => {
+  reviewOnly();
+  const trend = await computeTrendAnalysis({}, runChunked);
+  assert.deepEqual(trend.points.map((p) => [p.x, p.total, p.flagged]), [['2026-W09', 2, 1]]);
+  const length = await computeLengthAnalysis({}, runChunked);
+  assert.deepEqual(length.points.map((p) => [p.x, p.y]), [[10, 50]]);
+  const { byHour } = await computeTimeOfDayAnalysis({}, runChunked);
+  assert.deepEqual(byHour[9], { total: 2, flagged: 1 });
+  assert.deepEqual(byHour[10], { total: 0, flagged: 0 });
+});
+
+test('idle gap skips later sessions with nothing reviewed, and says how many', async () => {
+  state.showAuto = false;
+  let r = await computeIdleGapAnalysis({}, runChunked);
+  assert.deepEqual([r.points.length, r.excludedCount, r.uncountedCount], [0, 2, 1]);
+  reviewOnly();
+  r = await computeIdleGapAnalysis({}, runChunked);
+  assert.deepEqual([r.points.length, r.uncountedCount], [1, 0]);
+});
+
+test('session rates count only your messages, not Claude\'s', async () => {
+  // A session's count includes Claude's replies; rates must not.
+  state.blocks[1].count = 10;
+  const { rows } = await computeFrictionAnalysis({ granularity: 'session' }, runChunked);
+  assert.equal(rows[0].pct, 50);
 });

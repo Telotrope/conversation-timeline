@@ -61,6 +61,24 @@ export function attachFlags(){
   state.blocks.forEach(b => b.allHuman.sort((a,c)=> new Date(a.ts) - new Date(c.ts)));
 }
 
+// Whether you have reviewed this message's row. Reviewing is per row: a
+// checkbox or Approve records all three flags at once.
+export function isReviewed(msg){
+  const o = state.overrides[msg.id];
+  return !!o && ['caps', 'angry', 'critical'].some((t) => typeof o[t] === 'boolean');
+}
+
+// Whether this message has flag values under the current show switches, and
+// so belongs in a rate's denominator. With automatic tags shown, every
+// message has a value; with only yours shown, only reviewed rows do; with
+// neither, none do. Counting the rest as "not flagged" would report
+// unreviewed messages as clean.
+export function countsTowardRates(msg){
+  if(state.showAuto) return true;
+  if(state.showUser) return isReviewed(msg);
+  return false;
+}
+
 // Whether any of the three flags is in effect for this message.
 export function isFlagged(msg){
   return effectiveFlag(msg, 'critical') || effectiveFlag(msg, 'angry') || effectiveFlag(msg, 'caps');

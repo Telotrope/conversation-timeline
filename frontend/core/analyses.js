@@ -3,7 +3,7 @@
 // over items (the Analytics view passes one that yields to the browser
 // between chunks) and returns the data its renderer takes.
 
-import { isFlagged } from './flags.js';
+import { countsTowardRates, isFlagged } from './flags.js';
 import { fmtDayHeading } from './format.js';
 import { state } from './state.js';
 
@@ -21,6 +21,21 @@ export function pearsonR(xs, ys){
   return num / Math.sqrt(denX*denY);
 }
 
+// Percentage of counted messages that are flagged. A rate over no messages
+// is meaningless, so callers leave such rows out beforehand; reaching here
+// with none is a bug, and says so rather than drawing a misleading 0%.
+function ratePct(flagged, total){
+  if(total === 0) throw new Error('flag rate asked for with no counted messages');
+  return flagged / total * 100;
+}
+
+// Your counted messages in a session, and how many of them are flagged.
+// b.count is not used: it includes Claude's messages, which are never flagged.
+function sessionRate(b){
+  const counted = b.allHuman.filter(countsTowardRates);
+  return { total: counted.length, flagged: counted.filter(isFlagged).length };
+}
+
 // --- Friction ranking ---
 export async function computeFrictionAnalysis(opts, runChunked){
   const granularity = opts.granularity || 'conversation';
@@ -29,30 +44,35 @@ export async function computeFrictionAnalysis(opts, runChunked){
   if(granularity === 'conversation'){
     const perConv = state.conversations.map(() => ({ total: 0, flagged: 0 }));
     await runChunked(state.humanMessages, m => {
+      if(!countsTowardRates(m)) return;
       perConv[m.conv].total++;
       if(isFlagged(m)) perConv[m.conv].flagged++;
     });
-    rows = state.conversations.map((c, idx) => ({
-      label: c.name,
-      total: perConv[idx].total,
-      flagged: perConv[idx].flagged,
-      pct: perConv[idx].total ? (perConv[idx].flagged / perConv[idx].total * 100) : 0,
-      conv: idx,
-      rangeStart: null, rangeEnd: null,
-    })).filter(r => r.total > 0);
+    rows = state.conversations
+      .map((c, idx) => ({ c, idx }))
+      .filter(({ idx }) => perConv[idx].total > 0)
+      .map(({ c, idx }) => ({
+        label: c.name,
+        total: perConv[idx].total,
+        flagged: perConv[idx].flagged,
+        pct: ratePct(perConv[idx].flagged, perConv[idx].total),
+        conv: idx,
+        rangeStart: null, rangeEnd: null,
+      }));
   } else {
-    rows = await runChunked(state.blocks, b => ({
-      label: `${state.conversations[b.conv].name} — ${fmtDayHeading(b.date)}`,
-      total: b.count,
-      flagged: b.criticalItems.length + b.angryItems.length + b.capsItems.length > 0
-        ? b.allHuman.filter(isFlagged).length : 0,
-      // The zero case is currently unreachable: buildBlocks never makes a
-      // session without messages. Kept as a backstop if that changes.
-      pct: b.count ? (b.allHuman.filter(isFlagged).length / b.count * 100) : 0,
-      conv: b.conv,
-      rangeStart: new Date(b.start).getTime(),
-      rangeEnd: new Date(b.end).getTime(),
-    }));
+    const counted = state.blocks.filter(b => sessionRate(b).total > 0);
+    rows = await runChunked(counted, b => {
+      const { total, flagged } = sessionRate(b);
+      return {
+        label: `${state.conversations[b.conv].name} — ${fmtDayHeading(b.date)}`,
+        total,
+        flagged,
+        pct: ratePct(flagged, total),
+        conv: b.conv,
+        rangeStart: new Date(b.start).getTime(),
+        rangeEnd: new Date(b.end).getTime(),
+      };
+    });
   }
 
   rows.sort((a,b)=> b.pct - a.pct);
@@ -75,6 +95,7 @@ export async function computeTrendAnalysis(opts, runChunked){
 
   const buckets = new Map();
   await runChunked(state.humanMessages, m => {
+    if(!countsTowardRates(m)) return;
     const key = bucketKey(new Date(m.ts));
     if(!buckets.has(key)) buckets.set(key, {total:0, flagged:0});
     const b = buckets.get(key);
@@ -85,9 +106,7 @@ export async function computeTrendAnalysis(opts, runChunked){
   const keys = Array.from(buckets.keys()).sort();
   const points = keys.map(k => ({
     x: k,
-    // The zero case is currently unreachable: a bucket is only created when
-    // a message is counted into it. Kept as a backstop if that changes.
-    y: buckets.get(k).total ? (buckets.get(k).flagged / buckets.get(k).total * 100) : 0,
+    y: ratePct(buckets.get(k).flagged, buckets.get(k).total),
     total: buckets.get(k).total,
     flagged: buckets.get(k).flagged,
   }));
@@ -96,11 +115,12 @@ export async function computeTrendAnalysis(opts, runChunked){
 
 // --- Session length vs. flag rate ---
 export async function computeLengthAnalysis(opts, runChunked){
-  const points = await runChunked(state.blocks.filter(b=>b.count>0), b => {
-    const flaggedCount = b.allHuman.filter(isFlagged).length;
+  const counted = state.blocks.filter(b => sessionRate(b).total > 0);
+  const points = await runChunked(counted, b => {
+    const { total, flagged } = sessionRate(b);
     return {
       x: b.duration_sec / 60, // minutes
-      y: flaggedCount / b.count * 100,
+      y: ratePct(flagged, total),
       label: `${state.conversations[b.conv].name} — ${fmtDayHeading(b.date)}`,
       conv: b.conv,
       rangeStart: new Date(b.start).getTime(),
@@ -115,6 +135,7 @@ export async function computeTimeOfDayAnalysis(opts, runChunked){
   const byHour = Array.from({length:24}, () => ({total:0, flagged:0}));
   const byDow = Array.from({length:7}, () => ({total:0, flagged:0}));
   await runChunked(state.humanMessages, m => {
+    if(!countsTowardRates(m)) return;
     const d = new Date(m.ts);
     const h = d.getHours(), dow = d.getDay();
     byHour[h].total++; byDow[dow].total++;
@@ -134,19 +155,23 @@ export async function computeIdleGapAnalysis(opts, runChunked){
   });
   byConv.forEach(list => list.sort((a,b)=> new Date(a.start) - new Date(b.start)));
 
+  // The gap is measured from the previous session whether or not you
+  // reviewed it; only the later session needs counted messages for a rate.
   const pairs = [];
+  let uncountedCount = 0;
   byConv.forEach(list => {
     for(let i=1;i<list.length;i++){
-      pairs.push({ prev: list[i-1], cur: list[i] });
+      if(sessionRate(list[i]).total > 0) pairs.push({ prev: list[i-1], cur: list[i] });
+      else uncountedCount++;
     }
   });
 
   const points = await runChunked(pairs, ({prev, cur}) => {
     const gapHours = (new Date(cur.start) - new Date(prev.end)) / 3600000;
-    const flaggedCount = cur.allHuman.filter(isFlagged).length;
+    const { total, flagged } = sessionRate(cur);
     return {
       x: Math.max(gapHours, 0.01), // avoid log(0)
-      y: cur.count ? (flaggedCount / cur.count * 100) : 0,
+      y: ratePct(flagged, total),
       label: `${state.conversations[cur.conv].name} — ${fmtDayHeading(cur.date)}`,
       conv: cur.conv,
       rangeStart: new Date(cur.start).getTime(),
@@ -154,5 +179,7 @@ export async function computeIdleGapAnalysis(opts, runChunked){
     };
   });
 
-  return { points, excludedCount: state.blocks.length - points.length };
+  // excludedCount: each conversation's first session, which has no prior gap.
+  // uncountedCount: later sessions with no counted messages to rate.
+  return { points, excludedCount: byConv.size, uncountedCount };
 }

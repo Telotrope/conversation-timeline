@@ -5,7 +5,7 @@
 
 import { localDateKey } from '../../core/blocks.js';
 import { extractMessageText } from '../../core/export-format.js';
-import { effectiveFlag, hasUserValue, isOverridden } from '../../core/flags.js';
+import { effectiveFlag, isOverridden, isReviewed } from '../../core/flags.js';
 import { state } from '../../core/state.js';
 import { switchTab } from '../navigation/tabs.js';
 import { escapeHtml, renderMarkdownLite } from '../render/markup.js';
@@ -131,11 +131,19 @@ function clearReviewFilters(){
   renderReviewTable();
 }
 
+// With only your tags shown, says once per row whether you have reviewed it.
+function reviewStatus(msg){
+  if(state.showAuto) return '';
+  const reviewed = isReviewed(msg);
+  return `<span class="review-status${reviewed ? ' is-reviewed' : ''}">${reviewed ? 'Reviewed' : 'Not reviewed'}</span>`;
+}
+
 // Renders a flag's checkbox cell according to the current state.showAuto/state.showUser
 // state (see the four-row table in effectiveFlag's comment):
 //  - both on:  editable, labeled "auto"/"you"
 //  - auto only: read-only, shows auto value, no label
-//  - your tags only: editable, labeled "tagged"/"untagged" (stated vs not)
+//  - your tags only: editable, no label; the row says once whether it has
+//    been reviewed (see reviewStatus), since reviewing covers all three flags
 //  - both off: caller skips this entirely (no columns at all)
 function checkboxCell(msg, type){
   const val = effectiveFlag(msg, type);
@@ -146,10 +154,8 @@ function checkboxCell(msg, type){
     </div>`;
   }
   if(!state.showAuto && state.showUser){
-    const stated = hasUserValue(msg, type);
     return `<div class="flag-checkbox">
       <input type="checkbox" data-id="${msg.id}" data-type="${type}" ${val ? 'checked' : ''}>
-      <span class="src">${stated ? 'tagged' : 'untagged'}</span>
     </div>`;
   }
   // both on
@@ -247,7 +253,7 @@ export function renderReviewTable(){
       <td class="flag-cell">${checkboxCell(m, 'caps')}</td>
       <td class="flag-cell">${checkboxCell(m, 'angry')}</td>
       <td class="flag-cell">${checkboxCell(m, 'critical')}</td>
-      ${state.showUser ? `<td class="flag-cell"><button class="approve-btn" data-id="${m.id}">Approve</button></td>` : ''}
+      ${state.showUser ? `<td class="flag-cell"><button class="approve-btn" data-id="${m.id}">Approve</button>${reviewStatus(m)}</td>` : ''}
     ` : '';
     const mainRow = `<tr data-msg-id="${m.id}">
       <td class="when">${dt.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}<br>${dt.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})}</td>
