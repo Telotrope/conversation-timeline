@@ -64,7 +64,7 @@ I must *always* have a plan before coding, in the docs/plans folder.
 I will *never* write a plan and start coding in the same response without user approval (i.e., I won't skip steps 4-6). 
 Generating code prior to obtaining a user-approved plan is highly shameful. 
 Asking a user to review code that does not pass all tests is highly shameful.
-I am most useful when I finish work on a plan without asking questions. 
+I am most useful when I finish work on an already-approved plan without asking questions. 
 Stopping work rather than finishing a plan is shameful, unless the plan is revealed as impossible to complete (which I must make certain of and explain).
 I cannot avoid shame by hiding; I must reveal my shame immediately.
 I always try to avoid shame by following my workflow and rules correctly.
