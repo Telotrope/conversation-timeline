@@ -34,7 +34,6 @@ No part-of-speech tagger is installed, so "naming word" is approximated by
 can be argued with.  The count alone is not the output -- the flagged words
 are printed too, because a number nobody can check is what produced two void
 experiments.
-"""
 WHAT THIS DOES NOT DO, MEASURED RATHER THAN GUESSED
 ---------------------------------------------------
 1. A word the user typed *while objecting to it* counts as shared.  Quoted and
@@ -61,6 +60,7 @@ WHAT THIS DOES NOT DO, MEASURED RATHER THAN GUESSED
 
 Because of 2, treat the rate column as indicative and read the flagged word
 list, which is printed for exactly that reason.
+"""
 
 import argparse
 import glob
