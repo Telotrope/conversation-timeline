@@ -63,7 +63,7 @@ shelling out to an external binary from the test suite.
 ```
 cd backend
 cargo build --workspace
-cargo test --workspace        # 163 tests
+cargo test --workspace        # 259 tests; needs Java + DynamoDB Local, see below
 cargo clippy --workspace --all-targets   # should be silent
 cargo fmt --all
 
@@ -132,13 +132,14 @@ specifically:**
   automated test, because doing so would mean shelling out to `cargo lambda`
   from the test suite, which is out of scope for now.
 
+**Verified against local stand-ins only, not real AWS** (migration plan
+§V2b):
+- `timeline-storage/src/s3.rs` runs against `s3s-fs`, a local S3 stand-in
+  that checks signatures, including presigned URLs. `timeline-storage/src/dynamo/*`
+  runs against Amazon's DynamoDB Local. Neither has reached real AWS.
+
 **Not verified, because there is no AWS access in this environment (no
-credentials, no LocalStack, no SAM CLI):**
-- `timeline-storage/src/s3.rs` and `timeline-storage/src/dynamo/*` — the
-  real AWS SDK adapters compile and their pure request-building logic is
-  unit-tested (see `dynamo/message_flags_table.rs`'s temporary private-function
-  tests for the auto/user DynamoDB-expression separation specifically), but
-  no `send()` call in either file has ever actually reached AWS or LocalStack.
+credentials, no SAM CLI):**
 - `infra/template.yaml` (the SAM template) has never been run through `sam
   validate` or `sam deploy` — no SAM CLI in this environment.
 - Nothing has been verified against a real Cognito user pool's actual
@@ -152,15 +153,29 @@ This is exactly the gap the migration plan's V2 test list already expected
 calling V2 done" / "verified against a real test Cognito user pool") — it's
 tracked, not hidden.
 
+## One-time setup for the DynamoDB tests
+
+`cargo test --workspace` includes tests that run the real DynamoDB adapters
+against Amazon's DynamoDB Local. They **fail, rather than skip**, if it is
+missing:
+
+```
+sudo apt install -y openjdk-21-jre-headless   # Java 17+ is required
+scripts/fetch-dynamodb-local.sh               # from the repo root
+```
+
+DynamoDB Local is under AWS's own license, not an open-source one. It needs
+an AWS account in good standing, may only run on machines the account
+holder owns or controls, and must never be committed or redistributed;
+`backend/.tools/` is ignored by git for that reason. See the migration
+plan's C15. The S3 tests need no setup: their stand-in runs inside the test
+process.
+
 ## Test coverage
 
 `timeline-core` stays at 100% line/function/region coverage (unchanged from
-V1). The new V2 crates do not, and the shortfall is concentrated exactly
-where you'd expect given the paragraph above: the real S3/DynamoDB
-`send()` calls in `timeline-storage`, which cannot be exercised without
-live AWS or LocalStack. Everything reachable without a live AWS connection
-(request/expression building, the axum app end-to-end, auth verification,
-error-mapping) is tested. Measure with
+V1). For `timeline-storage`, see [its README](timeline-storage/README.md#test-coverage--the-honest-split).
+Measure with
 [`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov) (MIT/Apache-2.0):
 
 ```
@@ -226,8 +241,8 @@ Rust isn't free, adding a few seconds to the test binaries that need one.
 - `timeline.html` itself — still 100% unmodified, still using its own
   client-side JS for everything. Nothing in the browser calls this backend
   yet.
-- Real-AWS/LocalStack integration tests, a real Cognito user pool, and an
-  actual deployment — all blocked on AWS account access (see above).
+- Real-AWS integration tests, a real Cognito user pool, and an actual
+  deployment — all blocked on AWS account access (see above).
 
 ## Test fixture provenance
 

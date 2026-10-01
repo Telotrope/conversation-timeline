@@ -1,11 +1,11 @@
-//! Real S3-backed `ObjectStore`. Compiles, but has zero test coverage --
-//! not even private-function tests, since this file has no logic of its
-//! own to unit-test (keys are passed in by the caller; there's no
-//! key-naming logic here to verify in isolation). Has not been run
-//! against real or LocalStack S3 in this environment -- no AWS
-//! credentials or Docker were available. See the migration plan V2 test
-//! list: running this against real S3 is one of the steps still needed
-//! before V2 can be called done.
+//! Real S3-backed `ObjectStore`. Tested against a local S3 stand-in
+//! (`s3s-fs`, which checks request signatures) in
+//! `tests/s3_object_store.rs`: the shared `ObjectStore` contract, presigned
+//! URLs used by a plain HTTP client, and rejection of tampered and expired
+//! URLs. Not yet run against real S3. Real S3 puts the bucket in the host
+//! name, which the local tests can't, and `s3s-fs` doesn't report missing
+//! buckets the way S3 does. The real-AWS run in the migration plan's §V2
+//! is still needed before V2 can be called done.
 
 use std::time::Duration;
 

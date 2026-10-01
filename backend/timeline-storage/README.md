@@ -16,29 +16,29 @@ Built during an earlier phase of this project's Rust migration (when the instruc
 the full V2 backend design), before this repo settled on staying container-free/AWS-free for
 routine local testing (see the migration plan's §V2a). The real adapters compile against the
 actual `aws-sdk-s3`/`aws-sdk-dynamodb` types, proving the port traits are shaped correctly for a
-real implementation — but **have never been run against real AWS or LocalStack.** The in-memory
-adapters, built alongside them, are what every other crate's tests and the local-dev server
-actually exercise.
+real implementation. Since the migration plan's §V2b they run against local stand-ins (`s3s-fs` for
+S3, Amazon's DynamoDB Local for DynamoDB), but **they have never been run against real AWS.** The
+in-memory adapters, built alongside them, are what every other crate's tests and the local-dev
+server actually exercise.
 
 ## Test coverage — the honest split
 
-Measured directly (`cargo llvm-cov -p timeline-storage --summary-only`), not estimated:
+Measured directly on 2026-10-01 (`cargo llvm-cov -p timeline-storage --summary-only`), not
+estimated. Each storage interface has one **contract suite** in [tests/support/](tests/support/):
+checks any correct implementation must pass, run against both the in-memory fake
+([tests/contract_memory.rs](tests/contract_memory.rs)) and the real adapter, so a fake that drifts
+from the real service fails a test.
 
 | File | Line coverage | What's actually tested |
 |---|---|---|
-| [`memory/object_store.rs`](src/memory/object_store.rs) | 100% | Full black-box tests via the real `ObjectStore` trait. |
-| [`memory/uploads.rs`](src/memory/uploads.rs) | 100% | Full black-box tests via the real `UploadOutcomeStore` trait. |
-| [`memory/conversations.rs`](src/memory/conversations.rs) | 100% | Full black-box tests via the real `ConversationSummaryStore` trait. |
-| [`memory/message_flags.rs`](src/memory/message_flags.rs) | 100% | Full black-box tests via all three flag traits, including that auto/user writes never cross-contaminate. |
-| [`dynamo/message_flags_table.rs`](src/dynamo/message_flags_table.rs) | 63.79% | Only the pure `UpdateExpression`-building logic (`auto_update_expression`/`user_update_expression`), via temporary private-function tests per this repo's CLAUDE.md exception. Every real `send()` call to DynamoDB is untested. |
-| [`dynamo/conversations_table.rs`](src/dynamo/conversations_table.rs) | **0%** | No tests of any kind — not even private-function ones. |
-| [`s3.rs`](src/s3.rs) | **0%** | No tests. Its own doc comment previously claimed it was "unit-testable for its own key-naming logic" — that was inaccurate and has been corrected; there's no key-naming logic in this file to test (keys are passed in by the caller). |
+| [`s3.rs`](src/s3.rs) | 100% | `ObjectStore` contract against `s3s-fs`; presigned PUT/GET used by a plain HTTP client; tampered, expired and wrong-method URLs rejected; over-long presign and an unreachable server reported as `Backend`. |
+| [`dynamo/conversations_table.rs`](src/dynamo/conversations_table.rs) | 98.41% | `UploadOutcomeStore` and `ConversationSummaryStore` contracts against DynamoDB Local; both row kinds in one table; malformed rows; missing table. Two lines unreached: the missing-`sk` and missing-`CONV#`-prefix branches in `list_for_user`, which no row DynamoDB can return should reach. |
+| [`dynamo/message_flags_table.rs`](src/dynamo/message_flags_table.rs) | 99.44% | Message-flags contract (including the auto/user separation, read back through the real trait methods) against DynamoDB Local; a malformed sort key; missing table. One line unreached: the missing-`sk` branch, for the same reason. |
+| `memory/*.rs` | 54–78% within this crate | Contract suites plus the original `memory_*.rs` tests. The unreached lines in each file are its `Resettable::reset`, which is exercised through `timeline-api`'s `POST /_dev/reset` tests, not from this crate. |
 
-Closing the `dynamo`/`s3` gap needs either real AWS credentials or a local emulator. Researched,
-not yet built (see the migration plan's C10): **DynamoDB** has a genuinely Docker-free path — AWS's
-own "DynamoDB Local," a downloadable JAR needing only a JRE, no container. **S3** doesn't have an
-equally clean answer yet — MinIO's licensing has shifted to a commercial product since it was last
-checked; other options (e.g. `s3rver`, MIT-licensed) are unverified candidates.
+Not covered by the stand-ins: real S3's host-name bucket addressing and its `NoSuchBucket` error
+(`s3s-fs` 0.17 doesn't check bucket existence on `GetObject`/`PutObject`). Those wait for the
+real-AWS run in the migration plan's §V2.
 
 ## Design: what each adapter is adapting, and how
 
