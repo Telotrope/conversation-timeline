@@ -7,36 +7,13 @@
 
 const path = require('path');
 const { test, expect } = require('@playwright/test');
-const { spawn } = require('child_process');
 const { failOnPageErrors } = require('./page-health');
 const { collectCoverage } = require('./coverage');
 
-const BACKEND_DIR = path.resolve(__dirname, '..', 'backend');
-// Served over HTTP by the static server in playwright.config.js, the same
-// way the page is served everywhere else.
-const TIMELINE_HTML = 'http://127.0.0.1:8123/timeline.html';
+const { API_BASE, TIMELINE_HTML } = require('./test-endpoints');
 const FIXTURE = path.resolve(
   __dirname, '..', 'backend', 'timeline-core', 'tests', 'fixtures', 'sample_conversations.json'
 );
-const API_BASE = 'http://127.0.0.1:3000';
-
-let serverProcess;
-let serverOutput = '';
-
-async function waitForPort(url, timeoutMs) {
-  const start = Date.now();
-  let lastError;
-  while (Date.now() - start < timeoutMs) {
-    try {
-      await fetch(url);
-      return;
-    } catch (e) {
-      lastError = e;
-      await new Promise((resolve) => setTimeout(resolve, 300));
-    }
-  }
-  throw new Error(`timed out waiting for ${url}: ${lastError}`);
-}
 
 async function loadFixtureAndWaitForRender(page) {
   const consoleErrors = [];
@@ -57,32 +34,8 @@ async function loadFixtureAndWaitForRender(page) {
 failOnPageErrors();
 collectCoverage();
 
-test.beforeAll(async () => {
-  // cargo/zig aren't on the default PATH this session installed them into
-  // -- see backend/README.md's prerequisites.
-  const extraPath = [
-    `${process.env.HOME}/.cargo/bin`,
-    `${process.env.HOME}/.local/opt/zig`,
-    process.env.PATH,
-  ].join(':');
-  serverProcess = spawn('cargo', ['run', '-p', 'timeline-api'], {
-    cwd: BACKEND_DIR,
-    env: { ...process.env, PATH: extraPath },
-  });
-  serverProcess.stdout.on('data', (d) => { serverOutput += d.toString(); });
-  serverProcess.stderr.on('data', (d) => { serverOutput += d.toString(); });
-
-  try {
-    await waitForPort(`${API_BASE}/conversations`, 90_000);
-  } catch (e) {
-    console.error('timeline-api never came up. Output so far:\n', serverOutput);
-    throw e;
-  }
-});
-
-test.afterAll(async () => {
-  if (serverProcess) serverProcess.kill('SIGTERM');
-});
+// The server is started once per run by backend-server.js (Playwright's
+// global setup), not by this file.
 
 test('uploading a real file renders conversations from the real backend', async ({ page }) => {
   const consoleErrors = await loadFixtureAndWaitForRender(page);

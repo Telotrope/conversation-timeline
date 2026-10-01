@@ -12,40 +12,18 @@
 
 const path = require('path');
 const { test, expect } = require('@playwright/test');
-const { spawn } = require('child_process');
 const { failOnPageErrors } = require('./page-health');
 const { collectCoverage } = require('./coverage');
 const { syntheticExport } = require('./synthetic-export');
 const fs = require('fs');
 
-const BACKEND_DIR = path.resolve(__dirname, '..', 'backend');
-// Served over HTTP by the static server in playwright.config.js, the same
-// way the page is served everywhere else.
-const TIMELINE_HTML = 'http://127.0.0.1:8123/timeline.html';
+const { API_BASE, PAGE_URL, TIMELINE_HTML } = require('./test-endpoints');
 const FIXTURE = path.resolve(
   __dirname, '..', 'backend', 'timeline-core', 'tests', 'fixtures', 'sample_conversations.json'
 );
-const API_BASE = 'http://127.0.0.1:3000';
 
 const ANALYSES = ['friction', 'trend', 'length', 'timeofday', 'idlegap'];
 
-let serverProcess;
-let serverOutput = '';
-
-async function waitForPort(url, timeoutMs) {
-  const start = Date.now();
-  let lastError;
-  while (Date.now() - start < timeoutMs) {
-    try {
-      await fetch(url);
-      return;
-    } catch (e) {
-      lastError = e;
-      await new Promise((resolve) => setTimeout(resolve, 300));
-    }
-  }
-  throw new Error(`timed out waiting for ${url}: ${lastError}`);
-}
 
 // Tests share one backend process, so they cannot assume a neutral starting
 // state -- detection results and uploads persist for its lifetime. Every test
@@ -101,64 +79,14 @@ async function firstNonEmptyConversationIndex(page) {
   });
 }
 
-// True only when this file started the server, so afterAll never stops one
-// it did not start.
-let startedServerHere = false;
-
 failOnPageErrors();
 collectCoverage();
 
-test.beforeAll(async () => {
-  // Reuse a server that is already listening rather than starting a second
-  // one. Two spec files each spawning on port 3000 would collide, and a
-  // second spawn would lose the bind and then silently test against the
-  // first server anyway -- better to be explicit about sharing it.
-  try {
-    await fetch(`${API_BASE}/conversations`);
-    return;
-  } catch (e) {
-    // Nothing listening yet, which is the normal case; start one below.
-  }
-
-  // cargo/zig aren't on the default PATH this session installed them into --
-  // see backend/README.md's prerequisites.
-  const extraPath = [
-    `${process.env.HOME}/.cargo/bin`,
-    `${process.env.HOME}/.local/opt/zig`,
-    process.env.PATH,
-  ].join(':');
-  serverProcess = spawn('cargo', ['run', '-p', 'timeline-api'], {
-    cwd: BACKEND_DIR,
-    env: { ...process.env, PATH: extraPath },
-    // Its own process group, so the kill in afterAll takes the actual
-    // server down with cargo rather than orphaning it holding the port.
-    detached: true,
-  });
-  startedServerHere = true;
-  serverProcess.stdout.on('data', (d) => { serverOutput += d.toString(); });
-  serverProcess.stderr.on('data', (d) => { serverOutput += d.toString(); });
-
-  try {
-    await waitForPort(`${API_BASE}/conversations`, 90_000);
-  } catch (e) {
-    console.error('timeline-api never came up. Output so far:\n', serverOutput);
-    throw e;
-  }
-});
+// The server is started once per run by backend-server.js (Playwright's
+// global setup), not by this file.
 
 test.beforeEach(async () => {
   await resetBackend();
-});
-
-test.afterAll(async () => {
-  if (serverProcess && startedServerHere) {
-    // Negative pid signals the whole group -- see the detached spawn above.
-    try {
-      process.kill(-serverProcess.pid, 'SIGTERM');
-    } catch (e) {
-      console.warn(`could not stop the timeline-api process group: ${e.message}`);
-    }
-  }
 });
 
 test('the calendar renders real day rows with session bars', async ({ page }) => {
@@ -871,7 +799,7 @@ test('a session that cannot be fetched on reload falls back to the load screen',
 
 test('an api_base query parameter points the page at that backend', async ({ page }) => {
   // Trailing slashes are trimmed so paths can be appended directly.
-  await loadFile(page, FIXTURE, { url: `${TIMELINE_HTML}?api_base=${encodeURIComponent(API_BASE + '/')}` });
+  await loadFile(page, FIXTURE, { url: `${PAGE_URL}?api_base=${encodeURIComponent(API_BASE + '/')}` });
   await expect(page.locator('#mainContent')).toBeVisible({ timeout: 30_000 });
   await expect(page.locator('#convItems .conv-item')).not.toHaveCount(0);
 });

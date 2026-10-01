@@ -8,10 +8,12 @@ module.exports = defineConfig({
   testDir: '.',
   timeout: 30_000,
   retries: 0,
-  // One worker, because every spec file drives the same real timeline-api on
-  // port 3000. Running files in parallel would have them fighting over that
-  // port, and the loser would silently test against the winner's server.
+  // One worker, because every spec file drives the same real timeline-api,
+  // and views.spec.js empties its stores before each test.
   workers: 1,
+  // Starts this run's own timeline-api on port 3123 and stops it afterwards;
+  // never reuses a server. See backend-server.js.
+  globalSetup: require.resolve('./backend-server'),
   // Serves the repo root over HTTP, as the page is served in real use. The
   // page's scripts are JavaScript modules, which browsers refuse to load
   // from a file:// page. Port 8123 rather than the dev server's 8000, so a
