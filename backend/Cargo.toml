@@ -4,3 +4,10 @@ members = ["timeline-core", "timeline-storage", "timeline-auth", "timeline-api"]
 
 [workspace.package]
 edition = "2021"
+
+# Keep only file-and-line debugging information: backtraces still name
+# file.rs:line, but debuggers can't show variables. Full debugging
+# information made each test program 230-350 MB, mostly the AWS SDK's.
+# See docs/plans/2026-10-01-smaller-debug-builds.md.
+[profile.dev]
+debug = "line-tables-only"

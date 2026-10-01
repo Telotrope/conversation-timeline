@@ -72,6 +72,15 @@ cargo run -p timeline-api
 # -> listening on http://127.0.0.1:3000
 ```
 
+**Build size.** Debug builds keep only file-and-line debugging information
+(`[profile.dev] debug = "line-tables-only"` in [Cargo.toml](Cargo.toml)):
+backtraces still name `file.rs:line`, but a debugger can't show variables.
+Measured on 2026-10-01 with `cargo clean` then `cargo test --workspace`, the
+build folder went from 7.0 GB to 3.3 GB; `memory_uploads` went from 240 MB to
+57 MB, `s3_object_store` from 349 MB to 123 MB, `flags_caps` from 33 MB to
+18 MB. Cargo still keeps every outdated copy, so the folder grows with each
+change; run `cargo clean` when it gets large.
+
 **This server alone doesn't get you a usable page.** `timeline.html` (at the repo root, not in
 this directory) needs to be served separately and opened over `http://`, not as a local
 `file://` page — see the [top-level README](../README.md#running-this-locally) for the full
