@@ -1124,6 +1124,12 @@ the container-free/AWS-free design already agreed for routine testing.
 also archived, and `s3rver` is archived too. §V2b compares four candidates and recommends `s3s` +
 `s3s-fs`, which you chose on 2026-09-30. The trigger to mark this resolved: §V2b's "done means"
 list is met.
+**Status 2026-10-01:** §V2b is implemented (commits `4d986c1`, `64e79da`, `cee5dae`, `8abceaf`,
+`d96a09b`). All suites pass. `s3.rs` has 100% line coverage. The two DynamoDB files have three
+lines between them that no test reaches, because I don't think any row DynamoDB can return
+reaches them. Still `[OPEN]` until you decide on those lines and on the findings listed in the
+implementation report: a flags-adapter difference between the fake and DynamoDB, malformed upload
+ids being silently dropped, and the readiness check differing from this plan.
 
 ### C15 [RESOLVED]: DynamoDB Local is not under a permissive open-source license
 AWS provides it free, but under its own license. It isn't one of the MIT/BSD/Apache-2.0/ISC
