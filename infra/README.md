@@ -110,7 +110,8 @@ curl -H "Authorization: Bearer $TOKEN" "$API/conversations"
 
 ## 8. The checks only a deployment can do
 
-These are the plan's checks D1–D9. Note what you see (copy the output) and bring it to our next
+These are the plan's checks D1–D7 and D9 (D8 became a separate task: capturing one real S3
+notification for the tests, plan C24). Note what you see (copy the output) and bring it to our next
 conversation; I'll record it in `docs/analysis/`.
 
 | # | What to check | How |
@@ -122,7 +123,6 @@ conversation; I'll record it in `docs/analysis/`.
 | D5 | A ~60 MB export is processed within the limits | upload your real export with the scan box ticked; then `sam logs --stack-name timeline-dev -n ProcessUploadFunction` and `-n ApiFunction`: each call's `REPORT` line shows `Duration` and `Max Memory Used` |
 | D6 | The flag-handle secret reached the API | in the Review tab, tick a flag: the page says it saved |
 | D7 | The real tables match what the tests assume | the whole page flow works; the tables are visible in the DynamoDB console |
-| D8 | Real AWS events match the sample events the tests use | **not ready**: nothing in the code records a real event yet; see the plan's C24 |
 | D9 | Start-up time, including downloading Cognito's keys | the `REPORT` lines of a function's first call show `Init Duration` |
 
 `sam logs ... --tail` follows the logs live.

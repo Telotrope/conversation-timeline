@@ -997,7 +997,7 @@ stored but never processed. It's the next piece after this one.
 ### V2e — Make the first deployment usable, and test everything that can be tested locally
 
 **Status:** built and tested on this machine 2026-10-01 (commits `bd44ee5` to `15b6254`); **not
-deployed**, so V2 is not done until checks D1–D9 below are run. All suites pass: 325 Rust, 56
+deployed**, so V2 is not done until checks D1–D7 and D9 below are run. All suites pass: 325 Rust, 56
 frontend unit, 65 browser, 8 deployment-script checks (`scripts/test-deploy-scripts.sh`). The new
 and changed Rust modules are at 100% line coverage (`cargo llvm-cov -p timeline-api -p
 timeline-core`). A first coverage run over the whole workspace was killed partway (exit 137);
@@ -1033,7 +1033,12 @@ Differences from the design below:
 - **Also added:** tests for the deployment scripts, against a stand-in `aws` command
   (`scripts/test-deploy-scripts.sh`); the ID token's lifetime set to one hour alongside the
   access token's.
-- **D8 can't be run yet**: nothing records a real event; see C33.
+- **D8 moved into C24 (2026-10-01).** It was a task to replace the tests' sample events, not a
+  check that the deployment works: D3–D7 already run real events through the real code. You chose
+  to capture the S3 notification only, during the first deployment; the API request stays the
+  library's sample. Capturing needs a small code change, not yet chosen (C33).
+- **Bucket-name copies are tested** (commit `8717329`, C34): every place the template writes out the
+  uploads bucket's name must match the bucket's own.
 
 **Why this exists.** A review on 2026-10-01 of what a first `sam deploy` would actually do found
 that the deployed app couldn't be used even if every resource were created correctly:
@@ -1260,12 +1265,14 @@ document in `docs/analysis/`.
 | D5 | Uploading the ~60 MB synthetic export: processed within the memory and time set in E2; then a full detection pass, each page answered within API Gateway's 30-second limit | page upload with detection on; `sam logs` shows peak memory and duration for each function |
 | D6 | The flag-handle secret reaches the API (C19) | a flag save from the page succeeds |
 | D7 | The real tables' keys match the tests' assumption (C16) | the page's whole flow, and the DynamoDB console |
-| D8 | Real events match the library's sample events (C24) | log one real HTTP API event and one S3 event, compare the fields the code reads, and check the sanitized copies into the test fixtures |
 | D9 | Start-up time, including downloading Cognito's keys (C23) | `sam logs`: the `Init Duration` line |
+
+D8 was removed on 2026-10-01; it is now C24's follow-up. The other numbers are kept so earlier
+references stay valid.
 
 **Done means:** all suites pass (Rust, frontend unit, browser); the new modules are at 100% line
 coverage; `scripts/check-template.sh` passes; `infra/README.md` exists. V2 itself is done only
-after D1–D9 are run on a real deployment and recorded.
+after D1–D7 and D9 are run on a real deployment and recorded.
 
 ### V3 — Bedrock-based classification
 **Reference implementation.** The browser-side "Classify with AI" code is deleted from the
@@ -1821,6 +1828,15 @@ match AWS's published formats as far as I've read them, but they weren't capture
 project's API or bucket, so they aren't the verified samples CLAUDE.md asks for. **Mitigation in
 plan:** the tests only rely on the fields the code reads (path, stage, authorizer claims; bucket and
 key). **Open:** trigger is deployment check D8, which captures real events and replaces the samples.
+**Update 2026-10-01:** D8 is no longer a deployment check; this critique holds it. What a real sample
+adds that D3–D7 don't: the automated tests keep using what AWS really sends after future changes
+(a library upgrade could change request handling again, as the stage name did), and the real
+values of fields the samples get wrong for our setup (the request sample's route key is
+`$default`; ours will be per-method routes). **Chosen:** capture one real S3 notification during
+the first deployment, clean it of the uploader's IP address and account details, and replace
+`example-s3-event.json` with it. The API request stays the library's sample, because a real one
+carries a login token. **Still open:** the request sample, until a library upgrade or a bug traced
+to an event's format; and how the S3 notification is captured (C33).
 
 ### C25 [RESOLVED]: Adding a field to `AppState` edits committed tests
 E3 adds `upload_outcome_store` to `AppState`. Every test that builds an `AppState` by hand (at
@@ -1878,12 +1894,23 @@ global `oidc`, with `jwt-decode` bundled and no imports. Kept in `vendor/oidc-cl
 licenses and its checksum; the browser tests load it from a plain `<script>` tag (commit `70db163`;
 see the status note at [line 999](2026-09-09-rust-aws-backend-migration.md#L999)).
 
-### C33 [OPEN]: Nothing captures a real AWS event, so check D8 can't be run
+### C33 [OPEN]: Nothing captures a real AWS event
+**Update 2026-10-01:** only the S3 notification is to be captured now (C24). The processing Lambda
+doesn't log the events it receives, so this still needs a small code change; the choice of how is
+open. Trigger: before the first deployment.
+
 D8 is meant to replace the library's sample events (C24) with sanitized copies of real ones. No
 code records an incoming event, and logging whole events would also log every request's login
 token. **Mitigation in plan:** the tests rely only on the fields the code reads. **Open:** choose a
 way to capture one HTTP API event and one S3 event (for example, a temporary setting that logs an
 event with its `authorization` header removed). Trigger: the first deployment, before D8.
+
+### C34 [RESOLVED]: Copies of the bucket name in the template could drift apart
+Original concern: to avoid the circular dependency (E2), the uploads bucket's name is written out as
+text in five places instead of referred to. If one copy changed and another didn't, `sam validate
+--lint` wouldn't notice; the deployment would succeed and uploads would then fail with "access
+denied". **Resolution:** `timeline-api/tests/template_bucket_name.rs` checks every copy matches the
+bucket's own name, and fails when one is misspelled (checked by misspelling one); commit `8717329`.
 
 ### C11 [RESOLVED]: `UploadStatus`'s `Pending`/`Processing` are persisted but never read
 Confirmed by `grep`, not assumed: no route reads `UploadRecord.status`, and `process_upload`
