@@ -2,10 +2,14 @@
 //! Lambda always sets `AWS_LAMBDA_RUNTIME_API` in its execution
 //! environment, so that's what decides which mode to run in.
 //!
-//! Local mode uses the in-memory storage adapters exclusively -- there is
-//! no AWS access in this environment to build real S3/DynamoDB clients
-//! against, so this is genuinely "run the whole app with no AWS at all,"
-//! not a stand-in for hitting real infrastructure. It's real enough to
+//! **Lambda mode** uses the real S3 and DynamoDB adapters and checks logins
+//! against the Cognito user pool's published keys (migration plan §V2d),
+//! all built by [`timeline_api::aws_state::build_aws_state`]. A missing
+//! setting, a missing flag-handle key, or keys that can't be downloaded
+//! stop startup with a message; there is no fallback to anything local.
+//!
+//! **Local mode** uses the in-memory storage adapters exclusively, so the
+//! whole app runs with no AWS at all. It's real enough to
 //! exercise the full request/response/auth/upload-processing/export path
 //! end-to-end (see the migration plan's §V2a), which is worth having even
 //! though it isn't what V2's own test plan calls "done" (that needs
@@ -31,6 +35,8 @@ use axum::Router;
 use tower_http::cors::CorsLayer;
 
 use timeline_api::app::{build_dev_router, build_router};
+use timeline_api::aws_settings::AwsSettings;
+use timeline_api::aws_state::{build_aws_state, fetch_jwks, AwsClients};
 use timeline_api::dev_only::{DEV_KEYPAIR, DEV_ONLY_CLIENT_ID, DEV_ONLY_ISSUER};
 use timeline_api::dev_state::DevState;
 use timeline_api::flag_handles::{FlagHandleKey, KEY_ENV_VAR};
@@ -118,19 +124,25 @@ async fn run_locally(router: Router) {
 #[tokio::main]
 async fn main() {
     if std::env::var("AWS_LAMBDA_RUNTIME_API").is_ok() {
-        // `dev_state` is built but deliberately dropped unused here -- the
-        // Lambda branch only ever passes `app_state` to `build_router`, so
-        // the `_dev` router (and the `AutoFlagWriter` capability it needs)
-        // is never wired into anything that could run in production.
-        // The flag-handle key must come from the environment here: a key
+        // Every startup problem stops the Lambda with a message naming it;
+        // nothing falls back to the in-memory stores or the dev keys, which
+        // the Lambda used before §V2d.
+        let settings = AwsSettings::from_lookup(|name| std::env::var(name).ok())
+            .unwrap_or_else(|e| panic!("cannot start: {e}"));
+        // The flag-handle key must come from the environment: a key
         // generated per instance would make Lambda instances reject each
-        // other's handles. Missing or too short stops startup with a message
-        // naming the variable. See `timeline_api::flag_handles`.
+        // other's handles. See `timeline_api::flag_handles`.
         let key = FlagHandleKey::from_env_value(std::env::var(KEY_ENV_VAR).ok().as_deref())
             .unwrap_or_else(|e| panic!("cannot start: {e}"));
-        let (app_state, dev_state) = build_local_state(key);
-        drop(dev_state);
-        let router = build_router(app_state);
+        let jwks = fetch_jwks(&settings.jwks_url())
+            .await
+            .unwrap_or_else(|e| panic!("cannot start: {e}"));
+        let sdk_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+        let clients = AwsClients {
+            s3: aws_sdk_s3::Client::new(&sdk_config),
+            dynamodb: aws_sdk_dynamodb::Client::new(&sdk_config),
+        };
+        let router = build_router(build_aws_state(&settings, clients, jwks, key));
         lambda_http::run(router).await.expect("lambda runtime");
     } else {
         let (app_state, dev_state) = build_local_state(FlagHandleKey::generate());

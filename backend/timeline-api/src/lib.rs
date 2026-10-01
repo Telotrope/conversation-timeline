@@ -5,6 +5,8 @@
 
 pub mod app;
 pub mod auth_extractor;
+pub mod aws_settings;
+pub mod aws_state;
 pub mod dev_only;
 pub mod dev_state;
 pub mod error;
