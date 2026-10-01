@@ -1397,7 +1397,7 @@ fixture at
 — if different or fresher example data is ever needed (e.g. to investigate C8 further), you'll
 supply it again rather than me generating or requesting it independently.
 
-### C10 [OPEN]: Testing the real S3/DynamoDB adapters without a container
+### C10 [RESOLVED]: Testing the real S3/DynamoDB adapters without a container
 V2a's in-memory adapters intentionally avoid AWS/containers for the routine upload-view-flag loop
 (see V2a above), but `timeline-storage/src/s3.rs` and `timeline-storage/src/dynamo/*.rs` have never
 run against anything real — confirmed directly, not from memory, before writing this:
@@ -1429,6 +1429,11 @@ reaches them. Still `[OPEN]` until you decide on those lines and on the findings
 implementation report: a flags-adapter difference between the fake and DynamoDB, malformed upload
 ids being silently dropped, and the readiness check differing from this plan.
 
+**Resolution (2026-10-01):** the findings listed above were handled in §V2c, and the readiness
+check now waits for a real `ListTables` request to succeed instead of an open port, as §V2b
+specified (commit `efa9a8b`, in `timeline-storage/tests/support/dynamodb_local.rs`). A
+throwaway check confirmed a plain web server on the port is refused with a message naming the
+address.
 ### C15 [RESOLVED]: DynamoDB Local is not under a permissive open-source license
 AWS provides it free, but under its own license. It isn't one of the MIT/BSD/Apache-2.0/ISC
 licenses that the reuse rule in [CLAUDE.md](../../CLAUDE.md) lists.
