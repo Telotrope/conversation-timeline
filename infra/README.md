@@ -68,8 +68,13 @@ sam deploy --guided --stack-name timeline-dev
 The scripts below assume the stack is called `timeline-<stage>`, so keep that name. Answers to its
 questions:
 
-- **Region**: the one you chose. **Stage**: `dev`. **FrontendOrigin**: `http://localhost:8000`
-  (where you'll serve the page; keep the default). **LogS3Events**: `off` (step 9 explains it).
+- **Region**: the one you chose. **Stage**: `dev`. **LogS3Events**: `off` (step 9 explains it).
+- **FrontendUrl**: the full address your browser opens `timeline.html` at, without `?deploy=...`.
+  If the browser runs on the same machine as the page's server: `http://localhost:8000/timeline.html`
+  (the default). If it reaches that machine through a forwarding proxy, use the address in its
+  address bar, e.g. `https://dev.example.ts.net/proxy/8000/timeline.html` for VS Code's forwarding
+  over Tailscale. Cognito returns you only to exactly this address. Cognito accepts plain `http`
+  only for `localhost`.
 - "Confirm changes before deploy": **y**. It then lists everything it will create and waits.
 - "Allow SAM CLI IAM role creation": **y** (each function needs its own permissions).
 - It may ask whether each function "may not have authorization defined": **y**. The API's routes
@@ -92,8 +97,15 @@ scripts/write-deploy-config.sh dev     # writes frontend/deploy-configs/dev.json
 python3 -m http.server 8000            # from the repository's top folder
 ```
 
-Open <http://localhost:8000/timeline.html?deploy=dev>. The page remembers the choice; to go back
-to local development, open `timeline.html?deploy=` once.
+Open the page at the `FrontendUrl` you gave in step 5, with `?deploy=dev` added (e.g.
+<http://localhost:8000/timeline.html?deploy=dev>). The page remembers the choice; to go back to
+local development, open `timeline.html?deploy=` once.
+
+**If the page's address changes** (a different forwarded port, a renamed machine, another device),
+two things break: Cognito shows an error page with `redirect_mismatch` in its address, and the
+page's requests to the API fail, with a CORS error shown only in the browser's developer console.
+Both come from `FrontendUrl`; redeploy with the new address:
+`sam deploy --parameter-overrides Stage=dev FrontendUrl=<new address> LogS3Events=off`.
 
 Click **Sign in**. Cognito's own page opens. Choose *Sign up*, use your email address, and enter
 the code Cognito emails you. You come back to the page signed in. Then upload your export as
@@ -117,7 +129,7 @@ conversation; I'll record it in `docs/analysis/`.
 | # | What to check | How |
 |---|---|---|
 | D1 | AWS accepted the template | step 5 finished without errors |
-| D2 | The browser's permission check (CORS) works from your page only | `curl -i -X OPTIONS "$API/conversations" -H "Origin: http://localhost:8000" -H "Access-Control-Request-Method: GET" -H "Access-Control-Request-Headers: authorization"` should answer 204 with an `access-control-allow-origin` header. Repeat with `-H "Origin: http://example.com"`: no such header. Then the page itself works (step 6). |
+| D2 | The browser's permission check (CORS) works from your page only | `curl -i -X OPTIONS "$API/conversations" -H "Origin: <your FrontendUrl's scheme and host, e.g. http://localhost:8000>" -H "Access-Control-Request-Method: GET" -H "Access-Control-Request-Headers: authorization"` should answer 204 with an `access-control-allow-origin` header. Repeat with `-H "Origin: http://example.com"`: no such header. Then the page itself works (step 6). |
 | D3 | Real Cognito sign-in works | step 6's sign-in, and step 7's script |
 | D4 | The API refuses bad logins | `curl -i "$API/conversations"` (no token) and with `-H "Authorization: Bearer nonsense"`: both 401 |
 | D5 | A ~60 MB export is processed within the limits | upload your real export with the scan box ticked; then `sam logs --stack-name timeline-dev -n ProcessUploadFunction` and `-n ApiFunction`: each call's `REPORT` line shows `Duration` and `Max Memory Used` |
@@ -137,7 +149,7 @@ really sent (the plan's C24 and §E9). The processing function logs notification
    replace the others saved in `samconfig.toml` (plan C35; not yet checked):
    ```
    cd infra
-   sam deploy --parameter-overrides Stage=dev FrontendOrigin=http://localhost:8000 LogS3Events=on
+   sam deploy --parameter-overrides Stage=dev FrontendUrl=<your FrontendUrl> LogS3Events=on
    ```
 2. Upload one small export through the page.
 3. Copy the line:
