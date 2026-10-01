@@ -69,7 +69,7 @@ The scripts below assume the stack is called `timeline-<stage>`, so keep that na
 questions:
 
 - **Region**: the one you chose. **Stage**: `dev`. **FrontendOrigin**: `http://localhost:8000`
-  (where you'll serve the page; keep the default).
+  (where you'll serve the page; keep the default). **LogS3Events**: `off` (step 9 explains it).
 - "Confirm changes before deploy": **y**. It then lists everything it will create and waits.
 - "Allow SAM CLI IAM role creation": **y** (each function needs its own permissions).
 - It may ask whether each function "may not have authorization defined": **y**. The API's routes
@@ -127,7 +127,29 @@ conversation; I'll record it in `docs/analysis/`.
 
 `sam logs ... --tail` follows the logs live.
 
-## 9. Costs, and tearing it down
+## 9. Capture one real S3 notification for the tests (once)
+
+The tests use a sample notification written by a library's authors; this replaces it with one AWS
+really sent (the plan's C24 and §E9). The processing function logs notifications only while the
+`LogS3Events` setting is `on`.
+
+1. Switch it on. The command repeats every setting, because naming one on the command line may
+   replace the others saved in `samconfig.toml` (plan C35; not yet checked):
+   ```
+   cd infra
+   sam deploy --parameter-overrides Stage=dev FrontendOrigin=http://localhost:8000 LogS3Events=on
+   ```
+2. Upload one small export through the page.
+3. Copy the line:
+   `sam logs --stack-name timeline-dev -n ProcessUploadFunction --filter "s3 event"`.
+   It starts `s3 event (sourceIPAddress removed):`. No such line means the switch isn't reaching
+   the function (plan C36); bring that back too.
+4. Switch it off again, the same command with `LogS3Events=off`.
+5. Paste the line into our next conversation. Together we replace your account number, bucket
+   name, user ID and AWS's internal IDs with placeholders; you review the cleaned file before it
+   replaces the test sample.
+
+## 10. Costs, and tearing it down
 
 While idle, this should cost very little: the Secrets Manager secret is billed monthly (about
 $0.40 at the time of writing; not re-checked), and everything else is billed per use. Your budget

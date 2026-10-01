@@ -1253,8 +1253,21 @@ pointed at the deployed API; see C30), the `Users` table, payment (V4), Bedrock 
 
 #### E9. A switch to log S3 notifications, for capturing one real sample (C24, C33)
 
-**Status:** planned 2026-10-01, not started. Chosen by you on 2026-10-01 over logging every
-notification: the log stays off except while a sample is being captured.
+**Status:** built and tested on this machine 2026-10-01 (commits `4e6d29e`, `f34a7dd`); not yet
+run on AWS. Chosen by you on 2026-10-01 over logging every notification: the log stays off except
+while a sample is being captured. All suites pass: 339 Rust. `aws_settings.rs` and
+`s3_trigger.rs` stay at 100% line coverage; `scripts/check-template.sh` passes; both Lambdas build
+for ARM. The capture step is [infra/README.md](../../infra/README.md)'s step 9.
+
+Differences from the design below:
+- **The log-read-process step is a library function**, `s3_trigger::handle_raw_s3_event`, taking
+  the logging setting and a function to write each line; the binary passes `println!`. Tests then
+  check that the switch on logs exactly one redacted line before processing, that off logs nothing,
+  and that an unreadable notification is logged and then refused. This narrows C36 to the binary's
+  three lines of wiring.
+- **The template quotes `"off"` and `"on"`.** Unquoted, some YAML readers take them as booleans,
+  and the Lambda would receive `false` or `true` and refuse to start. A template test checks the
+  quotes stay.
 
 **Why:** C24 replaces the tests' sample S3 notification with a real one from the first deployment.
 The processing Lambda doesn't record what it receives, so there is nothing to copy one from.
@@ -1983,7 +1996,10 @@ correct either way. **Open:** confirm when the capture step is first run. Trigge
 ### C36 [OPEN]: The switch's wiring in the binary is untested locally
 Whether the processing binary actually logs when `LogS3Events` is `on` is only shown by running it
 inside Lambda, like `main.rs`'s wiring. **Mitigation in plan:** the binary is kept to a few lines;
-the redaction and the setting are tested. **Open:** trigger is the capture step: no log line means
+the redaction and the setting are tested. **Update 2026-10-01:** narrowed by building the
+log-read-process step as a tested library function (see §E9's status note,
+[line 1254](2026-09-09-rust-aws-backend-migration.md#L1254)); untested now is only the binary reading
+the setting and passing `println!`. **Open:** trigger is the capture step: no log line means
 the wiring is wrong.
 
 ### C11 [RESOLVED]: `UploadStatus`'s `Pending`/`Processing` are persisted but never read
