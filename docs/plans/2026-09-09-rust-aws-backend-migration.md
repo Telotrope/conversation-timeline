@@ -693,7 +693,22 @@ The exact versions get pinned when the code is written.
 
 ### V2c — Stored data and flag saves: no silent defaults, no unchecked IDs
 
-**Status:** revision 1, awaiting review.
+**Status:** done 2026-10-01. Commits `37db425`, `1e66325` (malformed values); `85e00f0`,
+`3b82e18` (empty saves); `5e4c314`, `250c4b7`, `3b3aaf3`, `ad32f8e`, `988a69a`, `f78ad35`,
+`9ef9a5d` (flag handles). All suites pass: 293 Rust, 42 frontend unit, 59 browser. Line coverage:
+`attributes.rs`, `conversations_table.rs` and `message_flags_table.rs` are at 100% apart from the
+four commented backstops; `flag_handles.rs` and `routes/flags.rs` are at 100%.
+
+**Where the implementation differs from this section:**
+- The `/export` test checks that no handle appears anywhere in the exported file, and the existing
+  export tests that check the file's contents pass unchanged. It does not compare the file byte for
+  byte with its pre-change output; doing that would need the old code running alongside the new.
+- The Lambda key is tested through `FlagHandleKey::from_env_value`, the function the Lambda calls
+  at startup. Starting the Lambda process itself without the key isn't tested.
+- More malformed-value tests than planned: 14 for conversation and upload rows (also covering
+  wrong types and a negative count), 6 for flags.
+- One extra backstop comment, in `attributes.rs`, for labelling a row that has no sort key.
+
 
 **Why this exists**: V2b's review found that the two DynamoDB adapters fill in a default whenever a
 value in a stored row is missing or has the wrong type, instead of reporting it. That hides
@@ -1386,12 +1401,13 @@ requirement gets in the way (for example, a CI machine without Java).
 [§V2b (line 575)](2026-09-09-rust-aws-backend-migration.md#L575) already says. The Cargo-feature
 alternative is not adopted.
 
-### C18 [OPEN]: DynamoDB adapters fill in defaults for missing or malformed values
+### C18 [RESOLVED]: DynamoDB adapters fill in defaults for missing or malformed values
 Found while implementing §V2b: six places in `conversations_table.rs` and the flag-reading code in
 `message_flags_table.rs` replace a missing or wrong-typed stored value with a default, or drop it.
 Separately, three sort-key checks can't be reached by any test; on 2026-10-01 you decided they stay,
 commented as currently unreachable backstops (§V2c). **Mitigation in plan:** §V2c lists every
 default-filling case and designs the fix. **Open:** trigger is your approval of §V2c.
+**Resolution:** implemented in §V2c on 2026-10-01; see its status note ([line 696](2026-09-09-rust-aws-backend-migration.md#L696)).
 
 ### C19 [OPEN]: The flag-handle key on AWS is designed but can't be checked until deployment
 §V2c's flag-handle key comes from AWS Secrets Manager through the SAM template, which has never been
@@ -1400,12 +1416,25 @@ fails loudly instead of silently. A test covers that. **Open:** trigger is the f
 deploy` in §V2. Changing the key later invalidates every handle already issued until the page
 reloads; a key-rotation procedure is worth planning at that point.
 
-### C20 [OPEN]: The extra size of the `/export` reply is estimated, not measured
+### C20 [RESOLVED]: The extra size of the `/export` reply is estimated, not measured
 About 100 bytes per message (a 36-character ID plus a 43-character handle and JSON punctuation),
 roughly 450 KB for an export the size of the user's. **Mitigation in plan:** none needed to build
 it. **Open:** measure the reply size in the `/export` test using the checked-in fixture, and report
 the per-message figure. Trigger: if a real export's reply passes 5 MB, consider sending handles per
 conversation on demand instead.
+**Resolution:** measured on 2026-10-01 in `timeline-api/tests/flag_saves.rs`: 85 bytes per user
+message (14 handles made a 1,302-byte reply). The 5 MB trigger would take about 61,000 user
+messages; the reply carries handles for user messages only.
+
+### C21 [OPEN]: The Lambda build still uses the in-memory stores and the dev login keys
+Found while wiring the flag-handle key into
+[main.rs](../../backend/timeline-api/src/main.rs): the Lambda branch calls the same
+`build_local_state` as local dev, so it uses the in-memory stores, not the S3 and DynamoDB
+adapters, and verifies logins against the throwaway dev keypair, not Cognito. Only the flag-handle
+key differs (read from the environment since §V2c). A deployed Lambda would therefore lose all data
+between instances and accept tokens signed by the dev keypair. **Mitigation in plan:** none yet;
+nothing is deployed. **Open:** wire the real adapters and Cognito verification into the Lambda
+branch before the first `sam deploy` in §V2. Trigger: the start of V2's deployment work.
 
 ### C11 [RESOLVED]: `UploadStatus`'s `Pending`/`Processing` are persisted but never read
 Confirmed by `grep`, not assumed: no route reads `UploadRecord.status`, and `process_upload`
