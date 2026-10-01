@@ -691,6 +691,112 @@ The exact versions get pinned when the code is written.
 - The "zero test coverage" header in `s3.rs` is replaced with what is now tested and what isn't.
 - C10 is marked resolved, with links to these tests.
 
+### V2c — Reading DynamoDB rows: no silent defaults
+
+**Status:** revision 1, awaiting review.
+
+**Why this exists**: V2b's review found that the two DynamoDB adapters fill in a default whenever a
+value in a stored row is missing or has the wrong type, instead of reporting it. That hides
+corrupted or mis-written data and breaks the "no silent swallows" rule in
+[CLAUDE.md](../../CLAUDE.md). On 2026-10-01 the user asked for every one of these to be checked.
+
+**How a row is stored.** Every DynamoDB row has a partition key, `pk` (which group it belongs to),
+and a sort key, `sk` (which row it is within that group). The test tables, like the SAM template,
+are defined so that DynamoDB refuses to store a row without both. The other attributes
+(`status`, `name`, `auto_caps` and so on) are optional as far as DynamoDB is concerned. Our code
+decides what they mean.
+
+#### Every place a value is currently filled in or dropped
+
+In [conversations_table.rs](../../backend/timeline-storage/src/dynamo/conversations_table.rs):
+
+| Line | Attribute | Today, if missing or wrong type | Change to |
+|---|---|---|---|
+| 66–75 | `conversation_ids` on a `ready` upload row | missing: empty list | error |
+| 70 | an entry in `conversation_ids` that isn't a string | dropped silently | error |
+| 71 | an entry that isn't a valid id | dropped silently | error |
+| 81–85 | `failure_reason` on a `failed` upload row | missing: empty string | error |
+| 162–166 | `name` on a conversation row | missing: empty string | error |
+| 167–171 | `message_count` on a conversation row | missing or not a whole number: 0 | error |
+
+Every row of these kinds is written by our own code, which always writes every one of these
+attributes. A `ready` row with no conversations is written as an empty list, not left out. So a
+missing or malformed value means the row was corrupted or written by something else, and
+reporting it is correct.
+
+In [message_flags_table.rs](../../backend/timeline-storage/src/dynamo/message_flags_table.rs),
+lines 117–124:
+
+| Attribute | Missing today | Wrong type today | Change to |
+|---|---|---|---|
+| `auto_caps`, `auto_critical`, `auto_angry` | `false` | `false` | missing: keep `false`; wrong type: error |
+| `user_caps`, `user_critical`, `user_angry` | no override | no override | missing: keep "no override"; wrong type: error |
+
+Here "missing" is legitimate and must stay as it is. A user's override can create a row before any
+automatic detection has run, so the `auto_*` attributes are absent; and `user_*` attributes are
+absent until the user changes that flag. The in-memory stand-in treats both cases the same way.
+Only a value of the wrong type, for example `auto_caps` stored as text, signals corruption.
+
+#### The sort-key checks no test can reach
+
+Three error checks guard situations that DynamoDB itself prevents:
+
+1. [conversations_table.rs:207](../../backend/timeline-storage/src/dynamo/conversations_table.rs#L207),
+   in `list_for_user`: "this row has no `sk`". DynamoDB won't store a row without `sk`, so it can
+   never return one.
+2. [conversations_table.rs:210](../../backend/timeline-storage/src/dynamo/conversations_table.rs#L210),
+   also in `list_for_user`: "this row's `sk` doesn't start with `CONV#`". The query that fetches
+   the rows asks DynamoDB only for rows whose `sk` starts with `CONV#`. So every row it returns
+   has the prefix.
+3. [message_flags_table.rs:156](../../backend/timeline-storage/src/dynamo/message_flags_table.rs#L156),
+   in `list_for_conversation`: "this row has no `sk`". Same reason as 1.
+
+These checks aren't wrong; if DynamoDB ever broke its own rules, an error is the right response.
+But no test can reach them, so they hold coverage below 100%, and the project's rules treat
+unreachable code as something to fix rather than to test around. The fix below keeps every
+check, but routes each one through code that reachable cases also use:
+
+- **Checks 1 and 3** use the new shared `required_string` helper (below). Its "missing" error is
+  reached by the test for a conversation row with no `upload_id`, and by the new tests in this
+  section.
+- **Check 2** merges with the "is the rest a valid id" check that follows it: one test, "the sort
+  key is `CONV#` followed by a valid id", with one error. The error message includes the whole
+  sort key, so no detail is lost. The existing test for `CONV#not-a-uuid` reaches it.
+
+Caveat: line coverage should reach 100%. Region coverage (which counts each separate path within a
+line) may still show the early-return path at each call site as unexercised. I'll measure and
+report both, not assume.
+
+#### Design
+
+One new module, `timeline-storage/src/dynamo/attributes.rs`, holds the reading rules for both
+adapters:
+
+- `required_string(item, name)`
+- `required_count(item, name)`, a whole number of 0 or more
+- `required_id_list(item, name)`, a list of valid ids
+- `optional_bool(item, name)`: absent gives "not set", present but not true/false is an error
+
+Each returns a distinct error message for "missing" and for "wrong type", naming the attribute,
+the table row's `sk` and what was found, so an operator reading the logs can tell which row and
+which attribute broke. They return `StoreError::Backend`, as the existing malformed-row errors
+already do. This reuses the adapters' existing `invalid_data` error shape rather than adding a
+new error type.
+
+#### Tests
+
+Public-API tests, in the style V2b already uses: write a raw row with the adapter bypassed, then
+read it through the real trait method. One test per malformed case in the two tables above:
+6 for conversation and upload rows, and 6 for the flag attributes stored with the wrong type
+(12 in all). Each asserts a `Backend` error whose message names the attribute. The cases where
+"missing" is legitimate are already covered by the contract tests
+`a_user_write_on_a_message_with_no_record_creates_one_with_no_auto_flags` and
+`an_auto_write_sets_no_user_override`, which must keep passing. All run against DynamoDB
+Local. The existing contract suites must still pass unchanged.
+
+**Done means**: all suites pass; the coverage report shows 100% line coverage for both DynamoDB
+files (region coverage reported alongside); and C18 is marked resolved.
+
 ### V3 — Bedrock-based classification
 **Reference implementation.** The browser-side "Classify with AI" code is deleted from the
 working tree by [2026-09-30-split-timeline-script.md](2026-09-30-split-timeline-script.md), because it
@@ -1184,6 +1290,12 @@ requirement gets in the way (for example, a CI machine without Java).
 **Resolution:** on 2026-10-01 you chose to have the tests fail. That is what
 [§V2b (line 575)](2026-09-09-rust-aws-backend-migration.md#L575) already says. The Cargo-feature
 alternative is not adopted.
+
+### C18 [OPEN]: DynamoDB adapters fill in defaults for missing or malformed values
+Found while implementing §V2b: six places in `conversations_table.rs` and the flag-reading code in
+`message_flags_table.rs` replace a missing or wrong-typed stored value with a default, or drop it.
+Separately, three sort-key checks can't be reached by any test. **Mitigation in plan:** §V2c lists
+every case and designs the fix. **Open:** trigger is your approval of §V2c.
 
 ### C11 [RESOLVED]: `UploadStatus`'s `Pending`/`Processing` are persisted but never read
 Confirmed by `grep`, not assumed: no route reads `UploadRecord.status`, and `process_upload`
