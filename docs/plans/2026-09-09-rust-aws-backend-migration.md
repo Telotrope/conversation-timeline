@@ -1251,6 +1251,63 @@ pointed at the deployed API; see C30), the `Users` table, payment (V4), Bedrock 
 - Correct [backend/README.md](../../backend/README.md)'s out-of-date "What's not built yet" list
   (`GET /export` and downloading Cognito's keys are built) and the template's header comment.
 
+#### E9. A switch to log S3 notifications, for capturing one real sample (C24, C33)
+
+**Status:** planned 2026-10-01, not started. Chosen by you on 2026-10-01 over logging every
+notification: the log stays off except while a sample is being captured.
+
+**Why:** C24 replaces the tests' sample S3 notification with a real one from the first deployment.
+The processing Lambda doesn't record what it receives, so there is nothing to copy one from.
+
+**Design:**
+
+- **A template parameter, `LogS3Events`**, allowed values `off` and `on`, default `off`. It sets
+  `TIMELINE_LOG_S3_EVENTS` on the processing function only. The API function never logs requests,
+  so no login token can reach the logs through this.
+- **Read once at start-up into a type, not a bare string** (new `EventLogging { Off, On }` in
+  [aws_settings.rs](../../backend/timeline-api/src/aws_settings.rs)): `on` and `off` exactly; a
+  missing variable is `Off`, so local runs and tests need nothing; anything else stops start-up
+  with a message naming the value, rather than quietly logging or not.
+- **Log what AWS actually sent, not a re-encoded copy.** The `aws_lambda_events` type for an S3
+  notification drops any field it doesn't declare, so logging after reading into it would lose
+  exactly the differences a real sample is meant to show. Instead, the processing binary receives
+  the notification as plain JSON (`serde_json::Value`), logs it if the switch is on, then reads it
+  into the `S3Event` type for `handle_s3_event`. A notification that can't be read as an `S3Event`
+  is an error naming what failed, so Lambda retries it and the log shows why (CLAUDE.md's
+  exception rule 3).
+- **The uploader's IP address is removed before logging.** New function
+  `redact_s3_event(value) -> Value` in [s3_trigger.rs](../../backend/timeline-api/src/s3_trigger.rs)
+  replaces each record's `requestParameters.sourceIPAddress` with `"REDACTED"` and changes nothing
+  else. Everything else in the notification (bucket name, which includes your account number; the
+  object key, which includes the user's Cognito ID; AWS's request IDs) stays in the log: the log is
+  in your own account, and those values are cleaned before anything is committed (below).
+- **One log line per notification:** `s3 event (sourceIPAddress removed): <JSON>`, so `sam logs
+  --filter "s3 event"` finds it.
+- `handle_s3_event`'s signature doesn't change, so the committed tests in
+  `tests/s3_trigger.rs` are untouched.
+
+**Capturing (a new step in [infra/README.md](../../infra/README.md)):** redeploy with
+`LogS3Events=on`, upload one small export through the page, copy the line from `sam logs`, then
+redeploy with `LogS3Events=off`. Then, with me: replace the account number, bucket name, user ID,
+upload ID, principal IDs and request IDs with obvious placeholders; replace
+`backend/timeline-api/tests/fixtures/aws-samples/example-s3-event.json` with the result and record
+where it came from in that folder's README; run the tests. You review the cleaned file before it's
+committed.
+
+**Tests:**
+- `redact_s3_event`: the IP address is replaced in every record; the result equals the input with
+  only that field changed; a notification without `requestParameters`, or with no records, comes
+  back unchanged, not as an error.
+- `EventLogging`: `on`, `off`, missing (`Off`), and refused values (`ON`, `yes`, empty), each refusal
+  naming the value.
+- The template: `LogS3Events` exists with default `off` and allowed values `off` and `on`, and only
+  the processing function's settings refer to it (a text check, like the others).
+- **Not tested locally:** the binary's own wiring (whether it logs when the switch is on), for the
+  same reason `main.rs`'s isn't: it only runs inside Lambda. The capture step itself shows it works.
+
+**Done means:** all suites pass; the changed modules stay at 100% line coverage;
+`scripts/check-template.sh` passes; the capture step is in `infra/README.md`.
+
 #### What only the first deployment can check
 
 Each of these is run by hand after `sam deploy`, and the results are recorded in an analysis
@@ -1898,6 +1955,9 @@ see the status note at [line 999](2026-09-09-rust-aws-backend-migration.md#L999)
 **Update 2026-10-01:** only the S3 notification is to be captured now (C24). The processing Lambda
 doesn't log the events it receives, so this still needs a small code change; the choice of how is
 open. Trigger: before the first deployment.
+**Update 2026-10-01 (later):** you chose a switch, off by default, over always logging; designed in
+§E9 ([line 1254](2026-09-09-rust-aws-backend-migration.md#L1254)). Stays open until E9 is built and
+a real notification is captured.
 
 D8 is meant to replace the library's sample events (C24) with sanitized copies of real ones. No
 code records an incoming event, and logging whole events would also log every request's login
@@ -1911,6 +1971,20 @@ text in five places instead of referred to. If one copy changed and another didn
 --lint` wouldn't notice; the deployment would succeed and uploads would then fail with "access
 denied". **Resolution:** `timeline-api/tests/template_bucket_name.rs` checks every copy matches the
 bucket's own name, and fails when one is misspelled (checked by misspelling one); commit `8717329`.
+
+### C35 [OPEN]: Switching `LogS3Events` might reset the other deployment settings
+E9's capture step redeploys with `--parameter-overrides LogS3Events=on`. I believe that, given on
+the command line, it replaces every parameter override saved in `samconfig.toml` rather than adding
+to it, so `Stage` and `FrontendOrigin` would have to be repeated; I haven't checked SAM's
+documentation or tried it. **Mitigation in plan:** the README step will give the full command,
+`--parameter-overrides Stage=dev FrontendOrigin=http://localhost:8000 LogS3Events=on`, which is
+correct either way. **Open:** confirm when the capture step is first run. Trigger: that step.
+
+### C36 [OPEN]: The switch's wiring in the binary is untested locally
+Whether the processing binary actually logs when `LogS3Events` is `on` is only shown by running it
+inside Lambda, like `main.rs`'s wiring. **Mitigation in plan:** the binary is kept to a few lines;
+the redaction and the setting are tested. **Open:** trigger is the capture step: no log line means
+the wiring is wrong.
 
 ### C11 [RESOLVED]: `UploadStatus`'s `Pending`/`Processing` are persisted but never read
 Confirmed by `grep`, not assumed: no route reads `UploadRecord.status`, and `process_upload`
