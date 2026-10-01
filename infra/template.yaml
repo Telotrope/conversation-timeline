@@ -33,6 +33,14 @@ Parameters:
       trailing slash). The only origin allowed by CORS on the API and the
       bucket, and Cognito returns you to <origin>/timeline.html. Cognito
       accepts plain http only for localhost.
+  LogS3Events:
+    Type: String
+    Default: "off"
+    AllowedValues: ["off", "on"]
+    Description: >
+      "on" makes the processing function log each S3 notification it
+      receives (uploader's IP address removed), to capture one real
+      notification as a test sample (migration plan §V2e, E9). Leave off.
 
 Conditions:
   # The dev stage also allows username-and-password sign-in through the
@@ -256,6 +264,7 @@ Resources:
           TIMELINE_UPLOADS_BUCKET: !Sub "timeline-uploads-${Stage}-${AWS::AccountId}"
           TIMELINE_CONVERSATIONS_TABLE: !Ref ConversationsTable
           TIMELINE_MESSAGE_FLAGS_TABLE: !Ref MessageFlagsTable
+          TIMELINE_LOG_S3_EVENTS: !Ref LogS3Events
       Policies:
         - S3ReadPolicy:
             BucketName: !Sub "timeline-uploads-${Stage}-${AWS::AccountId}"

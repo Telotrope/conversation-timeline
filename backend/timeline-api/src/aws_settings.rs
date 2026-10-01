@@ -59,6 +59,48 @@ pub const MESSAGE_FLAGS_TABLE_VAR: &str = "TIMELINE_MESSAGE_FLAGS_TABLE";
 pub const USER_POOL_ID_VAR: &str = "TIMELINE_COGNITO_USER_POOL_ID";
 pub const CLIENT_ID_VAR: &str = "TIMELINE_COGNITO_CLIENT_ID";
 pub const REGION_VAR: &str = "AWS_REGION";
+pub const LOG_S3_EVENTS_VAR: &str = "TIMELINE_LOG_S3_EVENTS";
+
+/// Whether the processing Lambda logs each S3 notification it receives
+/// (migration plan §V2e, E9). Set by the template's `LogS3Events`
+/// parameter, `off` unless a real notification is being captured as a
+/// test sample.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventLogging {
+    Off,
+    On,
+}
+
+/// A `TIMELINE_LOG_S3_EVENTS` value other than `on` or `off`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvalidEventLogging(pub String);
+
+impl fmt::Display for InvalidEventLogging {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{LOG_S3_EVENTS_VAR} must be \"on\" or \"off\", not {:?}",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for InvalidEventLogging {}
+
+impl EventLogging {
+    /// `on` and `off` exactly. Missing means `Off`, so local runs and tests
+    /// need nothing; the template always sets it. Anything else is refused
+    /// rather than guessed at.
+    pub fn from_lookup(
+        lookup: impl Fn(&str) -> Option<String>,
+    ) -> Result<Self, InvalidEventLogging> {
+        match lookup(LOG_S3_EVENTS_VAR).as_deref() {
+            None | Some("off") => Ok(EventLogging::Off),
+            Some("on") => Ok(EventLogging::On),
+            Some(other) => Err(InvalidEventLogging(other.to_string())),
+        }
+    }
+}
 
 /// The three storage names, which are all the upload-processing Lambda
 /// needs. The API Lambda reads these plus the Cognito settings

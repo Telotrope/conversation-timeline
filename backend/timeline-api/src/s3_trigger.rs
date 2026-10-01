@@ -13,17 +13,26 @@
 //!   returned as an error naming the key, after every other record has been
 //!   attempted. Lambda then retries the whole event. That's safe because
 //!   every write `process_upload` makes replaces rather than adds (plan C29).
+//!
+//! [`handle_raw_s3_event`] is what the Lambda runs: it takes the
+//! notification as plain JSON, logs it when [`EventLogging::On`] (with the
+//! uploader's IP address removed), then reads it and calls
+//! [`handle_s3_event`]. Logging happens before reading on purpose: the
+//! `S3Event` type drops fields it doesn't declare, and a real notification
+//! is logged to capture exactly those (migration plan §V2e, E9; C24).
 
 use std::fmt;
 use std::sync::Arc;
 
 use aws_lambda_events::event::s3::S3Event;
 use percent_encoding::percent_decode_str;
+use serde_json::Value;
 use timeline_core::ports::conversations::ConversationSummaryStore;
 use timeline_core::ports::message_flags::UserFlagWriter;
 use timeline_core::ports::object_store::ObjectStore;
 use timeline_core::ports::uploads::{parse_raw_object_key, UploadOutcomeStore};
 
+use crate::aws_settings::EventLogging;
 use crate::processing::{process_upload, ProcessingError};
 
 /// The stores processing writes through.
@@ -136,4 +145,68 @@ pub async fn handle_s3_event(
     } else {
         Err(TriggerError(failures))
     }
+}
+
+/// The notification with each record's `requestParameters.sourceIPAddress`
+/// (the uploader's IP address) replaced by `"REDACTED"`. Nothing else
+/// changes; anything missing is left missing.
+pub fn redact_s3_event(mut event: Value) -> Value {
+    if let Some(records) = event.get_mut("Records").and_then(Value::as_array_mut) {
+        for record in records {
+            if let Some(ip) = record
+                .get_mut("requestParameters")
+                .and_then(|p| p.get_mut("sourceIPAddress"))
+            {
+                *ip = Value::String("REDACTED".to_string());
+            }
+        }
+    }
+    event
+}
+
+/// The line logged for a notification; `sam logs --filter "s3 event"`
+/// finds it.
+pub fn s3_event_log_line(event: &Value) -> String {
+    format!(
+        "s3 event (sourceIPAddress removed): {}",
+        redact_s3_event(event.clone())
+    )
+}
+
+/// Why a raw notification couldn't be handled.
+#[derive(Debug)]
+pub enum RawEventError {
+    /// The JSON isn't an S3 notification `S3Event` can read.
+    Unreadable(serde_json::Error),
+    /// Read, but one or more records failed; see [`handle_s3_event`].
+    Trigger(TriggerError),
+}
+
+impl fmt::Display for RawEventError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RawEventError::Unreadable(e) => write!(f, "not a readable S3 notification: {e}"),
+            RawEventError::Trigger(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for RawEventError {}
+
+/// What the processing Lambda runs for each notification: logs it through
+/// `log` when `logging` is on, then reads and handles it. An unreadable
+/// notification is an error, so Lambda retries it and the log says why.
+pub async fn handle_raw_s3_event(
+    raw: Value,
+    stores: &ProcessingStores,
+    logging: EventLogging,
+    log: impl Fn(&str),
+) -> Result<(), RawEventError> {
+    if logging == EventLogging::On {
+        log(&s3_event_log_line(&raw));
+    }
+    let event: S3Event = serde_json::from_value(raw).map_err(RawEventError::Unreadable)?;
+    handle_s3_event(event, stores)
+        .await
+        .map_err(RawEventError::Trigger)
 }

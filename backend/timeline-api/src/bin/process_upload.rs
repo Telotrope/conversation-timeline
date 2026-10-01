@@ -4,17 +4,20 @@
 //! `tests/s3_trigger.rs`. See the migration plan's §V2e, E2.
 //!
 //! A missing setting stops start-up with a message naming it; there is no
-//! local fallback.
+//! local fallback. The notification arrives as plain JSON so it can be
+//! logged as AWS sent it when `TIMELINE_LOG_S3_EVENTS` is `on` (plan E9).
 
-use aws_lambda_events::event::s3::S3Event;
 use lambda_runtime::{service_fn, LambdaEvent};
-use timeline_api::aws_settings::StorageSettings;
+use serde_json::Value;
+use timeline_api::aws_settings::{EventLogging, StorageSettings};
 use timeline_api::aws_state::{build_processing_stores, AwsClients};
-use timeline_api::s3_trigger::handle_s3_event;
+use timeline_api::s3_trigger::handle_raw_s3_event;
 
 #[tokio::main]
 async fn main() -> Result<(), lambda_runtime::Error> {
     let settings = StorageSettings::from_lookup(|name| std::env::var(name).ok())
+        .unwrap_or_else(|e| panic!("cannot start: {e}"));
+    let logging = EventLogging::from_lookup(|name| std::env::var(name).ok())
         .unwrap_or_else(|e| panic!("cannot start: {e}"));
     let sdk_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let clients = AwsClients {
@@ -23,9 +26,9 @@ async fn main() -> Result<(), lambda_runtime::Error> {
     };
     let stores = build_processing_stores(&settings, clients);
     let stores = &stores;
-    lambda_runtime::run(service_fn(move |event: LambdaEvent<S3Event>| async move {
+    lambda_runtime::run(service_fn(move |event: LambdaEvent<Value>| async move {
         // A failure makes Lambda retry the event; see `s3_trigger`'s doc.
-        handle_s3_event(event.payload, stores)
+        handle_raw_s3_event(event.payload, stores, logging, |line| println!("{line}"))
             .await
             .map_err(lambda_runtime::Error::from)
     }))
