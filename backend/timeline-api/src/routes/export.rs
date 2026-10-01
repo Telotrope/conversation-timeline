@@ -15,7 +15,7 @@ use axum::extract::State;
 use axum::Json;
 use serde::Serialize;
 use serde_json::json;
-use timeline_core::model::{Conversation, ConversationId};
+use timeline_core::model::{Conversation, ConversationId, MessageId};
 use timeline_core::ports::conversations::ConversationSummaryStore;
 use timeline_core::ports::message_flags::MessageFlagsReader;
 use timeline_core::ports::object_store::ObjectStore;
@@ -24,6 +24,7 @@ use timeline_core::{unwrap_uploaded_json, Sender};
 
 use crate::auth_extractor::AuthenticatedUser;
 use crate::error::ApiError;
+use crate::flag_handles::{FlagHandle, FlagHandleKey};
 
 /// Long enough for a slow download of a large export; see
 /// `routes::uploads::UPLOAD_URL_TTL` for the matching upload-side constant.
@@ -32,6 +33,11 @@ const EXPORT_URL_TTL: Duration = Duration::from_secs(15 * 60);
 #[derive(Serialize)]
 pub struct ExportResponse {
     pub export_url: String,
+    /// One handle per user message in the export, keyed by message id. The
+    /// page sends a message's handle back with each flag save; see
+    /// `crate::flag_handles`. Delivered here, in this reply, so the
+    /// exported `conversations.json` itself is unchanged.
+    pub flag_handles: HashMap<MessageId, FlagHandle>,
 }
 
 fn integrity_error(context: &str, e: impl std::fmt::Display) -> ApiError {
@@ -47,6 +53,7 @@ pub async fn export(
     State(object_store): State<Arc<dyn ObjectStore>>,
     State(conversation_summary_store): State<Arc<dyn ConversationSummaryStore>>,
     State(flags_reader): State<Arc<dyn MessageFlagsReader>>,
+    State(flag_handle_key): State<Arc<FlagHandleKey>>,
 ) -> Result<Json<ExportResponse>, ApiError> {
     let summaries = conversation_summary_store.list_for_user(&user_id).await?;
 
@@ -73,6 +80,7 @@ pub async fn export(
     }
 
     let mut annotated = Vec::with_capacity(summaries.len());
+    let mut flag_handles = HashMap::new();
     for summary in &summaries {
         let mut conversation = conversations_by_id
             .remove(&summary.conversation_id)
@@ -86,6 +94,10 @@ pub async fn export(
             if message.sender != Sender::Human {
                 continue;
             }
+            flag_handles.insert(
+                message.uuid,
+                flag_handle_key.handle_for(&user_id, summary.conversation_id, message.uuid),
+            );
             if let Some(record) = flags_reader
                 .get(&user_id, summary.conversation_id, message.uuid)
                 .await?
@@ -113,5 +125,8 @@ pub async fn export(
     object_store.put(&export_key, export_bytes).await?;
     let export_url = object_store.presign_get(&export_key, EXPORT_URL_TTL).await?;
 
-    Ok(Json(ExportResponse { export_url }))
+    Ok(Json(ExportResponse {
+        export_url,
+        flag_handles,
+    }))
 }

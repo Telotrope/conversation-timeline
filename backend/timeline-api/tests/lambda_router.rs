@@ -18,6 +18,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use timeline_api::app::build_router;
 use timeline_api::dev_only::{DEV_KEYPAIR, DEV_ONLY_CLIENT_ID, DEV_ONLY_ISSUER};
+use timeline_api::flag_handles::FlagHandleKey;
 use timeline_api::state::AppState;
 use timeline_auth::cognito::CognitoVerifier;
 use timeline_core::ports::conversations::ConversationSummaryStore;
@@ -35,6 +36,7 @@ fn lambda_state() -> AppState {
     let conversation_summary_store: Arc<dyn ConversationSummaryStore> =
         Arc::new(InMemoryConversationSummaryStore::new());
     AppState {
+        flag_handle_key: Arc::new(FlagHandleKey::generate()),
         object_store,
         conversation_summary_store,
         flags_reader: flags_store.clone(),

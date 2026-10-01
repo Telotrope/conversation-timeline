@@ -20,6 +20,7 @@ use serde_json::{json, Value};
 use timeline_api::app::{build_dev_router, build_router};
 use timeline_api::dev_only::{DEV_KEYPAIR, DEV_ONLY_CLIENT_ID, DEV_ONLY_ISSUER};
 use timeline_api::dev_state::DevState;
+use timeline_api::flag_handles::FlagHandleKey;
 use timeline_api::state::AppState;
 use timeline_auth::cognito::CognitoVerifier;
 use timeline_core::ports::conversations::ConversationSummaryStore;
@@ -39,6 +40,7 @@ fn test_router() -> Router {
         Arc::new(InMemoryConversationSummaryStore::new());
 
     let app_state = AppState {
+        flag_handle_key: Arc::new(FlagHandleKey::generate()),
         object_store: object_store.clone(),
         conversation_summary_store: conversation_summary_store.clone(),
         flags_reader: flags_store.clone(),

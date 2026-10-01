@@ -13,6 +13,12 @@ use timeline_core::ports::errors::{ObjectStoreError, StoreError};
 #[derive(Debug)]
 pub enum ApiError {
     NotFound,
+    /// The request itself is wrong (a missing or unknown field, nothing to
+    /// change). The message is sent back so the caller can fix it.
+    BadRequest(String),
+    /// Well-formed, but not allowed -- e.g. a flag save whose handle doesn't
+    /// match the message it names.
+    Forbidden(String),
     Store(StoreError),
     ObjectStore(ObjectStoreError),
     /// A server-side condition that isn't a storage-backend failure at all
@@ -41,6 +47,16 @@ impl From<ObjectStoreError> for ApiError {
     }
 }
 
+const MAX_ECHOED_CHARS: usize = 300;
+
+fn bounded(message: &str) -> String {
+    if message.chars().count() > MAX_ECHOED_CHARS {
+        format!("{}…", message.chars().take(MAX_ECHOED_CHARS).collect::<String>())
+    } else {
+        message.to_string()
+    }
+}
+
 #[derive(Serialize)]
 struct ErrorBody {
     error: String,
@@ -57,6 +73,11 @@ impl IntoResponse for ApiError {
         // error must be visible somewhere, not silently discarded.
         let (status, message) = match &self {
             ApiError::NotFound => (StatusCode::NOT_FOUND, "not found".to_string()),
+            // These messages can quote text from the request (serde names an
+            // unknown field), so they're cut to a bounded length before being
+            // echoed back. JSON serialization escapes the rest.
+            ApiError::BadRequest(m) => (StatusCode::BAD_REQUEST, bounded(m)),
+            ApiError::Forbidden(m) => (StatusCode::FORBIDDEN, bounded(m)),
             ApiError::Store(e) => {
                 eprintln!("storage backend error: {e}");
                 (

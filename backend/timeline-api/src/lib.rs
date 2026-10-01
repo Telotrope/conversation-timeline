@@ -8,6 +8,7 @@ pub mod auth_extractor;
 pub mod dev_only;
 pub mod dev_state;
 pub mod error;
+pub mod flag_handles;
 pub mod processing;
 pub mod routes;
 pub mod state;

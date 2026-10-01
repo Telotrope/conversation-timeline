@@ -18,6 +18,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use timeline_api::app::build_router;
 use timeline_api::dev_only::generate_dev_keypair;
+use timeline_api::flag_handles::FlagHandleKey;
 use timeline_api::state::AppState;
 use timeline_auth::cognito::CognitoVerifier;
 use timeline_storage::memory::conversations::InMemoryConversationSummaryStore;
@@ -39,6 +40,7 @@ fn test_state() -> AppState {
     let (_, jwks) = &*TEST_KEYPAIR;
     let flags_store = Arc::new(InMemoryMessageFlagsStore::new());
     AppState {
+        flag_handle_key: Arc::new(FlagHandleKey::generate()),
         object_store: Arc::new(InMemoryObjectStore::new()),
         conversation_summary_store: Arc::new(InMemoryConversationSummaryStore::new()),
         flags_reader: flags_store.clone(),
@@ -154,9 +156,17 @@ async fn getting_flags_that_were_never_set_is_404() {
 
 #[tokio::test]
 async fn patch_then_get_flags_round_trips_through_real_http_requests() {
-    let router = build_router(test_state());
+    let state = test_state();
     let conv = "11111111-1111-4111-8111-111111111111";
     let msg = "22222222-2222-4222-8222-222222222222";
+    // Since the migration plan's §V2c, a save must carry the handle the
+    // server issued for that message (normally delivered by GET /export).
+    let handle = state.flag_handle_key.handle_for(
+        &timeline_core::ports::ids::UserId("alice".to_string()),
+        timeline_core::model::ConversationId(conv.parse().unwrap()),
+        timeline_core::model::MessageId(msg.parse().unwrap()),
+    );
+    let router = build_router(state);
     let token = test_token("alice");
 
     let patch_request = Request::builder()
@@ -164,7 +174,7 @@ async fn patch_then_get_flags_round_trips_through_real_http_requests() {
         .uri(format!("/conversations/{conv}/messages/{msg}/flags"))
         .header("Authorization", format!("Bearer {token}"))
         .header("Content-Type", "application/json")
-        .body(Body::from(json!({"caps": true}).to_string()))
+        .body(Body::from(json!({"caps": true, "handle": handle}).to_string()))
         .unwrap();
     let patch_response = router.clone().oneshot(patch_request).await.unwrap();
     assert_eq!(patch_response.status(), StatusCode::OK);

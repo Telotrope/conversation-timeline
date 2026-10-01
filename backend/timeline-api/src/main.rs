@@ -33,6 +33,7 @@ use tower_http::cors::CorsLayer;
 use timeline_api::app::{build_dev_router, build_router};
 use timeline_api::dev_only::{DEV_KEYPAIR, DEV_ONLY_CLIENT_ID, DEV_ONLY_ISSUER};
 use timeline_api::dev_state::DevState;
+use timeline_api::flag_handles::{FlagHandleKey, KEY_ENV_VAR};
 use timeline_api::state::AppState;
 use timeline_auth::cognito::CognitoVerifier;
 use timeline_storage::memory::conversations::InMemoryConversationSummaryStore;
@@ -46,7 +47,7 @@ use timeline_storage::memory::uploads::InMemoryUploadOutcomeStore;
 /// upload PUT through `_dev/local-storage` show up in `GET /conversations`.
 /// `UploadOutcomeStore` is built for `DevState` only -- no route reachable
 /// from `AppState` needs it (see `state::AppState`'s module doc).
-fn build_local_state() -> (AppState, DevState) {
+fn build_local_state(flag_handle_key: FlagHandleKey) -> (AppState, DevState) {
     // Forces DEV_KEYPAIR's generation to happen here, up front, rather than
     // lazily on the first login/verification -- so a slow key-generation
     // hiccup shows up at startup, not on some later request.
@@ -79,6 +80,7 @@ fn build_local_state() -> (AppState, DevState) {
         user_flag_writer: flags_store.clone(),
         auto_flag_writer: flags_store.clone(),
         verifier: Arc::new(CognitoVerifier::new(jwks.clone(), DEV_ONLY_ISSUER, DEV_ONLY_CLIENT_ID)),
+        flag_handle_key: Arc::new(flag_handle_key),
     };
     let upload_outcome_store = Arc::new(InMemoryUploadOutcomeStore::new());
     let dev_state = DevState {
@@ -120,12 +122,18 @@ async fn main() {
         // Lambda branch only ever passes `app_state` to `build_router`, so
         // the `_dev` router (and the `AutoFlagWriter` capability it needs)
         // is never wired into anything that could run in production.
-        let (app_state, dev_state) = build_local_state();
+        // The flag-handle key must come from the environment here: a key
+        // generated per instance would make Lambda instances reject each
+        // other's handles. Missing or too short stops startup with a message
+        // naming the variable. See `timeline_api::flag_handles`.
+        let key = FlagHandleKey::from_env_value(std::env::var(KEY_ENV_VAR).ok().as_deref())
+            .unwrap_or_else(|e| panic!("cannot start: {e}"));
+        let (app_state, dev_state) = build_local_state(key);
         drop(dev_state);
         let router = build_router(app_state);
         lambda_http::run(router).await.expect("lambda runtime");
     } else {
-        let (app_state, dev_state) = build_local_state();
+        let (app_state, dev_state) = build_local_state(FlagHandleKey::generate());
         // Permissive CORS, local-dev only -- timeline.html isn't served by
         // this binary and will be opened separately (a local file, or a
         // static server on a different port), so without this the browser

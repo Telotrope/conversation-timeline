@@ -32,6 +32,8 @@ use timeline_core::ports::conversations::ConversationSummaryStore;
 use timeline_core::ports::message_flags::{AutoFlagWriter, MessageFlagsReader, UserFlagWriter};
 use timeline_core::ports::object_store::ObjectStore;
 
+use crate::flag_handles::FlagHandleKey;
+
 #[derive(Clone)]
 pub struct AppState {
     pub object_store: Arc<dyn ObjectStore>,
@@ -40,6 +42,8 @@ pub struct AppState {
     pub user_flag_writer: Arc<dyn UserFlagWriter>,
     pub auto_flag_writer: Arc<dyn AutoFlagWriter>,
     pub verifier: Arc<CognitoVerifier>,
+    /// Signs and checks flag handles; see `crate::flag_handles`.
+    pub flag_handle_key: Arc<FlagHandleKey>,
 }
 
 impl FromRef<AppState> for Arc<dyn ObjectStore> {
@@ -75,5 +79,11 @@ impl FromRef<AppState> for Arc<dyn AutoFlagWriter> {
 impl FromRef<AppState> for Arc<CognitoVerifier> {
     fn from_ref(state: &AppState) -> Self {
         state.verifier.clone()
+    }
+}
+
+impl FromRef<AppState> for Arc<FlagHandleKey> {
+    fn from_ref(state: &AppState) -> Self {
+        state.flag_handle_key.clone()
     }
 }
