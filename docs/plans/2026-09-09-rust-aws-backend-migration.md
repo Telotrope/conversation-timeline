@@ -996,7 +996,44 @@ stored but never processed. It's the next piece after this one.
 
 ### V2e — Make the first deployment usable, and test everything that can be tested locally
 
-**Status:** planned 2026-10-01, not started.
+**Status:** built and tested on this machine 2026-10-01 (commits `bd44ee5` to `15b6254`); **not
+deployed**, so V2 is not done until checks D1–D9 below are run. All suites pass: 325 Rust, 56
+frontend unit, 65 browser, 8 deployment-script checks (`scripts/test-deploy-scripts.sh`). The new
+and changed Rust modules are at 100% line coverage (`cargo llvm-cov -p timeline-api -p
+timeline-core`). A first coverage run over the whole workspace was killed partway (exit 137);
+the narrower run completed, and I haven't traced why the first one was stopped.
+`scripts/check-template.sh` (`sam validate --lint`, SAM CLI 1.166.2) passes.
+
+What running it showed, beyond the design below:
+- **The named-stage 404 is observed, not just read**: the E1 test sending a request on stage `dev`
+  gets 404 from the Lambda's router.
+- **The circular dependency is observed too**: with the processing function's permission put back
+  to `!Ref RawUploadsBucket`, `sam validate --lint` fails with cfn-lint's E3004 (circular
+  dependency) across the bucket, the function, its role and its permission. The template as
+  committed passes.
+- **Processing measurement** (`scripts/measure-processing.sh`, 62.8 MB synthetic export, 161
+  conversations): 188 MB peak memory both runs; 0.24 s, then 0.17 s on identical input (cause of
+  the difference not traced). Template: 512 MB, 300 s.
+
+Differences from the design below:
+- **How the page finds a deployment's settings (E5).** The design had the page always ask for
+  `frontend/deploy-config.json` and treat "missing" as local development. A missing file is a 404,
+  which Chrome logs as a console error, and the browser tests fail any test that logs one. Instead,
+  visiting `timeline.html?deploy=<name>` once (remembered, like `?api_base=`) loads
+  `frontend/deploy-configs/<name>.json`; without it, no settings file is requested at all.
+  `scripts/write-deploy-config.sh <stage>` writes the file; the folder's JSON files are ignored by
+  git.
+- **`FrontendOrigin` instead of `FrontendUrl` (E5, E6).** CORS needs the origin and Cognito the
+  full address; the template takes the origin and builds `<origin>/timeline.html` from it.
+- **The page's new pure logic is in `frontend/core/`** (`server-url.js`, `upload-wait.js`,
+  `deploy-config.js`), not `frontend/infra/`: the structure test forbids `infra/` files importing
+  each other, and these touch neither the network nor the browser.
+- **Shared test setup:** `timeline-api/tests/support/aws_world.rs`, used by the new test files.
+  `tests/aws_state.rs` keeps its own copy, unchanged.
+- **Also added:** tests for the deployment scripts, against a stand-in `aws` command
+  (`scripts/test-deploy-scripts.sh`); the ID token's lifetime set to one hour alongside the
+  access token's.
+- **D8 can't be run yet**: nothing records a real event; see C33.
 
 **Why this exists.** A review on 2026-10-01 of what a first `sam deploy` would actually do found
 that the deployed app couldn't be used even if every resource were created correctly:
@@ -1785,13 +1822,15 @@ project's API or bucket, so they aren't the verified samples CLAUDE.md asks for.
 plan:** the tests only rely on the fields the code reads (path, stage, authorizer claims; bucket and
 key). **Open:** trigger is deployment check D8, which captures real events and replaces the samples.
 
-### C25 [OPEN]: Adding a field to `AppState` edits committed tests
+### C25 [RESOLVED]: Adding a field to `AppState` edits committed tests
 E3 adds `upload_outcome_store` to `AppState`. Every test that builds an `AppState` by hand (at
 least `tests/lambda_router.rs` and `tests/aws_state.rs`; I haven't listed all of them) needs one
 more line to compile. No assertion changes. CLAUDE.md requires your approval to modify committed
 tests. **Mitigation in plan:** the edits add the field and nothing else. **Open:** trigger is your
 approval of this plan; approving it is taken as approving those one-line edits, unless you say
 otherwise.
+**Resolution:** approved with the plan on 2026-10-01; commit `0e0e49b` adds the field (and its
+import, where missing) to the six files that build `AppState` by hand, nothing else.
 
 ### C26 [OPEN]: Whether API Gateway answers the browser's `OPTIONS` check is read from documentation
 E6 relies on my reading of AWS's documentation that, with CORS configured and no route matching
@@ -1829,11 +1868,22 @@ Original concern: `AwsSettings` refuses to load without the Cognito pool and cli
 processing Lambda would need them set for no reason. **Resolution:** E2 adds `StorageSettings` for
 the three storage names, shared with `AwsSettings` ([§E2 settings, line 1069](2026-09-09-rust-aws-backend-migration.md#L1069)).
 
-### C32 [OPEN]: `oidc-client-ts` may not load without a build step
+### C32 [RESOLVED]: `oidc-client-ts` may not load without a build step
 E5 assumes the library's prebuilt browser file works when loaded directly by the page. Unverified.
 **Mitigation in plan:** checked first, before any other E5 work. **Open:** if it doesn't load, the
 fallback is writing the code exchange by hand with the browser's built-in cryptography (two web
 requests and one hash), which I'd bring back to you before doing. Trigger: the start of E5.
+**Resolution:** its `dist/browser/oidc-client-ts.min.js` is one self-contained script defining the
+global `oidc`, with `jwt-decode` bundled and no imports. Kept in `vendor/oidc-client-ts/` with both
+licenses and its checksum; the browser tests load it from a plain `<script>` tag (commit `70db163`;
+see the status note at [line 999](2026-09-09-rust-aws-backend-migration.md#L999)).
+
+### C33 [OPEN]: Nothing captures a real AWS event, so check D8 can't be run
+D8 is meant to replace the library's sample events (C24) with sanitized copies of real ones. No
+code records an incoming event, and logging whole events would also log every request's login
+token. **Mitigation in plan:** the tests rely only on the fields the code reads. **Open:** choose a
+way to capture one HTTP API event and one S3 event (for example, a temporary setting that logs an
+event with its `authorization` header removed). Trigger: the first deployment, before D8.
 
 ### C11 [RESOLVED]: `UploadStatus`'s `Pending`/`Processing` are persisted but never read
 Confirmed by `grep`, not assumed: no route reads `UploadRecord.status`, and `process_upload`
