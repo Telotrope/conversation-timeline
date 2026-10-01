@@ -43,6 +43,20 @@ are given *different* state types (`Arc<dyn MessageFlagsReader>` vs. `Arc<dyn Us
 the `PATCH` handler's own source code has no `AutoFlagWriter` in scope at all — not "doesn't call
 it," genuinely not a parameter it could call.
 
+**Flag handles** ([`flag_handles`](src/flag_handles.rs), migration plan §V2c). `GET /export` replies
+with `{"export_url": ..., "flag_handles": {"<message id>": "<handle>"}}`: one handle per user
+message, an HMAC-SHA256 signature over the user, conversation and message ids under a key only the
+server holds. The exported `conversations.json` itself carries no handles. `PATCH .../flags` takes
+`{"handle": ..., "caps"?, "critical"?, "angry"?}` and answers:
+
+- **400** for an unknown field (named in the message), a missing `handle`, or nothing to change;
+- **403** when the handle doesn't match the conversation and message in the address;
+- **200** with the stored record otherwise.
+
+So a save can only name a message the server actually sent. The key is generated at startup
+locally; on Lambda it comes from `TIMELINE_FLAG_HANDLE_KEY` (filled from Secrets Manager by
+[infra/template.yaml](../../infra/template.yaml)), and the Lambda refuses to start without it.
+
 ## Processing: composing timeline-core logic with the ports
 
 [`processing::process_upload`](src/processing.rs) turns a raw upload into stored conversation
@@ -57,7 +71,7 @@ stand-in for the real S3 event — see the migration plan's §V2a).
 163+ tests across the workspace exercise this crate through real HTTP requests
 (`tower::ServiceExt::oneshot` against the actual `Router`, not a mock) — [tests/app.rs](tests/app.rs),
 [tests/dev_routes.rs](tests/dev_routes.rs), [tests/export.rs](tests/export.rs),
-[tests/processing.rs](tests/processing.rs). Additionally verified with a real, driven headless
+[tests/processing.rs](tests/processing.rs), [tests/flag_saves.rs](tests/flag_saves.rs). Additionally verified with a real, driven headless
 browser via the top-level [`e2e/`](../../e2e/README.md) Playwright suite — uploading a real file
 through the real local-dev server and confirming it renders in `timeline.html`.
 
@@ -76,6 +90,7 @@ classDiagram
         +Arc~dyn MessageFlagsReader~ flags_reader
         +Arc~dyn UserFlagWriter~ user_flag_writer
         +Arc~CognitoVerifier~ verifier
+        +Arc~FlagHandleKey~ flag_handle_key
     }
     class DevState {
         +Arc~dyn ObjectStore~ object_store

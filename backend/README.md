@@ -63,7 +63,7 @@ shelling out to an external binary from the test suite.
 ```
 cd backend
 cargo build --workspace
-cargo test --workspace        # 259 tests; needs Java + DynamoDB Local, see below
+cargo test --workspace        # 293 tests; needs Java + DynamoDB Local, see below
 cargo clippy --workspace --all-targets   # should be silent
 cargo fmt --all
 
