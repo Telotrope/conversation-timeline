@@ -22,6 +22,8 @@ use timeline_core::ports::message_flags::{
     AutoFlagWriter, FlagOverrides, FlagSet, MessageFlagRecord, MessageFlagsReader, UserFlagWriter,
 };
 
+use super::attributes::optional_bool;
+
 pub struct DynamoMessageFlagsStore {
     client: Client,
     table_name: String,
@@ -114,27 +116,25 @@ fn user_update_expression(overrides: FlagOverrides) -> Option<UpdateExpressionPa
 fn record_from_item(
     message_id: MessageId,
     item: &HashMap<String, AttributeValue>,
-) -> MessageFlagRecord {
-    let bool_attr = |k: &str| {
-        item.get(k)
-            .and_then(|v| v.as_bool().ok())
-            .copied()
-            .unwrap_or(false)
-    };
-    let opt_bool_attr = |k: &str| item.get(k).and_then(|v| v.as_bool().ok()).copied();
-    MessageFlagRecord {
+) -> Result<MessageFlagRecord, StoreError> {
+    // An absent `auto_*` attribute is legitimate and means `false`: a user
+    // override can create the row before detection has run. An absent
+    // `user_*` attribute means the user hasn't set that flag. Only a value
+    // of the wrong type is an error -- see the migration plan's §V2c.
+    let auto = |k: &str| optional_bool(item, k).map(|v| v.unwrap_or(false));
+    Ok(MessageFlagRecord {
         message_id,
         auto: FlagSet {
-            caps: bool_attr("auto_caps"),
-            critical: bool_attr("auto_critical"),
-            angry: bool_attr("auto_angry"),
+            caps: auto("auto_caps")?,
+            critical: auto("auto_critical")?,
+            angry: auto("auto_angry")?,
         },
         user: FlagOverrides {
-            caps: opt_bool_attr("user_caps"),
-            critical: opt_bool_attr("user_critical"),
-            angry: opt_bool_attr("user_angry"),
+            caps: optional_bool(item, "user_caps")?,
+            critical: optional_bool(item, "user_critical")?,
+            angry: optional_bool(item, "user_angry")?,
         },
-    }
+    })
 }
 
 /// The sort key is always a `MessageId` we ourselves wrote (`sort_key`
@@ -185,7 +185,10 @@ impl MessageFlagsReader for DynamoMessageFlagsStore {
             .send()
             .await
             .map_err(backend_error)?;
-        Ok(output.item.map(|item| record_from_item(message_id, &item)))
+        output
+            .item
+            .map(|item| record_from_item(message_id, &item))
+            .transpose()
     }
 
     async fn list_for_conversation(
@@ -210,7 +213,8 @@ impl MessageFlagsReader for DynamoMessageFlagsStore {
             .unwrap_or_default()
             .iter()
             .map(|item| {
-                message_id_from_sort_key(item).map(|message_id| record_from_item(message_id, item))
+                message_id_from_sort_key(item)
+                    .and_then(|message_id| record_from_item(message_id, item))
             })
             .collect()
     }
@@ -274,4 +278,3 @@ impl UserFlagWriter for DynamoMessageFlagsStore {
             .ok_or(StoreError::NotFound)
     }
 }
-

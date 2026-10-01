@@ -20,6 +20,8 @@ use timeline_core::ports::errors::StoreError;
 use timeline_core::ports::ids::{UploadId, UserId};
 use timeline_core::ports::uploads::{UploadOutcome, UploadOutcomeStore};
 
+use super::attributes::{invalid_data, required_count, required_id_list, required_string};
+
 pub struct DynamoConversationsTable {
     client: Client,
     table_name: String,
@@ -38,13 +40,6 @@ fn backend_error(e: impl std::error::Error + Send + Sync + 'static) -> StoreErro
     StoreError::Backend(Box::new(e))
 }
 
-fn invalid_data(msg: impl Into<String>) -> StoreError {
-    StoreError::Backend(Box::new(std::io::Error::new(
-        std::io::ErrorKind::InvalidData,
-        msg.into(),
-    )))
-}
-
 fn upload_sort_key(upload_id: UploadId) -> String {
     format!("UPLOAD#{upload_id}")
 }
@@ -55,34 +50,21 @@ fn conversation_sort_key(conversation_id: ConversationId) -> String {
 
 const CONVERSATION_SORT_PREFIX: &str = "CONV#";
 
-fn upload_outcome_from_item(item: &HashMap<String, AttributeValue>) -> Result<UploadOutcome, StoreError> {
-    let status_name = item
-        .get("status")
-        .and_then(|v| v.as_s().ok())
-        .ok_or_else(|| invalid_data("upload item is missing status"))?;
-    match status_name.as_str() {
+fn upload_outcome_from_item(
+    item: &HashMap<String, AttributeValue>,
+) -> Result<UploadOutcome, StoreError> {
+    match required_string(item, "status")? {
         "ready" => {
-            let ids = item
-                .get("conversation_ids")
-                .and_then(|v| v.as_l().ok())
-                .map(|list| {
-                    list.iter()
-                        .filter_map(|v| v.as_s().ok())
-                        .filter_map(|s| s.parse::<uuid::Uuid>().ok())
-                        .map(ConversationId)
-                        .collect()
-                })
-                .unwrap_or_default();
+            let ids = required_id_list(item, "conversation_ids")?
+                .into_iter()
+                .map(ConversationId)
+                .collect();
             Ok(UploadOutcome::Ready {
                 conversation_ids: ids,
             })
         }
         "failed" => {
-            let reason = item
-                .get("failure_reason")
-                .and_then(|v| v.as_s().ok())
-                .cloned()
-                .unwrap_or_default();
+            let reason = required_string(item, "failure_reason")?.to_string();
             Ok(UploadOutcome::Failed { reason })
         }
         other => Err(invalid_data(format!(
@@ -150,25 +132,14 @@ fn conversation_summary_from_item(
     conversation_id: ConversationId,
     item: &HashMap<String, AttributeValue>,
 ) -> Result<ConversationSummary, StoreError> {
-    let upload_id_str = item
-        .get("upload_id")
-        .and_then(|v| v.as_s().ok())
-        .ok_or_else(|| invalid_data("conversation item is missing upload_id"))?;
+    let upload_id_str = required_string(item, "upload_id")?;
     let upload_id = UploadId(
         upload_id_str
             .parse()
             .map_err(|e| invalid_data(format!("bad upload_id: {e}")))?,
     );
-    let name = item
-        .get("name")
-        .and_then(|v| v.as_s().ok())
-        .cloned()
-        .unwrap_or_default();
-    let message_count = item
-        .get("message_count")
-        .and_then(|v| v.as_n().ok())
-        .and_then(|n| n.parse::<usize>().ok())
-        .unwrap_or(0);
+    let name = required_string(item, "name")?.to_string();
+    let message_count = required_count(item, "message_count")?;
     Ok(ConversationSummary {
         conversation_id,
         upload_id,
@@ -247,11 +218,7 @@ impl ConversationSummaryStore for DynamoConversationsTable {
             .transpose()
     }
 
-    async fn put(
-        &self,
-        user_id: &UserId,
-        summary: ConversationSummary,
-    ) -> Result<(), StoreError> {
+    async fn put(&self, user_id: &UserId, summary: ConversationSummary) -> Result<(), StoreError> {
         self.client
             .put_item()
             .table_name(&self.table_name)
@@ -260,7 +227,10 @@ impl ConversationSummaryStore for DynamoConversationsTable {
                 "sk",
                 AttributeValue::S(conversation_sort_key(summary.conversation_id)),
             )
-            .item("upload_id", AttributeValue::S(summary.upload_id.to_string()))
+            .item(
+                "upload_id",
+                AttributeValue::S(summary.upload_id.to_string()),
+            )
             .item("name", AttributeValue::S(summary.name.0))
             .item(
                 "message_count",
