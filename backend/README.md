@@ -63,7 +63,7 @@ shelling out to an external binary from the test suite.
 ```
 cd backend
 cargo build --workspace
-cargo test --workspace        # 293 tests; needs Java + DynamoDB Local, see below
+cargo test --workspace        # 303 tests; needs Java + DynamoDB Local, see below
 cargo clippy --workspace --all-targets   # should be silent
 cargo fmt --all
 
@@ -146,6 +146,13 @@ specifically:**
 - `timeline-storage/src/s3.rs` runs against `s3s-fs`, a local S3 stand-in
   that checks signatures, including presigned URLs. `timeline-storage/src/dynamo/*`
   runs against Amazon's DynamoDB Local. Neither has reached real AWS.
+
+**The Lambda build** (migration plan §V2d) uses these real adapters and checks
+logins against the Cognito user pool's published keys, built by
+`timeline_api::aws_state::build_aws_state`. Its exact router is tested against
+the same local stand-ins plus a local stand-in for Cognito's keys
+([timeline-api/tests/aws_state.rs](timeline-api/tests/aws_state.rs)); the Lambda
+runtime itself is not.
 
 **Not verified, because there is no AWS access in this environment (no
 credentials, no SAM CLI):**

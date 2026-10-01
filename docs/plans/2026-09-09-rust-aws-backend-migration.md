@@ -909,7 +909,12 @@ is marked resolved.
 
 ### V2d — The Lambda build uses the real AWS stores and real Cognito logins (closes C21)
 
-**Status:** revision 1, awaiting review.
+**Status:** done 2026-10-01, commits `cc64e7c` (code) and `412fa1a` (tests). All suites pass: 303
+Rust, 42 frontend unit, 60 browser. `aws_settings.rs` and `aws_state.rs` are at 100% line
+coverage. Differences from the design below: the settings module is named `aws_settings.rs`, not
+`aws_config.rs`, to avoid confusion with the `aws-config` library. Not tested: `main.rs` itself,
+including the Lambda branch's wiring (it never runs inside the test suite); the tests cover the
+functions it calls.
 
 **What's wrong today.** [main.rs](../../backend/timeline-api/src/main.rs) decides at startup
 whether it's running in Lambda (Lambda sets `AWS_LAMBDA_RUNTIME_API`). Both branches call the same
@@ -1513,14 +1518,15 @@ conversation on demand instead.
 message (14 handles made a 1,302-byte reply). The 5 MB trigger would take about 61,000 user
 messages; the reply carries handles for user messages only.
 
-### C21 [OPEN]: The Lambda build still uses the in-memory stores and the dev login keys
+### C21 [RESOLVED]: The Lambda build still uses the in-memory stores and the dev login keys
 Found while wiring the flag-handle key into
 [main.rs](../../backend/timeline-api/src/main.rs): the Lambda branch calls the same
 `build_local_state` as local dev, so it uses the in-memory stores, not the S3 and DynamoDB
 adapters, and verifies logins against the throwaway dev keypair, not Cognito. Only the flag-handle
 key differs (read from the environment since §V2c). A deployed Lambda would therefore lose all data
 between instances and accept tokens signed by the dev keypair. **Mitigation in plan:** §V2d
-designs the fix; nothing is deployed. **Open:** wire the real adapters and Cognito verification into the Lambda
+designs the fix; nothing is deployed.
+**Resolution:** implemented in §V2d on 2026-10-01 ([line 910](2026-09-09-rust-aws-backend-migration.md#L910)). **Open:** wire the real adapters and Cognito verification into the Lambda
 branch before the first `sam deploy` in §V2. Trigger: the start of V2's deployment work.
 
 ### C22 [OPEN]: Cognito's keys are fetched once per Lambda instance

@@ -53,7 +53,15 @@ server holds. The exported `conversations.json` itself carries no handles. `PATC
 - **403** when the handle doesn't match the conversation and message in the address;
 - **200** with the stored record otherwise.
 
-So a save can only name a message the server actually sent. The key is generated at startup
+So a save can only name a message the server actually sent.
+
+**Two ways to build `AppState`.** Local dev (`main.rs`'s `build_local_state`) uses the in-memory
+stores and the throwaway dev login keys. The Lambda uses
+[`aws_state::build_aws_state`](src/aws_state.rs): the S3 and DynamoDB adapters, and a
+`CognitoVerifier` loaded with the user pool's published keys, from settings read once by
+[`aws_settings::AwsSettings`](src/aws_settings.rs). A missing setting, flag-handle key or key
+download stops the Lambda at startup; nothing falls back to the local setup. See the migration
+plan's §V2d. The key is generated at startup
 locally; on Lambda it comes from `TIMELINE_FLAG_HANDLE_KEY` (filled from Secrets Manager by
 [infra/template.yaml](../../infra/template.yaml)), and the Lambda refuses to start without it.
 
@@ -71,7 +79,8 @@ stand-in for the real S3 event — see the migration plan's §V2a).
 163+ tests across the workspace exercise this crate through real HTTP requests
 (`tower::ServiceExt::oneshot` against the actual `Router`, not a mock) — [tests/app.rs](tests/app.rs),
 [tests/dev_routes.rs](tests/dev_routes.rs), [tests/export.rs](tests/export.rs),
-[tests/processing.rs](tests/processing.rs), [tests/flag_saves.rs](tests/flag_saves.rs). Additionally verified with a real, driven headless
+[tests/processing.rs](tests/processing.rs), [tests/flag_saves.rs](tests/flag_saves.rs),
+[tests/aws_state.rs](tests/aws_state.rs). Additionally verified with a real, driven headless
 browser via the top-level [`e2e/`](../../e2e/README.md) Playwright suite — uploading a real file
 through the real local-dev server and confirming it renders in `timeline.html`.
 
