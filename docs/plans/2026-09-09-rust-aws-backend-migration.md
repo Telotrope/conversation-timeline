@@ -691,7 +691,7 @@ The exact versions get pinned when the code is written.
 - The "zero test coverage" header in `s3.rs` is replaced with what is now tested and what isn't.
 - C10 is marked resolved, with links to these tests.
 
-### V2c — Reading DynamoDB rows: no silent defaults
+### V2c — Stored data and flag saves: no silent defaults, no unchecked IDs
 
 **Status:** revision 1, awaiting review.
 
