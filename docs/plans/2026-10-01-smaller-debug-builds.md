@@ -1,6 +1,6 @@
 # Smaller debug builds: keep only line numbers in debugging information
 
-**Status:** revision 1, awaiting review.
+**Status:** done 2026-10-01; numbers in the commit and in backend/README.md.
 
 ## Why
 
