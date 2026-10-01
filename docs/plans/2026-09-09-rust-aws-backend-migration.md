@@ -1321,6 +1321,60 @@ committed.
 **Done means:** all suites pass; the changed modules stay at 100% line coverage;
 `scripts/check-template.sh` passes; the capture step is in `infra/README.md`.
 
+#### E10. The page's full address as the template's input, for pages behind a forwarding path (C39)
+
+**Why:** on 2026-10-01 the first deployed login failed with Cognito's `redirect_mismatch`. The
+user's browser runs on another machine and reaches the page through VS Code's port forwarding over
+Tailscale, at `https://dev.tail13dce8.ts.net/proxy/8000/timeline.html`. The page sends Cognito its
+own address without the query string
+([cognito-login.js:27](../../frontend/infra/cognito-login.js#L27)):
+`https://dev.tail13dce8.ts.net/proxy/8000/timeline.html`. The template, though, builds the only
+allowed callback as `${FrontendOrigin}/timeline.html`, which cannot contain the `/proxy/8000`
+part. Setting `FrontendOrigin` to `https://dev.tail13dce8.ts.net/proxy/8000` would fix the callback
+but break CORS, because a browser's `Origin` header never has a path. E5 originally specified a
+full-address `FrontendUrl`; the build replaced it with `FrontendOrigin` (see the deviation note
+under V2e's status, "`FrontendOrigin` instead of `FrontendUrl`"), which is what this undoes.
+
+**Design:**
+- **One parameter, `FrontendUrl`**: the page's full address, default
+  `http://localhost:8000/timeline.html`. It replaces `FrontendOrigin`. `AllowedPattern`
+  `^https?://[^/]+(/[^?#]*)?/timeline\.html$` refuses at deploy time anything without a scheme, with
+  a query string or fragment, or not ending in `/timeline.html`, with a `ConstraintDescription`
+  saying so. Cognito still allows plain `http` only for `localhost`; it enforces that itself.
+- **Cognito's callback and logout addresses** are `!Ref FrontendUrl`, exactly.
+- **The CORS origin is derived from it inside the template**, so the user enters one value:
+  `!Join ["", [!Select [0, !Split ["/", !Ref FrontendUrl]], "//", !Select [2, !Split ["/", !Ref FrontendUrl]]]]`.
+  Splitting `https://dev.tail13dce8.ts.net/proxy/8000/timeline.html` on `/` gives `https:`, an
+  empty piece, then `dev.tail13dce8.ts.net`, so the result is `https://dev.tail13dce8.ts.net`; for
+  the default it is `http://localhost:8000`. Used for the API's `AllowOrigins` and the bucket's
+  `AllowedOrigins`. A `Condition` can't hold a string, so the expression is written in both places;
+  the template test below checks they are identical.
+- **Everything else that names the old parameter**: [infra/README.md](../../infra/README.md)'s
+  step 5 answer becomes "`FrontendUrl`: the address you open `timeline.html` at, without
+  `?deploy=…`", with the Tailscale address as a second example; step 6 says to open the page at that
+  same address; D2's `curl` uses that origin; step 9's redeploy command uses `FrontendUrl`.
+  [scripts/write-deploy-config.sh](../../scripts/write-deploy-config.sh)'s closing message stops
+  naming `localhost:8000` and says "open your page with `?deploy=<stage>`".
+- **Redeploying the existing stack:** the local `infra/samconfig.toml` (written by
+  `sam deploy --guided`, untracked) names `FrontendOrigin`; CloudFormation refuses an unknown
+  parameter. The README tells the user to rerun `sam deploy --guided` once, which rewrites it.
+  Renaming the parameter changes no resource's name, so the stack is updated in place, not
+  replaced; the change set preview should show `Modify` on `UserPoolClient`, `RawUploadsBucket`,
+  `HttpApi` and nothing else, and I'll check that with the user before they confirm.
+
+**Tests:**
+- A new template test file, `backend/timeline-api/tests/template_frontend_url.rs`, text checks in
+  the style of `template_event_logging.rs`: `FrontendUrl` exists with the default and pattern
+  above; `FrontendOrigin` appears nowhere; `UserPoolClient`'s callback and logout are
+  `!Ref FrontendUrl`; the API's and bucket's origins are the same derivation expression.
+- `scripts/check-template.sh` passes.
+- **Not testable locally:** that CloudFormation evaluates the derivation as described. Checked on
+  AWS by deployment checks D2 (the `curl` with the Tailscale origin gets the header) and D3 (login
+  returns to the page).
+
+**Done means:** all suites pass; `scripts/check-template.sh` passes; the README and script are
+updated; after the user redeploys, the login returns to the page (D3).
+
 #### What only the first deployment can check
 
 Each of these is run by hand after `sam deploy`, and the results are recorded in an analysis
@@ -2042,6 +2096,21 @@ reads that cache. **Mitigation in plan:** if it doesn't, `eval "$(aws configure 
 --format env)"` puts the same temporary credentials into environment variables, which the SDK does
 read; still no access keys. **Open:** trigger is the first local run with
 `TIMELINE_CLASSIFIER=bedrock`.
+
+### C39 [RESOLVED]: The template can't describe a page served under a path
+Original concern (found by the user's first deployed login, 2026-10-01): `FrontendOrigin` plus a
+fixed `/timeline.html` can't express `https://dev.tail13dce8.ts.net/proxy/8000/timeline.html`,
+so Cognito refused the return address. The build had swapped E5's `FrontendUrl` for an origin
+without asking, and the README assumed the browser runs on the same machine as the server.
+**Resolution:** E10 restores a full-address parameter and derives the origin from it; see
+[E10 (line 1324)](2026-09-09-rust-aws-backend-migration.md#L1324).
+
+### C40 [OPEN]: Whether VS Code's forwarding passes Cognito's return through intact
+Cognito returns to the page with `?code=…&state=…`. I haven't checked that VS Code's `/proxy/8000/`
+forwarding over Tailscale keeps the query string and serves `timeline.html` for it. The page
+already loaded with `?deploy=dev` through it, which suggests query strings pass, but that isn't
+the same request. **Mitigation in plan:** none needed if it works; if not, the page shows no
+login and the address bar shows what arrived. **Open:** trigger is D3 after the redeploy.
 
 ### C11 [RESOLVED]: `UploadStatus`'s `Pending`/`Processing` are persisted but never read
 Confirmed by `grep`, not assumed: no route reads `UploadRecord.status`, and `process_upload`
