@@ -819,8 +819,78 @@ pins this for both stores. It checks that a later `get` still returns nothing.
 `app.rs` does: `{}`, all three `null`, and an unknown field each get 400. A valid request is still
 accepted, which the existing PATCH tests already cover.
 
+#### Flag handles: saves only for messages the server sent
+
+Added 2026-10-01 at the user's direction.
+
+**The gap.** Saving flags names a conversation ID and a message ID, and today the server stores the
+flags without checking that such a message exists. Messages aren't stored individually; they exist
+only inside the uploaded `conversations.json` in S3. Checking each save against that file would
+mean downloading and parsing it, up to tens of MB, on every checkbox click. Orphaned rows are
+invisible, because the export only looks up flags for messages in the file
+([export.rs:85](../../backend/timeline-api/src/routes/export.rs#L85)), and they can only be written
+under the caller's own account. But a buggy or malicious client could pile them up.
+
+**The fix: a handle per message, issued by the server and required on every save.**
+
+- **What a handle is.** A signature over the user ID, conversation ID and message ID, computed with
+  a secret key only the server holds (HMAC-SHA256). On a save, the server recomputes it from the
+  IDs in the request and compares. A made-up ID won't match, and nobody without the key can make a
+  handle that does. Nothing is stored, and checking needs no database lookup. This works like the
+  presigned S3 addresses tested in §V2b, which carry their own proof.
+- **What it does and doesn't stop.** It stops saves for messages that don't exist in the user's
+  uploads. It doesn't stop the user themselves from scripting saves, since they can read their own
+  handles in the browser. That's acceptable: such a script can only do what clicking already does.
+- **Exact signed content.** The fixed label `flag-handle-v1`, then the user ID, conversation ID and
+  message ID, each preceded by its length in bytes. The length prefix means two different ID
+  combinations can never produce the same signed text, even if a user ID contains a separator
+  character. The handle is sent as unpadded base64url text, 43 characters. The comparison uses the
+  `hmac` crate's constant-time check (`verify_slice`), so timing reveals nothing about a correct
+  handle.
+- **Where the page gets handles.** In the reply to `GET /export`, never in `conversations.json`,
+  which is unchanged. The route already goes through every user message to build the file
+  ([export.rs:85](../../backend/timeline-api/src/routes/export.rs#L85)); in that same pass it adds
+  each message's handle to its reply: `{"export_url": "...", "flag_handles": {"<message id>":
+  "<handle>"}}`. No extra download or parsing.
+- **Where the page sends them.** [load-flow.js](../../frontend/ui/load-flow.js) keeps
+  `flag_handles` in page state, from both places it calls `/export` (lines 79 and 190).
+  `patchFlagsToBackend` in [api-client.js](../../frontend/infra/api-client.js) sends the message's
+  handle in the request body. A message with no handle is reported with the existing "couldn't find
+  this message's server-side id" outcome, not sent.
+- **Checking on the server.** `FlagPatchRequest` (Change 1 above) gains a required `handle` field.
+  The route verifies it before calling `set_user_flags`. A missing handle is 400 Bad Request; a
+  handle that doesn't match is 403 Forbidden. [flag-edits.js](../../frontend/ui/flag-edits.js)
+  words a 403 as "Could not save: this page's data is out of date. Reload the page."
+- **Not affected.** Upload processing writes reviews read from the uploaded file itself, so it
+  already knows the messages are real. Detection writes automatic flags, not user flags.
+- **The key.** New module `timeline-api/src/flag_handles.rs` holds signing and checking.
+  - Locally, the key is 32 random bytes generated at startup with `rand` (already a dependency),
+    as the dev login keys already are ([dev_only.rs](../../backend/timeline-api/src/dev_only.rs)).
+    Restarting the local server invalidates handles, but it also wipes all in-memory data, so the
+    page has to reload either way.
+  - On Lambda, the key comes from an environment variable that
+    [infra/template.yaml](../../infra/template.yaml) fills from AWS Secrets Manager. If it's
+    missing or shorter than 32 bytes, the Lambda refuses to start, with an error naming the
+    variable. It never silently falls back to a generated key, because separate Lambda instances
+    would then reject each other's handles.
+- **Library.** `hmac` and `sha2` from RustCrypto (both MIT/Apache-2.0), already in the build
+  indirectly through the AWS SDK's request signing; `base64` (MIT/Apache-2.0), likewise already
+  present.
+
+**Tests.**
+- Route tests in `timeline-api/tests/`, sending real requests to the router: a valid handle saves;
+  rejected with 403 are a handle for a different message, a different conversation, a different
+  user, a made-up message ID with someone else's handle, and a handle with one character changed;
+  rejected with 400 is a missing handle.
+- An `/export` test: every user message in the file has a handle in the reply, and the file itself
+  is byte-for-byte what it was before this change, so `conversations.json` provably doesn't change.
+- The existing browser tests that click checkboxes and confirm the save keep passing; a new browser
+  test confirms a 403 shows the "reload the page" message.
+- A test that a Lambda configuration without the key variable fails to start.
+
 **Done means**: all suites pass; the coverage report shows both DynamoDB files at 100% line
-coverage apart from the three commented sort-key backstops; and C18 is marked resolved.
+coverage apart from the three commented sort-key backstops, and `flag_handles.rs` at 100%; and C18
+is marked resolved.
 
 ### V3 — Bedrock-based classification
 **Reference implementation.** The browser-side "Classify with AI" code is deleted from the
@@ -1322,6 +1392,20 @@ Found while implementing §V2b: six places in `conversations_table.rs` and the f
 Separately, three sort-key checks can't be reached by any test; on 2026-10-01 you decided they stay,
 commented as currently unreachable backstops (§V2c). **Mitigation in plan:** §V2c lists every
 default-filling case and designs the fix. **Open:** trigger is your approval of §V2c.
+
+### C19 [OPEN]: The flag-handle key on AWS is designed but can't be checked until deployment
+§V2c's flag-handle key comes from AWS Secrets Manager through the SAM template, which has never been
+deployed. **Mitigation in plan:** the Lambda refuses to start without the key, so a broken setup
+fails loudly instead of silently. A test covers that. **Open:** trigger is the first real `sam
+deploy` in §V2. Changing the key later invalidates every handle already issued until the page
+reloads; a key-rotation procedure is worth planning at that point.
+
+### C20 [OPEN]: The extra size of the `/export` reply is estimated, not measured
+About 100 bytes per message (a 36-character ID plus a 43-character handle and JSON punctuation),
+roughly 450 KB for an export the size of the user's. **Mitigation in plan:** none needed to build
+it. **Open:** measure the reply size in the `/export` test using the checked-in fixture, and report
+the per-message figure. Trigger: if a real export's reply passes 5 MB, consider sending handles per
+conversation on demand instead.
 
 ### C11 [RESOLVED]: `UploadStatus`'s `Pending`/`Processing` are persisted but never read
 Confirmed by `grep`, not assumed: no route reads `UploadRecord.status`, and `process_upload`
