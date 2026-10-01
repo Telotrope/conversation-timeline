@@ -10,6 +10,7 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
+use aws_sdk_s3::operation::get_object::GetObjectError;
 use aws_sdk_s3::presigning::PresigningConfig;
 use aws_sdk_s3::Client;
 use timeline_core::ports::errors::ObjectStoreError;
@@ -77,7 +78,13 @@ impl ObjectStore for S3ObjectStore {
             .key(key)
             .send()
             .await
-            .map_err(backend_error)?;
+            .map_err(|e| match e.as_service_error() {
+                // A missing key is the caller's "no such object" case; any
+                // other failure -- including a missing bucket, which is a
+                // misconfiguration -- stays a backend error.
+                Some(GetObjectError::NoSuchKey(_)) => ObjectStoreError::NotFound,
+                _ => backend_error(e),
+            })?;
         let bytes = output.body.collect().await.map_err(backend_error)?;
         Ok(bytes.to_vec())
     }
