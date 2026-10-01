@@ -1373,6 +1373,22 @@ the XML `<message index="N">` tags and `escapeForPromptTags`
 **AWS resources**: SQS queue, Bedrock model access enabled on the account, `ClassificationRuns`
 table, IAM scoped to `bedrock:Converse` on the specific model ARN.
 
+**Running the application locally with real Bedrock** (added 2026-10-01 at the user's request; see
+C37). The local server (`cargo run -p timeline-api`, the V2a harness) must be able to classify
+with real Bedrock, so the user can try classification from `timeline.html` on their own machine.
+Everything except the model call stays local: in-memory storage, `_dev/login`, the
+`_dev/local-storage` upload path.
+- **A switch picks the classifier**: an environment variable `TIMELINE_CLASSIFIER` with two
+  values, `heuristic` (default, no AWS, no cost) and `bedrock`. Parsed once at startup into an
+  enum; any other value stops startup with an error naming the bad value.
+- **Credentials**: with `bedrock`, the server uses the AWS SDK's standard credential lookup, which
+  picks up what `aws login` saved. No access keys. If none are found, startup fails with that
+  message rather than failing on the first classification.
+- **No SQS locally**: like `process_upload` in V2a, the local route calls the batch loop directly
+  in the background instead of going through the queue. The checkpoint is written to the in-memory
+  store, so the "save every 5 batches" logic still runs.
+- **Cost guard**: the startup log line states that Bedrock is on and every call costs money.
+
 **Tests** (per §2.1, no LocalStack Bedrock emulation available):
 - `wiremock` unit tests: prompt-building snapshot tests (`insta`), and response-parsing tests
   covering every documented failure mode at
@@ -1383,7 +1399,14 @@ table, IAM scoped to `bedrock:Converse` on the specific model ARN.
 - One verified real communication sample: a captured `Converse` request/response pair from a real
   dev-account Bedrock call, personal content replaced with synthetic-but-structurally-identical
   text, checked in at `backend/tests/fixtures/bedrock_converse_sample.json`.
-- A small number of real-Bedrock integration tests, run manually/nightly given per-call cost.
+- A small number of real-Bedrock integration tests. They are checked-in test code, but marked
+  `#[ignore]` so the ordinary `cargo test --workspace` skips them (each call costs money). They run
+  only on demand, with `cargo test --workspace -- --ignored`, after `aws login`. Claude runs them
+  only when the user asks for that in the same conversation. One of them drives the local server
+  with `TIMELINE_CLASSIFIER=bedrock` through its HTTP routes (upload, start classification, read
+  flags), so Bedrock is tested as part of the application, not only as an isolated call.
+- **Manual check**: with `TIMELINE_CLASSIFIER=bedrock`, the user uploads a small export in
+  `timeline.html` against the local server and classifies it.
 - Regression tests: retry-once-per-batch, abort-after-first-systemic-failure, positional-partial-
   application ([timeline-project-decisions.md:307-310](timeline-project-decisions.md#L307)) ported
   as literal cases against the mocked HTTP layer.
@@ -2001,6 +2024,16 @@ log-read-process step as a tested library function (see §E9's status note,
 [line 1254](2026-09-09-rust-aws-backend-migration.md#L1254)); untested now is only the binary reading
 the setting and passing `println!`. **Open:** trigger is the capture step: no log line means
 the wiring is wrong.
+
+### C37 [RESOLVED]: V3 had no way to use Bedrock from the locally running application
+Original concern (raised by the user, 2026-10-01): V3 only described isolated real-Bedrock tests,
+"run manually/nightly", which was vague about who runs them and when, and left no way to try
+Bedrock classification through the application running locally. The user wants Bedrock tested as
+part of the application.
+**Resolution:** V3 gains a local-run subsection (a `TIMELINE_CLASSIFIER` switch, `aws login`
+credentials, no SQS locally) and its test list now says exactly when the paid tests run and adds
+one that goes through the local server's HTTP routes; see
+[V3 local run (line 1376)](2026-09-09-rust-aws-backend-migration.md#L1376).
 
 ### C11 [RESOLVED]: `UploadStatus`'s `Pending`/`Processing` are persisted but never read
 Confirmed by `grep`, not assumed: no route reads `UploadRecord.status`, and `process_upload`
