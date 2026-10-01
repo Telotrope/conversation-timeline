@@ -132,6 +132,22 @@ Resources:
       TokenValidityUnits:
         AccessToken: hours
 
+  # --- Secrets -----------------------------------------------------------
+
+  # Signs the flag handles GET /export issues and PATCH .../flags checks (see
+  # backend/timeline-api/src/flag_handles.rs and the migration plan's §V2c).
+  # Every Lambda instance must use the same key, so it can't be generated at
+  # startup. 64 letters and digits, comfortably over the 32-byte minimum the
+  # Lambda enforces. Rotating it invalidates every handle already issued
+  # until the page reloads (plan C19).
+  FlagHandleKeySecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "timeline-flag-handle-key-${Stage}"
+      GenerateSecretString:
+        PasswordLength: 64
+        ExcludePunctuation: true
+
   # --- Compute / API -----------------------------------------------------
 
   ApiFunction:
@@ -150,6 +166,8 @@ Resources:
           TIMELINE_USERS_TABLE: !Ref UsersTable
           TIMELINE_COGNITO_USER_POOL_ID: !Ref UserPool
           TIMELINE_COGNITO_CLIENT_ID: !Ref UserPoolClient
+          # Resolved at deploy time; the Lambda refuses to start without it.
+          TIMELINE_FLAG_HANDLE_KEY: !Sub "{{resolve:secretsmanager:${FlagHandleKeySecret}}}"
       Policies:
         - S3CrudPolicy:
             BucketName: !Ref RawUploadsBucket
