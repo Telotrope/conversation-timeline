@@ -751,21 +751,11 @@ Three error checks guard situations that DynamoDB itself prevents:
 3. [message_flags_table.rs:156](../../backend/timeline-storage/src/dynamo/message_flags_table.rs#L156),
    in `list_for_conversation`: "this row has no `sk`". Same reason as 1.
 
-These checks aren't wrong; if DynamoDB ever broke its own rules, an error is the right response.
-But no test can reach them, so they hold coverage below 100%, and the project's rules treat
-unreachable code as something to fix rather than to test around. The fix below keeps every
-check, but routes each one through code that reachable cases also use:
-
-- **Checks 1 and 3** use the new shared `required_string` helper (below). Its "missing" error is
-  reached by the test for a conversation row with no `upload_id`, and by the new tests in this
-  section.
-- **Check 2** merges with the "is the rest a valid id" check that follows it: one test, "the sort
-  key is `CONV#` followed by a valid id", with one error. The error message includes the whole
-  sort key, so no detail is lost. The existing test for `CONV#not-a-uuid` reaches it.
-
-Caveat: line coverage should reach 100%. Region coverage (which counts each separate path within a
-line) may still show the early-return path at each call site as unexercised. I'll measure and
-report both, not assume.
+**Decision (2026-10-01, the user):** these stay as they are, each with a comment saying it is
+currently unreachable and kept as a backstop. Caught errors that current code can't throw, but
+future code could, are an accepted exception to 100% coverage. The comments were added in the
+same commit as this decision. The earlier proposal to route them through shared helpers is
+dropped.
 
 #### Design
 
@@ -794,8 +784,8 @@ read it through the real trait method. One test per malformed case in the two ta
 `an_auto_write_sets_no_user_override`, which must keep passing. All run against DynamoDB
 Local. The existing contract suites must still pass unchanged.
 
-**Done means**: all suites pass; the coverage report shows 100% line coverage for both DynamoDB
-files (region coverage reported alongside); and C18 is marked resolved.
+**Done means**: all suites pass; the coverage report shows both DynamoDB files at 100% line
+coverage apart from the three commented sort-key backstops; and C18 is marked resolved.
 
 ### V3 — Bedrock-based classification
 **Reference implementation.** The browser-side "Classify with AI" code is deleted from the
@@ -1294,8 +1284,9 @@ alternative is not adopted.
 ### C18 [OPEN]: DynamoDB adapters fill in defaults for missing or malformed values
 Found while implementing §V2b: six places in `conversations_table.rs` and the flag-reading code in
 `message_flags_table.rs` replace a missing or wrong-typed stored value with a default, or drop it.
-Separately, three sort-key checks can't be reached by any test. **Mitigation in plan:** §V2c lists
-every case and designs the fix. **Open:** trigger is your approval of §V2c.
+Separately, three sort-key checks can't be reached by any test; on 2026-10-01 you decided they stay,
+commented as currently unreachable backstops (§V2c). **Mitigation in plan:** §V2c lists every
+default-filling case and designs the fix. **Open:** trigger is your approval of §V2c.
 
 ### C11 [RESOLVED]: `UploadStatus`'s `Pending`/`Processing` are persisted but never read
 Confirmed by `grep`, not assumed: no route reads `UploadRecord.status`, and `process_upload`
