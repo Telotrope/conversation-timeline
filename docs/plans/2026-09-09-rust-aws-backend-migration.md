@@ -1355,6 +1355,12 @@ under V2e's status, "`FrontendOrigin` instead of `FrontendUrl`"), which is what 
   same address; D2's `curl` uses that origin; step 9's redeploy command uses `FrontendUrl`.
   [scripts/write-deploy-config.sh](../../scripts/write-deploy-config.sh)'s closing message stops
   naming `localhost:8000` and says "open your page with `?deploy=<stage>`".
+- **A "page address changed" note in the README** (kept, single allowed origin, chosen by the user
+  2026-10-01 over allowing any origin): if the page's address changes (a different forwarded port,
+  a renamed Tailscale machine, another device), Cognito shows `redirect_mismatch` and API calls
+  fail in the browser with a CORS error that the page reports only as a failed request. Both come
+  from `FrontendUrl`, so the fix is one redeploy:
+  `sam deploy --parameter-overrides Stage=dev FrontendUrl=<new address> LogS3Events=off`.
 - **Redeploying the existing stack:** the local `infra/samconfig.toml` (written by
   `sam deploy --guided`, untracked) names `FrontendOrigin`; CloudFormation refuses an unknown
   parameter. The README tells the user to rerun `sam deploy --guided` once, which rewrites it.
