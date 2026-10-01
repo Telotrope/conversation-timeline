@@ -38,4 +38,4 @@ with open(sys.argv[1], "w") as f:
     f.write("\n")
 print(f"wrote {sys.argv[1]}")
 PY
-echo "Open the page with ?deploy=$stage once, e.g. http://localhost:8000/timeline.html?deploy=$stage"
+echo "Open your page (the stack's FrontendUrl) with ?deploy=$stage added, once."

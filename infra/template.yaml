@@ -25,14 +25,20 @@ Parameters:
     Type: String
     Default: dev
     Description: Deployment stage name (dev/staging/prod), used to namespace resources.
-  FrontendOrigin:
+  FrontendUrl:
     Type: String
-    Default: http://localhost:8000
+    Default: http://localhost:8000/timeline.html
+    AllowedPattern: '^https?://[^/]+(/[^?#]*)?/timeline\.html$'
+    ConstraintDescription: >
+      must be the full address timeline.html is opened at, starting with
+      http:// or https:// and ending in /timeline.html, with no ?... or #...
     Description: >
-      Where timeline.html is served from (scheme, host and port, no path or
-      trailing slash). The only origin allowed by CORS on the API and the
-      bucket, and Cognito returns you to <origin>/timeline.html. Cognito
-      accepts plain http only for localhost.
+      The full address you open timeline.html at, without ?deploy=... (for
+      example https://dev.example.ts.net/proxy/8000/timeline.html behind a
+      forwarding proxy). Cognito returns you to exactly this address, and
+      its origin (scheme, host and port) is the only one CORS allows on the
+      API and the bucket (migration plan §V2e, E10). Cognito accepts plain
+      http only for localhost.
   LogS3Events:
     Type: String
     Default: "off"
@@ -73,9 +79,12 @@ Resources:
       CorsConfiguration:
         CorsRules:
           # The page PUTs uploads to, and GETs exports from, presigned
-          # addresses directly (migration plan §1.6), from its one origin.
+          # addresses directly (migration plan §1.6), from its one origin:
+          # FrontendUrl's scheme and host (E10), the same expression as the
+          # API's CorsConfiguration.
           - AllowedMethods: [PUT, GET]
-            AllowedOrigins: [!Ref FrontendOrigin]
+            AllowedOrigins:
+              - !Join ["", [!Select [0, !Split ["/", !Ref FrontendUrl]], "//", !Select [2, !Split ["/", !Ref FrontendUrl]]]]
             AllowedHeaders: [content-type]
 
   ConversationsTable:
@@ -158,9 +167,9 @@ Resources:
       AllowedOAuthScopes: [openid, email]
       SupportedIdentityProviders: [COGNITO]
       CallbackURLs:
-        - !Sub "${FrontendOrigin}/timeline.html"
+        - !Ref FrontendUrl
       LogoutURLs:
-        - !Sub "${FrontendOrigin}/timeline.html"
+        - !Ref FrontendUrl
       ExplicitAuthFlows: !If
         - IsDev
         - [ALLOW_USER_SRP_AUTH, ALLOW_REFRESH_TOKEN_AUTH, ALLOW_USER_PASSWORD_AUTH]
@@ -298,7 +307,10 @@ Resources:
       # resources.
       StageName: "$default"
       CorsConfiguration:
-        AllowOrigins: [!Ref FrontendOrigin]
+        # FrontendUrl's scheme and host (E10), the same expression as the
+        # bucket's CorsRules.
+        AllowOrigins:
+          - !Join ["", [!Select [0, !Split ["/", !Ref FrontendUrl]], "//", !Select [2, !Split ["/", !Ref FrontendUrl]]]]
         AllowHeaders: [authorization, content-type]
         AllowMethods: [GET, POST, PATCH]
         MaxAge: 600
