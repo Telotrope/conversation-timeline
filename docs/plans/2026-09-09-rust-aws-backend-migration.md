@@ -784,6 +784,41 @@ read it through the real trait method. One test per malformed case in the two ta
 `an_auto_write_sets_no_user_override`, which must keep passing. All run against DynamoDB
 Local. The existing contract suites must still pass unchanged.
 
+#### Saving user flags: an empty request, and the two stores disagreeing
+
+Added 2026-10-01, approved by the user (points 1 and 2 from that day's discussion).
+
+**The disagreement.** `set_user_flags` takes up to three changes, each "set to true/false" or "leave
+alone". When all three are "leave alone" and the message has no saved flag record yet, the stores
+disagree:
+
+| | In-memory stand-in | DynamoDB |
+|---|---|---|
+| Stores | a new blank record | nothing |
+| Returns | that blank record (route answers 200) | "not found" (route answers 404) |
+
+The page never sends such a request; it always sends all three flags as true or false
+([flag-edits.js:27-37](../../frontend/ui/flag-edits.js#L27-L37)). Upload processing skips reviews
+with no changes. Only a direct call to `PATCH .../flags` can send one: `{}`, all three `null`, or
+misspelled field names, which the server currently ignores silently.
+
+**Change 1: the route rejects bad requests.**
+[routes/flags.rs](../../backend/timeline-api/src/routes/flags.rs) gets its own request type,
+`FlagPatchRequest`, which refuses unknown field names (`#[serde(deny_unknown_fields)]`) and is
+converted to `FlagOverrides`. A request with no changes, or with an unknown field, gets 400 Bad
+Request with a message saying which. The shared `FlagOverrides` type stays as it is, because upload
+processing also reads it from uploaded files, and making it strict there is a separate decision.
+
+**Change 2: the in-memory stand-in matches DynamoDB.** An empty save on a message with no record
+returns "not found" and creates nothing
+([memory/message_flags.rs](../../backend/timeline-storage/src/memory/message_flags.rs)). A new
+contract test, `an_empty_user_update_on_a_message_with_no_record_is_not_found_and_creates_nothing`,
+pins this for both stores. It checks that a later `get` still returns nothing.
+
+**Tests for change 1**, in `timeline-api/tests/`, sending real requests to the router the way
+`app.rs` does: `{}`, all three `null`, and an unknown field each get 400. A valid request is still
+accepted, which the existing PATCH tests already cover.
+
 **Done means**: all suites pass; the coverage report shows both DynamoDB files at 100% line
 coverage apart from the three commented sort-key backstops; and C18 is marked resolved.
 
