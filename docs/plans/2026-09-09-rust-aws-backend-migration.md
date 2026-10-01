@@ -581,7 +581,13 @@ and `sam deploy`.
 - **License**: DynamoDB Local is under AWS's own license, not an open-source one. I read it on
   2026-09-30. The plan's use fits its terms: a separate program on our own machines, testing code
   that will run against AWS, never checked in or shipped. It does require an AWS account in good
-  standing. Details and the remaining decision are in C15.
+  standing, which you accepted on 2026-10-01. Details are in C15. Rules that follow from the
+  license:
+  - The JAR is never committed, attached to a release, or baked into an image we publish.
+  - Tests run only on machines the account holder owns or controls. A hosted CI service counts
+    only if the account holder controls the runner.
+  - Nothing beyond its documented command-line options is used. No decompiling, no patching.
+  - If the license ends, every copy is deleted, including caches and the `backend/.tools/` folder.
 
 #### S3: stand-in choice (decided 2026-09-30: A, `s3s` + `s3s-fs`)
 
@@ -1119,7 +1125,7 @@ also archived, and `s3rver` is archived too. §V2b compares four candidates and 
 `s3s-fs`, which you chose on 2026-09-30. The trigger to mark this resolved: §V2b's "done means"
 list is met.
 
-### C15 [OPEN]: DynamoDB Local is not under a permissive open-source license
+### C15 [RESOLVED]: DynamoDB Local is not under a permissive open-source license
 AWS provides it free, but under its own license. It isn't one of the MIT/BSD/Apache-2.0/ISC
 licenses that the reuse rule in [CLAUDE.md](../../CLAUDE.md) lists.
 
@@ -1150,6 +1156,8 @@ the version pinned by checksum. **Open:** the AWS-account requirement. You'll ne
 §V2's deploy anyway, but every machine that runs the tests, including any future CI (automated
 test) server, needs one too. Trigger: your approval of §V2b. If that's unacceptable, the
 alternative is Moto server (Apache-2.0), which also fakes DynamoDB.
+**Resolution:** on 2026-10-01 you accepted the AWS-account requirement. The rules that follow from
+the license are listed in [§V2b's license bullet (line 581)](2026-09-09-rust-aws-backend-migration.md#L581).
 
 ### C16 [OPEN]: The test tables' key layout is copied from the SAM template, not read from it
 §V2b's test helper creates tables with `pk`/`sk` string keys to match
@@ -1159,7 +1167,7 @@ Reading the template directly is harder than it looks: it uses CloudFormation ta
 with a comment pointing at the template lines. **Open:** trigger is the first change to a table's
 key layout in the template, or the real-AWS run in §V2, which would catch a mismatch for real.
 
-### C17 [OPEN]: Requiring Java for `cargo test --workspace`
+### C17 [RESOLVED]: Requiring Java for `cargo test --workspace`
 §V2b makes the DynamoDB tests fail, not skip, when Java or the DynamoDB Local JAR is missing. That
 means a fresh machine can't run the full test suite until the one-time setup is done. The
 alternative is a Cargo feature, off by default, that turns these tests on. That would keep plain
@@ -1167,6 +1175,9 @@ alternative is a Cargo feature, off by default, that turns these tests on. That 
 adapters went untested in the first place. **Mitigation in plan:** the failure message names the
 exact setup command. **Open:** your call. Trigger: your review of §V2b, or the first time the setup
 requirement gets in the way (for example, a CI machine without Java).
+**Resolution:** on 2026-10-01 you chose to have the tests fail. That is what
+[§V2b (line 575)](2026-09-09-rust-aws-backend-migration.md#L575) already says. The Cargo-feature
+alternative is not adopted.
 
 ### C11 [RESOLVED]: `UploadStatus`'s `Pending`/`Processing` are persisted but never read
 Confirmed by `grep`, not assumed: no route reads `UploadRecord.status`, and `process_upload`
