@@ -17,6 +17,12 @@ export const state = {
   // to the auto-detected default.
   overrides: {},
 
+  // One handle per message of yours, from the server's GET /export reply:
+  // { [serverMessageId]: handle }. A flag save must send the message's
+  // handle back, which proves to the server the message is real. Replaced
+  // whenever an export is loaded; null before the first one.
+  flagHandles: null,
+
   // Global visibility switches (session-only UI state, not saved to file).
   // These affect the *effective* value of every flag everywhere: Calendar,
   // Conversations, and Review all read through this, so counts/icons stay

@@ -126,6 +126,7 @@ export const SaveOutcome = Object.freeze({
   NOT_LOGGED_IN: 'not-logged-in',
   NO_SERVER_ID: 'no-server-id',   // the message has no server-side id to save under
   SERVER_ERROR: 'server-error',   // `detail` says what went wrong
+  STALE_PAGE: 'stale-page',       // the server refused the message's handle: reload the page's data
 });
 
 // Persists your confirmed flags to the real backend, resolving to
@@ -141,15 +142,19 @@ export async function patchFlagsToBackend(msg, values){
   }
   const conv = state.rawData && state.rawData[msg.conv];
   const rawMsg = conv && conv.chat_messages && conv.chat_messages[msg.rawIndex];
-  if(!conv || !rawMsg){
+  // Every save carries the handle GET /export issued for this message,
+  // proving to the server the message is real (migration plan §V2c).
+  const handle = rawMsg && state.flagHandles && state.flagHandles[rawMsg.uuid];
+  if(!conv || !rawMsg || !handle){
     return { outcome: SaveOutcome.NO_SERVER_ID };
   }
   try{
     const res = await fetch(`${API_BASE}/conversations/${conv.uuid}/messages/${rawMsg.uuid}/flags`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AUTH_TOKEN}` },
-      body: JSON.stringify(values),
+      body: JSON.stringify({ ...values, handle }),
     });
+    if(res.status === 403) return { outcome: SaveOutcome.STALE_PAGE };
     if(!res.ok) throw new Error(`server returned ${res.status}`);
     return { outcome: SaveOutcome.SAVED };
   } catch(e){

@@ -16,6 +16,7 @@ function saveMessage({ outcome, detail }){
     case SaveOutcome.NOT_LOGGED_IN: return 'Not saved to the server — log in first.';
     case SaveOutcome.NO_SERVER_ID: return "Could not save — couldn't find this message's server-side id.";
     case SaveOutcome.SERVER_ERROR: return 'Could not save to the server: ' + detail;
+    case SaveOutcome.STALE_PAGE: return "Could not save: this page's data is out of date. Reload the page.";
   }
 }
 

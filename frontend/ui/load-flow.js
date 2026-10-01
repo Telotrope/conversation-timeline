@@ -17,14 +17,15 @@ import { renderSubtitle } from './views/header.js';
 import { renderReviewTable } from './views/review.js';
 import { failLoadProgress, hideLoadProgress, makeRateEstimator, setLoadProgressIndeterminate, setLoadStatus, setSaveStatus, showLoadProgress, showRestoredNotice } from './widgets/status-indicators.js';
 
-// Applies an already-downloaded export: parses it, replaces the page's
-// state, and shows the timeline. Returns false if the export held no
+// Applies an already-downloaded export, plus the flag handles from the same
+// GET /export reply: parses it, replaces the page's state, and shows the
+// timeline. Returns false if the export held no
 // conversations, leaving the caller to report that however suits it.
 //
 // Shared by the upload path and the restore-on-load path below, so a
 // restored session goes through exactly the same rendering as a fresh
 // upload rather than a parallel copy that can drift.
-function applyExportText(text){
+function applyExportText(text, flagHandles){
   const parsed = parseUploadedConversations(text);
   if(parsed.conversations.length === 0) return false;
 
@@ -34,6 +35,7 @@ function applyExportText(text){
   state.humanById = new Map(state.humanMessages.map(m => [m.id, m]));
   state.blocks = buildBlocks();
   state.rawData = parsed.rawData;
+  state.flagHandles = flagHandles;
 
   // Your confirmed flags come from whatever the server's export embedded
   // (overrides you PATCHed to the backend earlier -- see
@@ -80,10 +82,10 @@ export async function tryRestoreSession(){
       headers: { 'Authorization': `Bearer ${token}` },
     });
     if(!exportRes.ok) return;
-    const { export_url } = await exportRes.json();
+    const { export_url, flag_handles } = await exportRes.json();
     const downloadRes = await fetch(`${API_BASE}${export_url}`);
     if(!downloadRes.ok) return;
-    if(!applyExportText(await downloadRes.text())) return;
+    if(!applyExportText(await downloadRes.text(), flag_handles)) return;
 
     showRestoredNotice(sub);
     applyLocationHash();
@@ -191,7 +193,7 @@ export async function handleLoadClick(){
       headers: { 'Authorization': `Bearer ${token}` },
     });
     if(!exportRes.ok) throw new Error(await describeFailure('reading back the processed export', exportRes));
-    const { export_url } = await exportRes.json();
+    const { export_url, flag_handles } = await exportRes.json();
 
     const downloadRes = await fetch(`${API_BASE}${export_url}`);
     if(!downloadRes.ok) throw new Error(await describeFailure('downloading the processed export', downloadRes));
@@ -213,7 +215,7 @@ export async function handleLoadClick(){
 
     setLoadProgressIndeterminate('Preparing the timeline…');
 
-    if(!applyExportText(text)){
+    if(!applyExportText(text, flag_handles)){
       setLoadStatus('That file parsed, but contained no conversations — is it the right export?', true);
       failLoadProgress();
       return;
