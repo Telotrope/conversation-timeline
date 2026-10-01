@@ -219,3 +219,307 @@ async fn every_method_reports_a_missing_table_as_a_backend_error() {
         Err(StoreError::Backend(_))
     ));
 }
+
+// ---- Malformed values: errors, never silent defaults (migration plan §V2c).
+// Each test writes a row the adapter would never write, then reads it back
+// through the real trait method. The error must say which attribute is
+// wrong and what was found.
+
+fn assert_backend_error_mentions<T: std::fmt::Debug>(
+    result: Result<T, StoreError>,
+    expected: &[&str],
+) {
+    match result {
+        Err(StoreError::Backend(e)) => {
+            let text = e.to_string();
+            for piece in expected {
+                assert!(
+                    text.contains(piece),
+                    "error {text:?} should mention {piece:?}"
+                );
+            }
+        }
+        other => panic!("expected a Backend error mentioning {expected:?}, got {other:?}"),
+    }
+}
+
+fn upload_sk() -> String {
+    format!("UPLOAD#{}", upload())
+}
+
+fn conversation_sk() -> String {
+    format!("CONV#{}", conversation())
+}
+
+#[tokio::test]
+async fn a_ready_upload_without_conversation_ids_is_an_error_not_an_empty_list() {
+    let (table, raw, name) = make_with_raw_client().await;
+    put_raw(
+        &raw,
+        &name,
+        &[
+            ("pk", s("alice")),
+            ("sk", s(&upload_sk())),
+            ("status", s("ready")),
+        ],
+    )
+    .await;
+    assert_backend_error_mentions(
+        table.get_outcome(&alice(), upload()).await,
+        &["`conversation_ids`", "missing", &upload_sk()],
+    );
+}
+
+#[tokio::test]
+async fn conversation_ids_stored_as_a_map_is_an_error() {
+    let (table, raw, name) = make_with_raw_client().await;
+    put_raw(
+        &raw,
+        &name,
+        &[
+            ("pk", s("alice")),
+            ("sk", s(&upload_sk())),
+            ("status", s("ready")),
+            ("conversation_ids", AttributeValue::M(Default::default())),
+        ],
+    )
+    .await;
+    assert_backend_error_mentions(
+        table.get_outcome(&alice(), upload()).await,
+        &["`conversation_ids`", "should be a list", "is a map"],
+    );
+}
+
+#[tokio::test]
+async fn a_conversation_id_entry_that_is_not_a_string_is_an_error_not_dropped() {
+    let (table, raw, name) = make_with_raw_client().await;
+    let ids = AttributeValue::L(vec![
+        s(&conversation().to_string()),
+        AttributeValue::N("7".to_string()),
+    ]);
+    put_raw(
+        &raw,
+        &name,
+        &[
+            ("pk", s("alice")),
+            ("sk", s(&upload_sk())),
+            ("status", s("ready")),
+            ("conversation_ids", ids),
+        ],
+    )
+    .await;
+    assert_backend_error_mentions(
+        table.get_outcome(&alice(), upload()).await,
+        &["`conversation_ids[1]`", "should be a string", "is a number"],
+    );
+}
+
+#[tokio::test]
+async fn a_conversation_id_entry_that_is_not_a_valid_id_is_an_error_not_dropped() {
+    let (table, raw, name) = make_with_raw_client().await;
+    let long_bad_id = format!("not-an-id\n{}", "x".repeat(100));
+    let ids = AttributeValue::L(vec![s(&conversation().to_string()), s(&long_bad_id)]);
+    put_raw(
+        &raw,
+        &name,
+        &[
+            ("pk", s("alice")),
+            ("sk", s(&upload_sk())),
+            ("status", s("ready")),
+            ("conversation_ids", ids),
+        ],
+    )
+    .await;
+    let result = table.get_outcome(&alice(), upload()).await;
+    // The bad value is shown escaped (no raw newline) and cut short.
+    let text = format!("{result:?}");
+    assert!(
+        !text.contains(&"x".repeat(100)),
+        "bad value must be cut short: {text}"
+    );
+    assert_backend_error_mentions(
+        result,
+        &[
+            "`conversation_ids[1]`",
+            "should be an id",
+            "not-an-id\\\\n",
+            "…",
+        ],
+    );
+}
+
+#[tokio::test]
+async fn a_failed_upload_without_a_failure_reason_is_an_error_not_an_empty_string() {
+    let (table, raw, name) = make_with_raw_client().await;
+    put_raw(
+        &raw,
+        &name,
+        &[
+            ("pk", s("alice")),
+            ("sk", s(&upload_sk())),
+            ("status", s("failed")),
+        ],
+    )
+    .await;
+    assert_backend_error_mentions(
+        table.get_outcome(&alice(), upload()).await,
+        &["`failure_reason`", "missing"],
+    );
+}
+
+#[tokio::test]
+async fn a_failure_reason_stored_as_a_number_is_an_error() {
+    let (table, raw, name) = make_with_raw_client().await;
+    put_raw(
+        &raw,
+        &name,
+        &[
+            ("pk", s("alice")),
+            ("sk", s(&upload_sk())),
+            ("status", s("failed")),
+            ("failure_reason", AttributeValue::N("3".to_string())),
+        ],
+    )
+    .await;
+    assert_backend_error_mentions(
+        table.get_outcome(&alice(), upload()).await,
+        &["`failure_reason`", "should be a string", "is a number"],
+    );
+}
+
+#[tokio::test]
+async fn a_status_stored_as_a_list_is_an_error() {
+    let (table, raw, name) = make_with_raw_client().await;
+    put_raw(
+        &raw,
+        &name,
+        &[
+            ("pk", s("alice")),
+            ("sk", s(&upload_sk())),
+            ("status", AttributeValue::L(vec![])),
+        ],
+    )
+    .await;
+    assert_backend_error_mentions(
+        table.get_outcome(&alice(), upload()).await,
+        &["`status`", "should be a string", "is a list"],
+    );
+}
+
+fn conversation_row(
+    extra: &[(&'static str, AttributeValue)],
+) -> Vec<(&'static str, AttributeValue)> {
+    let mut attrs = vec![
+        ("pk", s("alice")),
+        ("sk", s(&conversation_sk())),
+        ("upload_id", s(&upload().to_string())),
+    ];
+    attrs.extend(extra.iter().cloned());
+    attrs
+}
+
+#[tokio::test]
+async fn a_conversation_without_a_name_is_an_error_not_an_empty_string() {
+    let (table, raw, name) = make_with_raw_client().await;
+    put_raw(
+        &raw,
+        &name,
+        &conversation_row(&[("message_count", AttributeValue::N("2".to_string()))]),
+    )
+    .await;
+    assert_backend_error_mentions(
+        ConversationSummaryStore::get(&table, &alice(), conversation()).await,
+        &["`name`", "missing", &conversation_sk()],
+    );
+}
+
+#[tokio::test]
+async fn a_name_stored_as_null_is_an_error() {
+    let (table, raw, name) = make_with_raw_client().await;
+    put_raw(
+        &raw,
+        &name,
+        &conversation_row(&[
+            ("name", AttributeValue::Null(true)),
+            ("message_count", AttributeValue::N("2".to_string())),
+        ]),
+    )
+    .await;
+    assert_backend_error_mentions(
+        ConversationSummaryStore::get(&table, &alice(), conversation()).await,
+        &["`name`", "should be a string", "is null"],
+    );
+}
+
+#[tokio::test]
+async fn a_conversation_without_a_message_count_is_an_error_not_zero() {
+    let (table, raw, name) = make_with_raw_client().await;
+    put_raw(&raw, &name, &conversation_row(&[("name", s("a"))])).await;
+    assert_backend_error_mentions(
+        ConversationSummaryStore::get(&table, &alice(), conversation()).await,
+        &["`message_count`", "missing"],
+    );
+}
+
+#[tokio::test]
+async fn a_message_count_stored_as_a_string_is_an_error() {
+    let (table, raw, name) = make_with_raw_client().await;
+    put_raw(
+        &raw,
+        &name,
+        &conversation_row(&[("name", s("a")), ("message_count", s("2"))]),
+    )
+    .await;
+    assert_backend_error_mentions(
+        ConversationSummaryStore::get(&table, &alice(), conversation()).await,
+        &["`message_count`", "should be a number", "is a string"],
+    );
+}
+
+#[tokio::test]
+async fn a_negative_message_count_is_an_error_not_zero() {
+    let (table, raw, name) = make_with_raw_client().await;
+    put_raw(
+        &raw,
+        &name,
+        &conversation_row(&[
+            ("name", s("a")),
+            ("message_count", AttributeValue::N("-1".to_string())),
+        ]),
+    )
+    .await;
+    assert_backend_error_mentions(
+        ConversationSummaryStore::get(&table, &alice(), conversation()).await,
+        &["`message_count`", "whole number", "-1"],
+    );
+}
+
+/// Listing reads summaries the same way `get` does, so one malformed row
+/// fails the list instead of being skipped or shown with defaults.
+#[tokio::test]
+async fn listing_fails_on_a_malformed_summary_instead_of_skipping_it() {
+    let (table, raw, name) = make_with_raw_client().await;
+    put_raw(&raw, &name, &conversation_row(&[("name", s("a"))])).await;
+    assert_backend_error_mentions(
+        table.list_for_user(&alice()).await,
+        &["`message_count`", "missing"],
+    );
+}
+
+#[tokio::test]
+async fn a_name_stored_as_true_or_false_is_an_error() {
+    let (table, raw, name) = make_with_raw_client().await;
+    put_raw(
+        &raw,
+        &name,
+        &conversation_row(&[
+            ("name", AttributeValue::Bool(true)),
+            ("message_count", AttributeValue::N("2".to_string())),
+        ]),
+    )
+    .await;
+    assert_backend_error_mentions(
+        ConversationSummaryStore::get(&table, &alice(), conversation()).await,
+        &["`name`", "should be a string", "is a true/false value"],
+    );
+}

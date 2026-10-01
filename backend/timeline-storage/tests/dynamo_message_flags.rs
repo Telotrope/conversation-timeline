@@ -95,3 +95,90 @@ async fn every_method_reports_a_missing_table_as_a_backend_error() {
         Err(StoreError::Backend(_))
     ));
 }
+
+// ---- Flag values of the wrong type: errors, never silently "not flagged"
+// (migration plan §V2c). A *missing* flag attribute is legitimate and keeps
+// its default; the contract tests `an_auto_write_sets_no_user_override` and
+// `a_user_write_on_a_message_with_no_record_creates_one_with_no_auto_flags`
+// cover that.
+
+async fn read_with_one_bad_attribute(attribute: &str, value: AttributeValue) -> String {
+    let client = dynamodb_local::client();
+    let table = dynamodb_local::create_table(&client).await;
+    let store = DynamoMessageFlagsStore::new(client.clone(), table.clone());
+    client
+        .put_item()
+        .table_name(&table)
+        .item(
+            "pk",
+            AttributeValue::S(format!("{}#{}", alice(), conversation())),
+        )
+        .item("sk", AttributeValue::S(message().to_string()))
+        .item(attribute, value)
+        .send()
+        .await
+        .expect("write raw test row");
+    let got = MessageFlagsReader::get(&store, &alice(), conversation(), message()).await;
+    let listed = store.list_for_conversation(&alice(), conversation()).await;
+    assert!(
+        matches!(listed, Err(StoreError::Backend(_))),
+        "listing must fail too: {listed:?}"
+    );
+    match got {
+        Err(StoreError::Backend(e)) => e.to_string(),
+        other => panic!("expected a Backend error for {attribute}, got {other:?}"),
+    }
+}
+
+fn assert_mentions(text: &str, pieces: &[&str]) {
+    for piece in pieces {
+        assert!(
+            text.contains(piece),
+            "error {text:?} should mention {piece:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn auto_caps_stored_as_a_string_is_an_error() {
+    let text =
+        read_with_one_bad_attribute("auto_caps", AttributeValue::S("true".to_string())).await;
+    assert_mentions(
+        &text,
+        &["`auto_caps`", "should be a true/false value", "is a string"],
+    );
+}
+
+#[tokio::test]
+async fn auto_critical_stored_as_a_number_is_an_error() {
+    let text =
+        read_with_one_bad_attribute("auto_critical", AttributeValue::N("1".to_string())).await;
+    assert_mentions(&text, &["`auto_critical`", "is a number"]);
+}
+
+#[tokio::test]
+async fn auto_angry_stored_as_a_string_set_is_an_error() {
+    let text =
+        read_with_one_bad_attribute("auto_angry", AttributeValue::Ss(vec!["yes".to_string()]))
+            .await;
+    assert_mentions(&text, &["`auto_angry`", "is an unsupported type"]);
+}
+
+#[tokio::test]
+async fn user_caps_stored_as_null_is_an_error() {
+    let text = read_with_one_bad_attribute("user_caps", AttributeValue::Null(true)).await;
+    assert_mentions(&text, &["`user_caps`", "is null"]);
+}
+
+#[tokio::test]
+async fn user_critical_stored_as_a_list_is_an_error() {
+    let text = read_with_one_bad_attribute("user_critical", AttributeValue::L(vec![])).await;
+    assert_mentions(&text, &["`user_critical`", "is a list"]);
+}
+
+#[tokio::test]
+async fn user_angry_stored_as_a_map_is_an_error() {
+    let text =
+        read_with_one_bad_attribute("user_angry", AttributeValue::M(Default::default())).await;
+    assert_mentions(&text, &["`user_angry`", "is a map"]);
+}
