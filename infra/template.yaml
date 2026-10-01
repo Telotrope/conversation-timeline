@@ -25,6 +25,19 @@ Parameters:
     Type: String
     Default: dev
     Description: Deployment stage name (dev/staging/prod), used to namespace resources.
+  FrontendOrigin:
+    Type: String
+    Default: http://localhost:8000
+    Description: >
+      Where timeline.html is served from (scheme, host and port, no path or
+      trailing slash). The only origin allowed by CORS on the API and the
+      bucket, and Cognito returns you to <origin>/timeline.html. Cognito
+      accepts plain http only for localhost.
+
+Conditions:
+  # The dev stage also allows username-and-password sign-in through the
+  # API, for scripts/aws-dev-token.sh (migration plan §V2e, E7; C27).
+  IsDev: !Equals [!Ref Stage, dev]
 
 Globals:
   Function:
@@ -51,12 +64,11 @@ Resources:
         RestrictPublicBuckets: true
       CorsConfiguration:
         CorsRules:
-          # Presigned PUT/GET URLs are used directly by the browser -- see
-          # the migration plan section 1.6. Tighten AllowedOrigins to the
-          # real frontend origin before this is ever deployed for real.
+          # The page PUTs uploads to, and GETs exports from, presigned
+          # addresses directly (migration plan §1.6), from its one origin.
           - AllowedMethods: [PUT, GET]
-            AllowedOrigins: ["*"]
-            AllowedHeaders: ["*"]
+            AllowedOrigins: [!Ref FrontendOrigin]
+            AllowedHeaders: [content-type]
 
   ConversationsTable:
     Type: AWS::DynamoDB::Table
@@ -117,18 +129,39 @@ Resources:
           RequireLowercase: true
           RequireNumbers: true
 
+  # Cognito's own login pages, at
+  # https://timeline-<stage>-<account>.auth.<region>.amazoncognito.com
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Sub "timeline-${Stage}-${AWS::AccountId}"
+      UserPoolId: !Ref UserPool
+
+  # The page signs in through the login pages with the authorization-code
+  # flow and PKCE (frontend/infra/cognito-login.js; plan §V2e, E5).
   UserPoolClient:
     Type: AWS::Cognito::UserPoolClient
     Properties:
       ClientName: !Sub "timeline-web-${Stage}"
       UserPoolId: !Ref UserPool
       GenerateSecret: false
-      ExplicitAuthFlows:
-        - ALLOW_USER_SRP_AUTH
-        - ALLOW_REFRESH_TOKEN_AUTH
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [code]
+      AllowedOAuthScopes: [openid, email]
+      SupportedIdentityProviders: [COGNITO]
+      CallbackURLs:
+        - !Sub "${FrontendOrigin}/timeline.html"
+      LogoutURLs:
+        - !Sub "${FrontendOrigin}/timeline.html"
+      ExplicitAuthFlows: !If
+        - IsDev
+        - [ALLOW_USER_SRP_AUTH, ALLOW_REFRESH_TOKEN_AUTH, ALLOW_USER_PASSWORD_AUTH]
+        - [ALLOW_USER_SRP_AUTH, ALLOW_REFRESH_TOKEN_AUTH]
       AccessTokenValidity: 1
+      IdTokenValidity: 1
       TokenValidityUnits:
         AccessToken: hours
+        IdToken: hours
 
   # --- Secrets -----------------------------------------------------------
 
@@ -175,13 +208,29 @@ Resources:
             TableName: !Ref MessageFlagsTable
         - DynamoDBCrudPolicy:
             TableName: !Ref UsersTable
+      # One route per method rather than ANY, so no route matches the
+      # browser's OPTIONS check: with CORS configured, API Gateway then
+      # answers it itself, before any login is required (plan §V2e, E6;
+      # read in AWS's documentation, unverified until deployment check D2).
       Events:
-        AnyRequest:
+        GetRequest:
           Type: HttpApi
           Properties:
             ApiId: !Ref HttpApi
             Path: /{proxy+}
-            Method: ANY
+            Method: GET
+        PostRequest:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /{proxy+}
+            Method: POST
+        PatchRequest:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /{proxy+}
+            Method: PATCH
 
   # Started by S3 when a raw upload lands; runs `src/bin/process_upload.rs`.
   # Its permissions and settings name the bucket by its fixed pattern, not
@@ -239,6 +288,11 @@ Resources:
       # §V2e, E1; tests/lambda_events.rs). `Stage` still names the
       # resources.
       StageName: "$default"
+      CorsConfiguration:
+        AllowOrigins: [!Ref FrontendOrigin]
+        AllowHeaders: [authorization, content-type]
+        AllowMethods: [GET, POST, PATCH]
+        MaxAge: 600
       Auth:
         Authorizers:
           CognitoAuthorizer:
@@ -257,5 +311,8 @@ Outputs:
     Value: !Ref UserPool
   UserPoolClientId:
     Value: !Ref UserPoolClient
+  CognitoDomain:
+    Description: Base address of Cognito's login pages for this pool.
+    Value: !Sub "https://${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com"
   RawUploadsBucketName:
     Value: !Ref RawUploadsBucket
