@@ -994,6 +994,242 @@ stored but never processed. It's the next piece after this one.
 **Done means:** all suites pass; the new modules are at 100% line coverage; the Lambda branch of
 `main.rs` no longer calls `build_local_state`; C21 is marked resolved.
 
+### V2e — Make the first deployment usable, and test everything that can be tested locally
+
+**Status:** planned 2026-10-01, not started.
+
+**Why this exists.** A review on 2026-10-01 of what a first `sam deploy` would actually do found
+that the deployed app couldn't be used even if every resource were created correctly:
+
+1. **Uploads are never processed on AWS.** [processing.rs](../../backend/timeline-api/src/processing.rs)
+   is built and tested, but nothing runs it when a file lands in S3. Its own module comment names
+   `src/bin/process_upload.rs`, which doesn't exist.
+2. **Every logged-in request would probably get 404.** The template names the API stage `dev`. A
+   *stage* is a named version of an API that appears in its address. I read in `lambda_http`
+   0.15.1 (`src/request.rs`, `apigw_path_with_stage`) that, unless the environment variable
+   `AWS_LAMBDA_HTTP_IGNORE_STAGE_IN_PATH` is set, a request for `/conversations` on stage `dev`
+   reaches the router as `/dev/conversations`. The router only knows `/conversations`. Not run;
+   read in source.
+3. **The page can't reach the deployed API from a browser.** The API has no CORS settings (CORS:
+   the browser rule deciding whether a page at one address may call a server at another). The
+   S3 bucket allows every origin, which the template's own comment says to tighten.
+4. **The page can't log in.** [api-client.js](../../frontend/infra/api-client.js) only knows
+   `POST /_dev/login`, which the Lambda build never has.
+5. **The page can't use S3's addresses.** The page builds every upload and download address as
+   `API_BASE + url` ([load-flow.js](../../frontend/ui/load-flow.js)). That works for the local
+   server's relative `/_dev/local-storage/...` paths, but S3's presigned addresses are already
+   complete (`https://...`), so prefixing them breaks them.
+6. **The page doesn't wait for processing.** Locally, the upload request processes the file
+   before it answers, so the page asks for the export straight away. On AWS, processing starts
+   only after the upload finishes and runs separately, so the page would ask too early. There is
+   no route to ask whether an upload has finished: the `UploadOutcomeStore` port and its DynamoDB
+   adapter exist, but no route reads them.
+7. **There's no way to get a test login from the command line.** The login client only allows
+   SRP, a challenge-and-response login the `aws` tool can't perform in one command.
+
+**Why these weren't in an earlier stage.** V2a deferred the real login and processing as "blocked by
+lack of AWS access" ([line 386](2026-09-09-rust-aws-backend-migration.md#L386)); that was true only of the last step of each, and nobody
+revisited the list once V2b built local stand-ins. V2d left `main.rs`'s Lambda startup untested, and
+the conversion from AWS's request format, where the stage name is added, sits in that gap. CORS was
+designed for local use only (§V2a). No stage asked "what would stop a first deployment from working?"
+
+**The rule for this section:** everything that can be tested on this machine is tested here, and
+what only a deployment can check is listed at the end, so the first deployment confirms a known
+list instead of finding surprises.
+
+**Out of scope:** hosting `timeline.html` on AWS (the page is still served from this machine and
+pointed at the deployed API; see C30), the `Users` table, payment (V4), Bedrock (V3).
+
+#### E1. API addresses without a stage name
+
+- Set the HTTP API's stage to `$default` in [infra/template.yaml](../../infra/template.yaml).
+  `$default` is the stage that adds nothing to the address, so `/conversations` arrives as
+  `/conversations` and `lambda_http` leaves it alone (the source above returns the path unchanged
+  for `$default`). The `Stage` parameter keeps naming the resources (`timeline-api-dev`, ...); it
+  just no longer appears in the API's address. Update the `ApiUrl` output to match.
+- Chosen over setting `AWS_LAMBDA_HTTP_IGNORE_STAGE_IN_PATH`: that works through a process-wide
+  environment variable, which tests can only exercise by changing the environment of the whole
+  test process.
+- **Tests** (new, `timeline-api/tests/lambda_events.rs`): feed AWS-format request events through
+  `lambda_http::request::from_str` (public, `src/request.rs`) into the router `build_aws_state`
+  builds, against the V2b stand-ins:
+  - the sample HTTP API event with a JWT authorizer that ships with `aws_lambda_events` 0.16.1
+    (`src/fixtures/example-apigw-v2-request-jwt-authorizer.json`, stage `$default`), with its path
+    changed to `/conversations` and a valid test token added: answered by the real route;
+  - the same event with stage `dev`: answered 404. This pins the reason for E1, so a later change
+    back to a named stage fails a test instead of a deployment.
+  - The sample events come from the library, not from our deployment; see C24.
+
+#### E2. The upload-processing Lambda
+
+- **One home for the key format.** `parse_raw_upload_key` is private in
+  [dev_local_storage.rs:29](../../backend/timeline-api/src/routes/dev_local_storage.rs#L29); move it
+  to `timeline_core::ports::uploads`, next to `raw_object_key`, which writes the same format. Both
+  callers (the local upload route and the new Lambda) use it.
+- **Settings the processing Lambda actually needs.** `AwsSettings` requires the Cognito pool and
+  client, which the processing Lambda doesn't use. Add `StorageSettings` (bucket and the two
+  tables) in [aws_settings.rs](../../backend/timeline-api/src/aws_settings.rs), read the same way
+  (every missing variable reported at once). `AwsSettings` keeps its fields and reads the storage
+  variables through the same reader. See C31.
+- **The handler** (new, `timeline-api/src/s3_trigger.rs`): `handle_s3_event(event, deps)` takes an
+  `S3Event` (from `aws_lambda_events`, MIT/Apache-2.0, already in the build through `lambda_http`;
+  needs its `s3` feature) and the stores, and for each record:
+  - decodes the key (S3 events encode keys the way web forms do, with `+` for spaces) and parses
+    it into user and upload. A key that isn't a raw upload is an error naming the key (rule 3 of
+    CLAUDE.md's exception handling);
+  - calls `process_upload`. A file that isn't a valid export already records a `Failed` outcome
+    there; the handler logs it and reports success, because retrying a bad file can't help;
+  - a storage failure is returned as an error, so Lambda retries the event. AWS's documentation
+    says an S3-triggered Lambda is retried twice by default; I haven't checked that against a real
+    run. Retrying is safe because every write in `process_upload` replaces rather than adds
+    (summaries `put`, reviews `set_user_flags`, outcome `record_outcome`); see C29.
+  - Every record is attempted before an error is returned, and the error names each failed key.
+- **The binary** (new, `timeline-api/src/bin/process_upload.rs`): reads `StorageSettings`,
+  builds the S3 and DynamoDB clients as `main.rs` does, and runs `handle_s3_event` under
+  `lambda_runtime`. Kept to wiring only, like `main.rs`.
+- **Template:** a `ProcessUploadFunction` (code from
+  `../backend/target/lambda/process_upload/`), triggered by `s3:ObjectCreated:*` on the uploads
+  bucket, filtered to keys starting `raw/` and ending `.json`, so the exports the API writes under
+  `export/` never trigger it. Permissions: read the bucket, read and write the two tables.
+  - AWS's SAM documentation warns that a function triggered by a bucket, whose permissions also
+    name that bucket with `!Ref`, makes a circular dependency the deployment refuses. The bucket
+    name is already a fixed pattern (`timeline-uploads-${Stage}-${AWS::AccountId}`), so both
+    functions' permissions and settings use that pattern through `!Sub` instead. Not reproduced;
+    `sam validate --lint` (E8) and the first deployment check it.
+  - Memory and time limit: set from a measurement, not a guess. A new script,
+    `scripts/measure-processing.sh`, builds a ~60 MB synthetic export with the existing
+    [e2e/synthetic-export.js](../../e2e/synthetic-export.js), runs `process_upload` on it in a
+    release build against the in-memory stores, and reports peak memory (`/usr/bin/time -v`) and
+    time. The template gets twice the measured memory, rounded up to a size Lambda offers, and a
+    time limit of 5 minutes or three times the measured time, whichever is larger. The measured
+    figures are recorded in this section. Lambda's speed scales with memory, so the measured time
+    is a guide only; the real figure is a deployment check (D5).
+- **Tests** (new, `timeline-api/tests/s3_trigger.rs`), against `s3s-fs` and DynamoDB Local as in
+  V2b, using `aws_lambda_events`' sample S3 event (`src/fixtures/example-s3-event.json`) with its
+  bucket and key replaced:
+  - a valid upload: summaries and a `Ready` outcome are stored;
+  - a file that isn't an export: a `Failed` outcome with the reason, and the handler succeeds;
+  - a key outside `raw/`, and a key whose user or upload part doesn't parse: an error naming the key;
+  - an encoded key (`%2D`, `+`) is decoded before parsing;
+  - two records, one of them missing from S3: the other is processed and the error names the
+    missing key;
+  - processing the same event twice leaves the same stored data as processing it once.
+  - `StorageSettings`: each variable missing, empty, and all present.
+
+#### E3. Asking whether an upload has finished
+
+- New route `GET /uploads/{upload_id}`: `{"status": "processing"}` while no outcome exists,
+  `{"status": "ready"}` or `{"status": "failed", "reason": "..."}` once one does. It reads the
+  outcome under the logged-in user's id, so nobody can see another user's upload.
+- `AppState` gains `upload_outcome_store`. The API only ever reads it; the port has both methods
+  in one trait. Splitting it into a reader and a writer, as the flag ports are split, isn't worth it
+  for one route; recorded here as a choice, not an oversight.
+- Adding a field to `AppState` means every test that builds an `AppState` by hand needs one more
+  line. That changes committed tests; see C25.
+- **Tests** (`timeline-api/tests/app.rs` style, in-memory stores, plus one against DynamoDB Local
+  through `build_aws_state`): no outcome yet, ready, failed with reason, another user's upload
+  (answered as "processing", same as one that doesn't exist, so it reveals nothing), not logged in
+  (401), an upload id that isn't a UUID (400).
+
+#### E4. The page: full addresses and waiting for processing
+
+- New function `resolveUrl(url)` in [api-client.js](../../frontend/infra/api-client.js): an address
+  that starts with `http://` or `https://` is used as it is; anything else gets `API_BASE` in
+  front. Every upload, download and export address goes through it.
+- After the upload, the page asks `GET /uploads/{id}` once a second for the first 10 seconds, then
+  every 5 seconds, and stops after 10 minutes with a message saying processing didn't finish. A
+  `failed` answer shows the server's reason. The same code runs locally, where the first answer is
+  already `ready`.
+- **Tests:** unit tests (`frontend/tests/`, `node --test`) for `resolveUrl` and for the waiting loop
+  with a pretend `fetch` and clock: ready at once, ready after several answers, failed with reason,
+  timing out, and a network error. The existing browser tests in `e2e/` must still pass unchanged.
+
+#### E5. Logging in with Cognito
+
+- **Cognito's own login page**, not a form in our page. The page sends you to Cognito's hosted
+  login page, which handles sign-up, email confirmation and forgotten passwords, and sends you back
+  with a one-time code that the page exchanges for tokens. The exchange uses PKCE, a standard way
+  for a page with no server-side secret to prove it started the login. This keeps password handling
+  out of our code, which is why §1.4 chose Cognito.
+- **Library:** `oidc-client-ts` 3.5.0 (Apache-2.0; its one dependency, `jwt-decode`, is MIT), a
+  copy of its prebuilt browser file kept in `frontend/vendor/`, since the page has no build step.
+  Whether that file loads without a build step is unverified; see C32.
+- **Template:** a Cognito domain (prefix `timeline-${Stage}-${AWS::AccountId}`); the app client gets
+  the authorization-code flow, scopes `openid` and `email`, Cognito's own user directory as its
+  only sign-in source, and a callback address from a new `FrontendUrl` parameter (default
+  `http://localhost:8000/timeline.html`; Cognito accepts plain `http` only for `localhost`).
+- **How the page knows which login to use:** a new script, `scripts/write-deploy-config.sh`, reads
+  the deployed stack's outputs and writes `frontend/deploy-config.json` (API address, Cognito
+  domain, client id). The file is ignored by git, as it describes one person's deployment. The
+  page loads it at start: present means Cognito login against that API, absent means today's dev
+  login against the local server. Nothing changes for local development.
+- **Where tokens live:** `sessionStorage`, so a reload in the same tab stays logged in and closing
+  the tab logs you out. Cognito's access token lasts one hour (template, `AccessTokenValidity`);
+  after that the page sends you through the login page again. Restoring the last session on
+  reload works the same way, using the stored token instead of the dev login name.
+- **Tests:**
+  - unit tests: choosing the login from the config file (present, absent, malformed: a malformed
+    file is an error on the page, not a silent fall back to dev login);
+  - a new browser test (`e2e/`) with a stand-in login server, a small Node server in `e2e/` that
+    plays Cognito's part: its login address sends the browser straight back with a code, and its
+    token address checks the PKCE proof and returns a token it got from the local backend's
+    `POST /_dev/login`, so the local backend accepts it. The test runs the whole flow: page →
+    stand-in login → back → upload → timeline shown, and checks the code no longer appears in the
+    page's address afterwards. A wrong PKCE proof is refused and the page shows the error.
+
+#### E6. Browser permissions (CORS)
+
+- The `FrontendUrl` parameter's origin (scheme, host and port) becomes the only allowed origin, on
+  both the API and the S3 bucket. The API allows the headers `authorization` and `content-type`
+  and the methods `GET`, `POST` and `PATCH`.
+- **The browser's permission check before the real request.** Browsers send an `OPTIONS` request
+  first, without the login token. The template's single `ANY /{proxy+}` route matches `OPTIONS`
+  too, so I expect that check to meet the login requirement and be refused. AWS's documentation
+  says API Gateway answers `OPTIONS` itself when CORS is configured and no route matches it; so
+  the template replaces `ANY` with separate `GET`, `POST` and `PATCH` routes. This reading of the
+  documentation is unverified; see C26.
+- **Tests:** none possible locally; API Gateway's handling exists only on AWS. Checked by
+  `sam validate --lint` (E8) and deployment check D2.
+
+#### E7. A test login from the command line
+
+- On the `dev` stage only (a template condition on `Stage`), the app client also allows plain
+  username-and-password login (`ALLOW_USER_PASSWORD_AUTH`). New script
+  `scripts/aws-dev-token.sh <email>` asks for the password without echoing it and prints an access
+  token, for `curl` checks. Trade-off: the dev pool accepts a weaker login method; see C27.
+- **Tests:** none locally (it's Cognito configuration); deployment check D3.
+
+#### E8. Template checks before deploying, and the walkthrough
+
+- `scripts/check-template.sh` runs `sam validate --lint` on the template. It needs the SAM CLI,
+  which you install once (walkthrough). Not part of `cargo test`: it needs a separate tool.
+- New `infra/README.md`: the first-deployment walkthrough (account safety, tools, credentials,
+  build both Lambdas, check, deploy, write the page config, create a user, the checks below,
+  costs, tearing down).
+- Correct [backend/README.md](../../backend/README.md)'s out-of-date "What's not built yet" list
+  (`GET /export` and downloading Cognito's keys are built) and the template's header comment.
+
+#### What only the first deployment can check
+
+Each of these is run by hand after `sam deploy`, and the results are recorded in an analysis
+document in `docs/analysis/`.
+
+| # | Check | How |
+|---|---|---|
+| D1 | AWS accepts the template, including the bucket-trigger permissions (E2) | `sam deploy` succeeds |
+| D2 | The browser's `OPTIONS` check is answered without a login, from the allowed origin only (C26) | `curl -X OPTIONS` with and without the right `Origin`; then the page |
+| D3 | A real Cognito login works: the hosted page, the code exchange, and the command-line script | page login; `aws-dev-token.sh` then `curl` |
+| D4 | The API refuses no token, a bad token, and a token from another pool | `curl` |
+| D5 | Uploading the ~60 MB synthetic export: processed within the memory and time set in E2; then a full detection pass, each page answered within API Gateway's 30-second limit | page upload with detection on; `sam logs` shows peak memory and duration for each function |
+| D6 | The flag-handle secret reaches the API (C19) | a flag save from the page succeeds |
+| D7 | The real tables' keys match the tests' assumption (C16) | the page's whole flow, and the DynamoDB console |
+| D8 | Real events match the library's sample events (C24) | log one real HTTP API event and one S3 event, compare the fields the code reads, and check the sanitized copies into the test fixtures |
+| D9 | Start-up time, including downloading Cognito's keys (C23) | `sam logs`: the `Init Duration` line |
+
+**Done means:** all suites pass (Rust, frontend unit, browser); the new modules are at 100% line
+coverage; `scripts/check-template.sh` passes; `infra/README.md` exists. V2 itself is done only
+after D1–D9 are run on a real deployment and recorded.
+
 ### V3 — Bedrock-based classification
 **Reference implementation.** The browser-side "Classify with AI" code is deleted from the
 working tree by [2026-09-30-split-timeline-script.md](2026-09-30-split-timeline-script.md), because it
@@ -1541,6 +1777,63 @@ any report of valid logins being refused.
 One HTTPS request to Cognito per new instance. **Mitigation in plan:** none needed to build it.
 **Open:** measure start-up time on the first deployment; if the download is a noticeable share,
 bundle the keys into the deployment instead. Trigger: the first `sam deploy`.
+
+### C24 [OPEN]: The sample AWS events come from a library, not from our deployment
+E1 and E2 test with the sample events shipped in `aws_lambda_events` 0.16.1's `src/fixtures/`. They
+match AWS's published formats as far as I've read them, but they weren't captured from this
+project's API or bucket, so they aren't the verified samples CLAUDE.md asks for. **Mitigation in
+plan:** the tests only rely on the fields the code reads (path, stage, authorizer claims; bucket and
+key). **Open:** trigger is deployment check D8, which captures real events and replaces the samples.
+
+### C25 [OPEN]: Adding a field to `AppState` edits committed tests
+E3 adds `upload_outcome_store` to `AppState`. Every test that builds an `AppState` by hand (at
+least `tests/lambda_router.rs` and `tests/aws_state.rs`; I haven't listed all of them) needs one
+more line to compile. No assertion changes. CLAUDE.md requires your approval to modify committed
+tests. **Mitigation in plan:** the edits add the field and nothing else. **Open:** trigger is your
+approval of this plan; approving it is taken as approving those one-line edits, unless you say
+otherwise.
+
+### C26 [OPEN]: Whether API Gateway answers the browser's `OPTIONS` check is read from documentation
+E6 relies on my reading of AWS's documentation that, with CORS configured and no route matching
+`OPTIONS`, API Gateway answers it without running the login check. Not verified. **Mitigation in
+plan:** the template uses explicit `GET`/`POST`/`PATCH` routes so no route matches `OPTIONS`.
+**Open:** trigger is deployment check D2. If it's refused, the fallback is an explicit `OPTIONS`
+route with no login requirement, answered by the Lambda.
+
+### C27 [OPEN]: The dev stage allows plain password login through the API
+E7 turns on `ALLOW_USER_PASSWORD_AUTH` on the `dev` stage so a token can be fetched from the command
+line. That method sends the password to Cognito directly (over HTTPS) instead of proving it by
+challenge and response. **Mitigation in plan:** `dev` only, by a template condition. **Open:**
+trigger is putting anyone else's data in the `dev` stage, or creating any other stage.
+
+### C28 [OPEN]: The flag-handle secret is visible in the API Lambda's configuration
+The template passes the secret as an environment variable through a `{{resolve:secretsmanager:...}}`
+reference, so anyone allowed to read the function's configuration can read the secret. **Mitigation
+in plan:** the account currently has one person. **Open:** have the Lambda read the secret from
+Secrets Manager at start-up instead (`aws-sdk-secretsmanager`, Apache-2.0). Trigger: anyone else
+getting access to the AWS account, or the start of V4.
+
+### C29 [RESOLVED]: A retried S3 event could store an upload twice
+Original concern: Lambda retries a failed S3 event, so `process_upload` can run more than once for
+one upload. **Resolution:** every write it makes replaces rather than adds, and E2 adds a test that
+processing an event twice leaves the same stored data as once ([§E2 handler, line 1074](2026-09-09-rust-aws-backend-migration.md#L1074)).
+
+### C30 [OPEN]: The page is still served from this machine
+After V2e the API, storage and logins run on AWS, but `timeline.html` is served locally and pointed
+at the API. Nobody else can use it. **Mitigation in plan:** none needed for testing. **Open:** a
+separate plan for hosting the page (an S3 bucket behind CloudFront, AWS's content delivery service,
+is the usual choice; not researched). Trigger: wanting anyone else to use the app.
+
+### C31 [RESOLVED]: The processing Lambda would need Cognito settings it never uses
+Original concern: `AwsSettings` refuses to load without the Cognito pool and client, so the
+processing Lambda would need them set for no reason. **Resolution:** E2 adds `StorageSettings` for
+the three storage names, shared with `AwsSettings` ([§E2 settings, line 1069](2026-09-09-rust-aws-backend-migration.md#L1069)).
+
+### C32 [OPEN]: `oidc-client-ts` may not load without a build step
+E5 assumes the library's prebuilt browser file works when loaded directly by the page. Unverified.
+**Mitigation in plan:** checked first, before any other E5 work. **Open:** if it doesn't load, the
+fallback is writing the code exchange by hand with the browser's built-in cryptography (two web
+requests and one hash), which I'd bring back to you before doing. Trigger: the start of E5.
 
 ### C11 [RESOLVED]: `UploadStatus`'s `Pending`/`Processing` are persisted but never read
 Confirmed by `grep`, not assumed: no route reads `UploadRecord.status`, and `process_upload`
