@@ -907,6 +907,88 @@ under the caller's own account. But a buggy or malicious client could pile them 
 coverage apart from the three commented sort-key backstops, and `flag_handles.rs` at 100%; and C18
 is marked resolved.
 
+### V2d — The Lambda build uses the real AWS stores and real Cognito logins (closes C21)
+
+**Status:** revision 1, awaiting review.
+
+**What's wrong today.** [main.rs](../../backend/timeline-api/src/main.rs) decides at startup
+whether it's running in Lambda (Lambda sets `AWS_LAMBDA_RUNTIME_API`). Both branches call the same
+`build_local_state`, so a deployed Lambda would:
+- keep every upload, summary and flag **in that one instance's memory**: lost when the instance
+  stops, and invisible to any other instance serving the same user;
+- check logins against the **throwaway dev key pair** generated at startup, not against your
+  Cognito user pool. Real Cognito tokens would be refused, and only tokens signed by that
+  instance's dev key would be accepted.
+
+Only the flag-handle key differs between the branches (it comes from the environment since §V2c).
+
+**Why it's like this.** The startup code was written on 2026-09-10 (commit `d7312c6`), when this
+environment had no AWS access. Its own header comment still says local mode uses the in-memory
+stores "because there is no AWS access in this environment to build real S3/DynamoDB clients
+against". The Lambda branch was added so the binary could start under Lambda's runtime, but it
+was never given its own state. The S3 and DynamoDB adapters it should use weren't tested until
+§V2b. Nothing has been deployed, so no data or logins are affected.
+
+**What this section doesn't cover.** Processing an upload on AWS needs a second Lambda, triggered
+when the file lands in S3 (§V2's "S3-triggered processing Lambda"). It isn't built, and
+[infra/template.yaml](../../infra/template.yaml) says so. Until it exists, uploads on AWS are
+stored but never processed. It's the next piece after this one.
+
+#### Design
+
+1. **Read the configuration once, at startup, into typed values.** New module
+   `timeline-api/src/aws_config.rs`:
+   - `AwsSettings::from_lookup(lookup)` reads `TIMELINE_UPLOADS_BUCKET`,
+     `TIMELINE_CONVERSATIONS_TABLE`, `TIMELINE_MESSAGE_FLAGS_TABLE`, `TIMELINE_COGNITO_USER_POOL_ID`,
+     `TIMELINE_COGNITO_CLIENT_ID` and `AWS_REGION` (the template already sets all but the last,
+     which Lambda sets itself).
+   - Each becomes its own small type (`BucketName`, `TableName`, `UserPoolId`, `ClientId`,
+     `Region`), so two names can't be swapped by accident.
+   - A missing or empty variable is an error naming it. All problems are reported together, not
+     one per restart.
+   - `lookup` is a function argument (in production, `std::env::var`), so tests can supply values
+     without changing the real environment.
+2. **Build the real state.** New function `build_aws_state(settings, clients, jwks, flag_handle_key)`
+   returns an `AppState` with `S3ObjectStore`, `DynamoConversationsTable`,
+   `DynamoMessageFlagsStore`, and a `CognitoVerifier` using the user pool's issuer
+   (`https://cognito-idp.<region>.amazonaws.com/<pool id>`) and client ID. The AWS clients are
+   passed in rather than created inside, so tests can hand it clients pointed at the local
+   stand-ins from §V2b; production creates them with `aws-config` (Apache-2.0, version 1.12 at the
+   time of writing).
+3. **Fetch Cognito's public keys at startup.** `fetch_jwks(region, pool)` downloads
+   `https://cognito-idp.<region>.amazonaws.com/<pool id>/.well-known/jwks.json` with `reqwest`
+   (MIT/Apache-2.0, already used by the storage tests). If the download fails, the Lambda refuses
+   to start, with the address and error in the message. It never falls back to the dev keys.
+4. **Wire it into the Lambda branch** of `main.rs`. The local branch doesn't change, and the
+   header comment is corrected.
+5. **Keep the dev keys out of the Lambda branch structurally.** `build_aws_state` doesn't depend
+   on `dev_only` at all, and a test checks that a token signed with the dev key pair is refused
+   by the router `build_aws_state` produces.
+
+#### Tests
+
+- **Configuration:** every variable missing (one at a time), empty, and all present; the error
+  names every missing one at once.
+- **The real router against local stand-ins.** This is the Lambda's exact router, built by
+  `build_aws_state`, with S3 served by `s3s-fs`, DynamoDB by DynamoDB Local, and the Cognito keys
+  by a small local HTTP server serving a test key set. Each test:
+  - logs in with a token signed by the test key, with the right issuer and client ID;
+  - writes a conversation summary and flags through the real adapters, as upload processing would;
+  - reads them back through `GET /conversations`, `PATCH .../flags` (with a handle from
+    `GET /export`) and `GET /export`;
+  - checks a second router built from the same settings sees the same data, which is the
+    "survives across instances" property the in-memory state lacks.
+- **Refusals:** a token signed with the dev key pair, a token for the wrong client ID, and a token
+  from the wrong issuer are each refused with 401. A key-set download that fails stops startup
+  with the address in the message.
+- **Not covered here:** running inside the real Lambda runtime, and real Cognito and real AWS.
+  Those wait for the first deployment in §V2. `cargo lambda watch` (local Lambda runtime
+  emulation, already used once and documented in [backend/README.md](../../backend/README.md))
+  is a manual check after this section is built, not a gating test.
+
+**Done means:** all suites pass; the new modules are at 100% line coverage; the Lambda branch of
+`main.rs` no longer calls `build_local_state`; C21 is marked resolved.
+
 ### V3 — Bedrock-based classification
 **Reference implementation.** The browser-side "Classify with AI" code is deleted from the
 working tree by [2026-09-30-split-timeline-script.md](2026-09-30-split-timeline-script.md), because it
@@ -1432,9 +1514,22 @@ Found while wiring the flag-handle key into
 `build_local_state` as local dev, so it uses the in-memory stores, not the S3 and DynamoDB
 adapters, and verifies logins against the throwaway dev keypair, not Cognito. Only the flag-handle
 key differs (read from the environment since §V2c). A deployed Lambda would therefore lose all data
-between instances and accept tokens signed by the dev keypair. **Mitigation in plan:** none yet;
-nothing is deployed. **Open:** wire the real adapters and Cognito verification into the Lambda
+between instances and accept tokens signed by the dev keypair. **Mitigation in plan:** §V2d
+designs the fix; nothing is deployed. **Open:** wire the real adapters and Cognito verification into the Lambda
 branch before the first `sam deploy` in §V2. Trigger: the start of V2's deployment work.
+
+### C22 [OPEN]: Cognito's keys are fetched once per Lambda instance
+§V2d downloads the user pool's public keys at startup. When Cognito adds or rotates a signing key,
+an instance started before the change would refuse tokens signed with the new key until it
+restarts. **Mitigation in plan:** Lambda instances are short-lived, typically minutes to hours.
+**Open:** re-download the keys when a token names a key ID the instance doesn't know, rate-limited
+so a stream of bad tokens can't trigger a download per request. Trigger: the first deployment, or
+any report of valid logins being refused.
+
+### C23 [OPEN]: Downloading the keys adds to Lambda start-up time
+One HTTPS request to Cognito per new instance. **Mitigation in plan:** none needed to build it.
+**Open:** measure start-up time on the first deployment; if the download is a noticeable share,
+bundle the keys into the deployment instead. Trigger: the first `sam deploy`.
 
 ### C11 [RESOLVED]: `UploadStatus`'s `Pending`/`Processing` are persisted but never read
 Confirmed by `grep`, not assumed: no route reads `UploadRecord.status`, and `process_upload`
