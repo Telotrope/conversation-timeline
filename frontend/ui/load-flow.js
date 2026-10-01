@@ -9,7 +9,7 @@ import { parseUploadedConversations } from '../core/export-format.js';
 import { attachFlags } from '../core/flags.js';
 import { formatBytes } from '../core/format.js';
 import { state } from '../core/state.js';
-import { API_BASE, clearAuthToken, describeFailure, ensureAuthToken, fetchUploadStatus, putWithProgress, readBodyWithProgress, serverUrl } from '../infra/api-client.js';
+import { API_BASE, clearAuthToken, describeFailure, ensureAuthToken, fetchUploadStatus, putWithProgress, readBodyWithProgress, serverUrl, signedInLabel, usesRealLogin } from '../infra/api-client.js';
 import { waitForProcessing } from '../core/upload-wait.js';
 import { applyLocationHash } from './router.js';
 import { renderCalendar } from './views/calendar.js';
@@ -71,12 +71,19 @@ function applyExportText(text, flagHandles){
 // was restarted (its storage is in-memory), or anything else unexpected
 // just means the normal load screen, which is the correct fallback and not
 // an error worth shouting about.
+//
+// With a real sign-in, the remembered name is your account: being signed in
+// is enough to try.
 export async function tryRestoreSession(){
   let sub = null;
-  try{ sub = localStorage.getItem('timeline_dev_sub'); } catch(e){ return; }
-  if(!sub) return;
-
-  document.getElementById('devLoginSub').value = sub;
+  if(usesRealLogin()){
+    sub = await signedInLabel();
+    if(!sub) return;
+  } else {
+    try{ sub = localStorage.getItem('timeline_dev_sub'); } catch(e){ return; }
+    if(!sub) return;
+    document.getElementById('devLoginSub').value = sub;
+  }
   try{
     const token = await ensureAuthToken(document.getElementById('devLoginSub').value.trim());
     const exportRes = await fetch(`${API_BASE}/export`, {

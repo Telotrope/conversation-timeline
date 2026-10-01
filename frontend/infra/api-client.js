@@ -29,7 +29,14 @@ function resolveApiBase(){
   return localStorage.getItem('timeline_api_base') || 'http://127.0.0.1:3000';
 }
 
-export const API_BASE = resolveApiBase();
+// `let`, not `const`: a chosen deployment replaces it with the deployed
+// API's address (see ui/login-panel.js). Importers see the change, since
+// module exports are live.
+export let API_BASE = resolveApiBase();
+
+export function setApiBase(url){
+  API_BASE = url;
+}
 
 // An address the backend handed back, made fetchable; see core/server-url.js.
 export function serverUrl(url){
@@ -48,6 +55,24 @@ export async function fetchUploadStatus(token, uploadId){
 
 let AUTH_TOKEN = null;
 
+// The real sign-in in use (Cognito, see infra/cognito-login.js), or null
+// for the dev login: { token, label }, async functions resolving to the
+// current access token and to who is signed in, each null when signed out.
+let REAL_LOGIN = null;
+
+export function useRealLogin(login){
+  REAL_LOGIN = login;
+}
+
+export function usesRealLogin(){
+  return REAL_LOGIN !== null;
+}
+
+// Who is signed in with the real sign-in, or null.
+export function signedInLabel(){
+  return REAL_LOGIN ? REAL_LOGIN.label() : Promise.resolve(null);
+}
+
 // Forgets the login, so the next request signs in again.
 export function clearAuthToken(){
   AUTH_TOKEN = null;
@@ -57,7 +82,15 @@ export function clearAuthToken(){
 // keypair, since there's no real Cognito pool to log in against locally.
 // Never a real authentication mechanism -- see timeline-api's dev_only
 // module and the migration plan's V2a.
+//
+// With a real sign-in in use, asks it instead, every time, so an expired
+// token is never reused; `sub` is ignored.
 export async function ensureAuthToken(sub){
+  if(REAL_LOGIN){
+    AUTH_TOKEN = await REAL_LOGIN.token();
+    if(!AUTH_TOKEN) throw new Error('sign in first, with the Sign in button above');
+    return AUTH_TOKEN;
+  }
   if(AUTH_TOKEN) return AUTH_TOKEN;
   if(!sub) throw new Error('enter a dev login name first');
   const res = await fetch(`${API_BASE}/_dev/login`, {

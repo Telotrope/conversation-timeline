@@ -692,9 +692,15 @@
         <label for="loadConvFile">Conversations export <span class="req">(required)</span></label>
         <input type="file" id="loadConvFile" accept="application/json">
       </div>
-      <div class="load-field">
-        <label for="devLoginSub">Dev login name <span class="req">(required — no real login yet, see the migration plan's V2a)</span></label>
+      <div class="load-field" id="devLoginField">
+        <label for="devLoginSub">Dev login name <span class="req">(required — local development only; a deployment signs in with Cognito)</span></label>
         <input type="text" id="devLoginSub" placeholder="e.g. alice" value="alice">
+      </div>
+      <div class="load-field" id="cognitoLoginField" style="display:none;">
+        <label>Your account</label>
+        <p class="load-status" id="cognitoLoginStatus" style="margin:0 0 8px;">Checking whether you're signed in…</p>
+        <button type="button" id="cognitoSignInBtn" class="btn-primary" style="display:none;">Sign in</button>
+        <button type="button" id="cognitoSignOutBtn" style="display:none;">Sign out</button>
       </div>
       <div class="load-field load-checkbox-field">
         <label style="display:flex; align-items:flex-start; gap:9px; cursor:pointer;">
@@ -822,6 +828,9 @@
   </div>
 </div>
 
+<!-- Cognito sign-in for a deployed backend (frontend/infra/cognito-login.js);
+     a plain script defining the global `oidc`. See vendor/oidc-client-ts/README.md. -->
+<script src="vendor/oidc-client-ts/oidc-client-ts.min.js"></script>
 <script type="module" src="frontend/main.js"></script>
 
 </body>

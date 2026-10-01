@@ -10,6 +10,7 @@ import { clearAuthToken } from './infra/api-client.js';
 import { exportAnnotatedConversations } from './ui/annotated-export.js';
 import { approveRow, onVisibilityToggleChanged, setRowOverrides } from './ui/flag-edits.js';
 import { handleLoadClick, tryRestoreSession } from './ui/load-flow.js';
+import { initLogin, signIn, signOut } from './ui/login-panel.js';
 import { rememberLocation } from './ui/navigation/location.js';
 import { switchTab } from './ui/navigation/tabs.js';
 import { applyLocationHash } from './ui/router.js';
@@ -61,8 +62,12 @@ document.querySelectorAll('.analytics-item').forEach(btn=>{
   btn.addEventListener('click', ()=> runAnalysis(btn.dataset.analysis, {}));
 });
 
+document.getElementById('cognitoSignInBtn').addEventListener('click', signIn);
+document.getElementById('cognitoSignOutBtn').addEventListener('click', signOut);
+
 // Last thing in the file, so everything it calls already exists. Deliberately
 // not awaited: the load screen is already usable, and a slow or unreachable
 // backend must not hold the page hostage while it decides there is nothing to
-// restore.
-tryRestoreSession();
+// restore. Restoring waits for the sign-in to be set up (instant without a
+// chosen deployment), since it needs to know who you are.
+initLogin().then(tryRestoreSession);

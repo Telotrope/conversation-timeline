@@ -5,3 +5,6 @@ playwright-report/
 
 # Personal conversation export used for manual testing; never commit.
 real-flags.json
+
+# One person's deployment settings, written by scripts/write-deploy-config.sh.
+frontend/deploy-configs/*.json
