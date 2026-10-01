@@ -15,8 +15,9 @@ use timeline_storage::dynamo::conversations_table::DynamoConversationsTable;
 use timeline_storage::dynamo::message_flags_table::DynamoMessageFlagsStore;
 use timeline_storage::s3::S3ObjectStore;
 
-use crate::aws_settings::AwsSettings;
+use crate::aws_settings::{AwsSettings, StorageSettings};
 use crate::flag_handles::FlagHandleKey;
+use crate::s3_trigger::ProcessingStores;
 use crate::state::AppState;
 
 /// The AWS clients the stores use. Passed in rather than created here, so
@@ -59,6 +60,27 @@ pub fn build_aws_state(
             settings.client_id.as_str(),
         )),
         flag_handle_key: Arc::new(flag_handle_key),
+    }
+}
+
+/// The upload-processing Lambda's stores: the same S3 and DynamoDB adapters
+/// as the API Lambda, without any login checks (migration plan §V2e, E2).
+pub fn build_processing_stores(settings: &StorageSettings, clients: AwsClients) -> ProcessingStores {
+    let conversations = Arc::new(DynamoConversationsTable::new(
+        clients.dynamodb.clone(),
+        settings.conversations_table.as_str(),
+    ));
+    ProcessingStores {
+        object_store: Arc::new(S3ObjectStore::new(
+            clients.s3,
+            settings.uploads_bucket.as_str(),
+        )),
+        upload_outcome_store: conversations.clone(),
+        conversation_summary_store: conversations,
+        user_flag_writer: Arc::new(DynamoMessageFlagsStore::new(
+            clients.dynamodb,
+            settings.message_flags_table.as_str(),
+        )),
     }
 }
 
