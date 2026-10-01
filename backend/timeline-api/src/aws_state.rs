@@ -37,18 +37,22 @@ pub fn build_aws_state(
         clients.dynamodb.clone(),
         settings.message_flags_table.as_str(),
     ));
+    // Upload outcomes and conversation summaries share the conversations
+    // table (see `timeline_core::ports::uploads`).
+    let conversations = Arc::new(DynamoConversationsTable::new(
+        clients.dynamodb,
+        settings.conversations_table.as_str(),
+    ));
     AppState {
         object_store: Arc::new(S3ObjectStore::new(
             clients.s3,
             settings.uploads_bucket.as_str(),
         )),
-        conversation_summary_store: Arc::new(DynamoConversationsTable::new(
-            clients.dynamodb,
-            settings.conversations_table.as_str(),
-        )),
+        conversation_summary_store: conversations.clone(),
         flags_reader: flags.clone(),
         user_flag_writer: flags.clone(),
         auto_flag_writer: flags,
+        upload_outcome_store: conversations,
         verifier: Arc::new(CognitoVerifier::new(
             jwks,
             settings.issuer(),

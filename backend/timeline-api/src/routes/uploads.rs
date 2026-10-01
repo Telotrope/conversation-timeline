@@ -7,16 +7,21 @@
 //! `(user_id, upload_id)` (see
 //! [`timeline_core::ports::uploads::raw_object_key`]), so there is nothing
 //! to persist before the client's PUT lands.
+//!
+//! `GET /uploads/{upload_id}` tells the page whether processing has
+//! finished. On AWS, processing runs in a separate Lambda once the file lands
+//! in S3, so the page asks until the answer is no longer `processing`
+//! (migration plan §V2e, E3).
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::Json;
 use serde::Serialize;
 use timeline_core::ports::ids::UploadId;
 use timeline_core::ports::object_store::ObjectStore;
-use timeline_core::ports::uploads::raw_object_key;
+use timeline_core::ports::uploads::{raw_object_key, UploadOutcome, UploadOutcomeStore};
 
 use crate::auth_extractor::AuthenticatedUser;
 use crate::error::ApiError;
@@ -46,4 +51,36 @@ pub async fn create_upload(
         upload_id,
         upload_url,
     }))
+}
+
+/// What `GET /uploads/{upload_id}` answers. `Processing` covers "no outcome
+/// recorded yet", which is also what an upload id that doesn't exist, or
+/// belongs to someone else, looks like: outcomes are stored under the
+/// logged-in user's id, so another user's upload reveals nothing.
+#[derive(Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum UploadStatusResponse {
+    Processing,
+    Ready,
+    Failed { reason: String },
+}
+
+pub async fn upload_status(
+    AuthenticatedUser(user_id): AuthenticatedUser,
+    Path(upload_id): Path<String>,
+    State(upload_outcome_store): State<Arc<dyn UploadOutcomeStore>>,
+) -> Result<Json<UploadStatusResponse>, ApiError> {
+    let upload_id = upload_id
+        .parse()
+        .map(UploadId)
+        .map_err(|e| ApiError::BadRequest(format!("upload id is not a UUID: {e}")))?;
+    let status = match upload_outcome_store
+        .get_outcome(&user_id, upload_id)
+        .await?
+    {
+        None => UploadStatusResponse::Processing,
+        Some(UploadOutcome::Ready { .. }) => UploadStatusResponse::Ready,
+        Some(UploadOutcome::Failed { reason }) => UploadStatusResponse::Failed { reason },
+    };
+    Ok(Json(status))
 }

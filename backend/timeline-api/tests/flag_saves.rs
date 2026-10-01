@@ -40,6 +40,7 @@ fn test_router() -> Router {
         flags_reader: flags_store.clone(),
         user_flag_writer: flags_store.clone(),
         auto_flag_writer: flags_store.clone(),
+        upload_outcome_store: Arc::new(InMemoryUploadOutcomeStore::new()),
         verifier: Arc::new(CognitoVerifier::new(
             jwks.clone(),
             DEV_ONLY_ISSUER,

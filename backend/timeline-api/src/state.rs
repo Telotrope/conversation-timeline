@@ -19,10 +19,12 @@
 //! struct holds a handle. `UserFlagWriter` and `AutoFlagWriter` are still
 //! distinct, and no handler takes both.
 //!
-//! No user-facing route needs `UploadOutcomeStore`: `POST /uploads` never
-//! touches it (there is no pending state to write), and `GET /export`
-//! recomputes the raw object's key instead of reading it back, so it's
-//! absent from this state entirely, not just unused.
+//! `UploadOutcomeStore` is here for `GET /uploads/{upload_id}`, which tells
+//! the page whether processing has finished (migration plan §V2e, E3). On
+//! AWS processing runs in a separate Lambda after the file lands in S3, so
+//! the page has to ask. Routes only read it; the port's read and write
+//! methods share one trait, and splitting it for one route wasn't worth it
+//! (a recorded choice, see the plan).
 
 use std::sync::Arc;
 
@@ -31,6 +33,7 @@ use timeline_auth::cognito::CognitoVerifier;
 use timeline_core::ports::conversations::ConversationSummaryStore;
 use timeline_core::ports::message_flags::{AutoFlagWriter, MessageFlagsReader, UserFlagWriter};
 use timeline_core::ports::object_store::ObjectStore;
+use timeline_core::ports::uploads::UploadOutcomeStore;
 
 use crate::flag_handles::FlagHandleKey;
 
@@ -41,6 +44,7 @@ pub struct AppState {
     pub flags_reader: Arc<dyn MessageFlagsReader>,
     pub user_flag_writer: Arc<dyn UserFlagWriter>,
     pub auto_flag_writer: Arc<dyn AutoFlagWriter>,
+    pub upload_outcome_store: Arc<dyn UploadOutcomeStore>,
     pub verifier: Arc<CognitoVerifier>,
     /// Signs and checks flag handles; see `crate::flag_handles`.
     pub flag_handle_key: Arc<FlagHandleKey>,
@@ -73,6 +77,12 @@ impl FromRef<AppState> for Arc<dyn UserFlagWriter> {
 impl FromRef<AppState> for Arc<dyn AutoFlagWriter> {
     fn from_ref(state: &AppState) -> Self {
         state.auto_flag_writer.clone()
+    }
+}
+
+impl FromRef<AppState> for Arc<dyn UploadOutcomeStore> {
+    fn from_ref(state: &AppState) -> Self {
+        state.upload_outcome_store.clone()
     }
 }
 

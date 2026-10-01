@@ -18,10 +18,9 @@
 //!
 //! **The Lambda build never gets the `_dev` router.** Only `run_locally`
 //! ever calls `build_dev_router` -- the `lambda_http::run` branch is handed
-//! `build_router(app_state)` alone, so `AutoFlagWriter`, `UploadOutcomeStore`,
-//! and the `_dev/local-storage`/`_dev/login` routes are structurally absent
-//! from anything that could run in production, not just conventionally
-//! unused.
+//! `build_router(app_state)` alone, so the `_dev/local-storage`,
+//! `_dev/login` and `_dev/reset` routes are structurally absent from
+//! anything that could run in production, not just conventionally unused.
 //!
 //! The signing key in [`timeline_api::dev_only::DEV_KEYPAIR`] is generated
 //! fresh, in memory, once per process -- never written to disk, never valid
@@ -51,8 +50,8 @@ use timeline_storage::memory::uploads::InMemoryUploadOutcomeStore;
 /// (the real, Cognito-gated API) and `DevState` (the `_dev`-only local
 /// testing surface) -- sharing the same underlying `Arc`s is what lets an
 /// upload PUT through `_dev/local-storage` show up in `GET /conversations`.
-/// `UploadOutcomeStore` is built for `DevState` only -- no route reachable
-/// from `AppState` needs it (see `state::AppState`'s module doc).
+/// `UploadOutcomeStore` is shared too: the local upload route writes
+/// outcomes and `GET /uploads/{upload_id}` reads them.
 fn build_local_state(flag_handle_key: FlagHandleKey) -> (AppState, DevState) {
     // Forces DEV_KEYPAIR's generation to happen here, up front, rather than
     // lazily on the first login/verification -- so a slow key-generation
@@ -79,16 +78,19 @@ fn build_local_state(flag_handle_key: FlagHandleKey) -> (AppState, DevState) {
         dyn timeline_core::ports::conversations::ConversationSummaryStore,
     > = conversation_summary_store_concrete.clone();
 
+    // Shared like the flag store: the local upload route records outcomes
+    // that `GET /uploads/{upload_id}` reads.
+    let upload_outcome_store = Arc::new(InMemoryUploadOutcomeStore::new());
     let app_state = AppState {
         object_store: object_store.clone(),
         conversation_summary_store: conversation_summary_store.clone(),
         flags_reader: flags_store.clone(),
         user_flag_writer: flags_store.clone(),
         auto_flag_writer: flags_store.clone(),
+        upload_outcome_store: upload_outcome_store.clone(),
         verifier: Arc::new(CognitoVerifier::new(jwks.clone(), DEV_ONLY_ISSUER, DEV_ONLY_CLIENT_ID)),
         flag_handle_key: Arc::new(flag_handle_key),
     };
-    let upload_outcome_store = Arc::new(InMemoryUploadOutcomeStore::new());
     let dev_state = DevState {
         object_store,
         upload_outcome_store: upload_outcome_store.clone(),

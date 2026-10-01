@@ -18,6 +18,7 @@ use crate::state::AppState;
 pub fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/uploads", post(uploads::create_upload))
+        .route("/uploads/{upload_id}", get(uploads::upload_status))
         .route("/conversations", get(conversations::list_conversations))
         .route(
             "/conversations/{conversation_id}/messages/{message_id}/flags",

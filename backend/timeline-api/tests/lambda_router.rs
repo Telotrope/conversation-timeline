@@ -26,6 +26,7 @@ use timeline_core::ports::object_store::ObjectStore;
 use timeline_storage::memory::conversations::InMemoryConversationSummaryStore;
 use timeline_storage::memory::message_flags::InMemoryMessageFlagsStore;
 use timeline_storage::memory::object_store::InMemoryObjectStore;
+use timeline_storage::memory::uploads::InMemoryUploadOutcomeStore;
 use tower::ServiceExt;
 
 /// Exactly the state `main.rs` hands `build_router` on the Lambda path.
@@ -42,6 +43,7 @@ fn lambda_state() -> AppState {
         flags_reader: flags_store.clone(),
         user_flag_writer: flags_store.clone(),
         auto_flag_writer: flags_store,
+        upload_outcome_store: Arc::new(InMemoryUploadOutcomeStore::new()),
         verifier: Arc::new(CognitoVerifier::new(
             jwks.clone(),
             DEV_ONLY_ISSUER,
