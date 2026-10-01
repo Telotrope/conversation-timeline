@@ -2035,6 +2035,14 @@ credentials, no SQS locally) and its test list now says exactly when the paid te
 one that goes through the local server's HTTP routes; see
 [V3 local run (line 1376)](2026-09-09-rust-aws-backend-migration.md#L1376).
 
+### C38 [OPEN]: The Rust AWS SDK may not read `aws login`'s saved credentials
+`aws login` (AWS CLI 2.37.8, confirmed present by reading its help text) saves temporary
+credentials in its own cache. I have not checked whether the Rust SDK's standard credential lookup
+reads that cache. **Mitigation in plan:** if it doesn't, `eval "$(aws configure export-credentials
+--format env)"` puts the same temporary credentials into environment variables, which the SDK does
+read; still no access keys. **Open:** trigger is the first local run with
+`TIMELINE_CLASSIFIER=bedrock`.
+
 ### C11 [RESOLVED]: `UploadStatus`'s `Pending`/`Processing` are persisted but never read
 Confirmed by `grep`, not assumed: no route reads `UploadRecord.status`, and `process_upload`
 didn't branch on it either. Written by `create_pending`/`mark_processing`, read by nothing.
