@@ -28,6 +28,22 @@ pub fn raw_object_key(user_id: &UserId, upload_id: UploadId) -> String {
     format!("raw/{user_id}/{upload_id}.json")
 }
 
+/// The inverse of [`raw_object_key`]: the user and upload a raw upload's key
+/// names, or `None` for any key [`raw_object_key`] can't have produced (an
+/// export, an empty user part, an upload part that isn't a UUID followed by
+/// `.json`). Used wherever a stored file has to be traced back to its upload:
+/// the local upload route and the S3-triggered processing Lambda.
+pub fn parse_raw_object_key(key: &str) -> Option<(UserId, UploadId)> {
+    let rest = key.strip_prefix("raw/")?;
+    let (user_part, upload_part) = rest.split_once('/')?;
+    if user_part.is_empty() {
+        return None;
+    }
+    let upload_id_str = upload_part.strip_suffix(".json")?;
+    let upload_id = UploadId(upload_id_str.parse().ok()?);
+    Some((UserId(user_part.to_string()), upload_id))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum UploadOutcome {

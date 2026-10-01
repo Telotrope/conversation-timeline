@@ -12,30 +12,12 @@ use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use timeline_core::ports::conversations::ConversationSummaryStore;
-use timeline_core::ports::ids::{UploadId, UserId};
 use timeline_core::ports::message_flags::UserFlagWriter;
 use timeline_core::ports::object_store::ObjectStore;
-use timeline_core::ports::uploads::UploadOutcomeStore;
+use timeline_core::ports::uploads::{parse_raw_object_key, UploadOutcomeStore};
 
 use crate::error::ApiError;
 use crate::processing::process_upload;
-
-/// `raw/{user_id}/{upload_id}.json` is the only key shape
-/// [`crate::routes::uploads::create_upload`] ever generates, so it's the
-/// only shape this parses. Anything else (an export key, a malformed key)
-/// is `None` -- the PUT still stores the bytes, it just doesn't trigger
-/// processing, matching production where only a raw-prefix upload fires
-/// the S3 event in the first place.
-fn parse_raw_upload_key(key: &str) -> Option<(UserId, UploadId)> {
-    let rest = key.strip_prefix("raw/")?;
-    let (user_part, upload_part) = rest.split_once('/')?;
-    if user_part.is_empty() {
-        return None;
-    }
-    let upload_id_str = upload_part.strip_suffix(".json")?;
-    let upload_id = UploadId(upload_id_str.parse().ok()?);
-    Some((UserId(user_part.to_string()), upload_id))
-}
 
 pub async fn put_object(
     Path(key): Path<String>,
@@ -47,7 +29,10 @@ pub async fn put_object(
 ) -> Result<StatusCode, ApiError> {
     object_store.put(&key, body.to_vec()).await?;
 
-    if let Some((user_id, upload_id)) = parse_raw_upload_key(&key) {
+    // Only a raw upload's key triggers processing, matching production,
+    // where only keys under `raw/` fire the S3 event. Anything else (an
+    // export, a malformed key) is just stored.
+    if let Some((user_id, upload_id)) = parse_raw_object_key(&key) {
         // Local substitute for the real S3 ObjectCreated event -- see
         // module doc. A real deployment logs and moves on if processing
         // fails (the upload is left in a `Failed` state for the client to
