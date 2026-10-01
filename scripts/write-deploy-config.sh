@@ -14,7 +14,9 @@ if [[ ! "$stage" =~ ^[a-z0-9-]{1,32}$ ]]; then
   exit 1
 fi
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-out="$repo/frontend/deploy-configs/$stage.json"
+# DEPLOY_CONFIG_DIR exists for scripts/test-deploy-scripts.sh, so the test
+# never overwrites your real settings.
+out="${DEPLOY_CONFIG_DIR:-$repo/frontend/deploy-configs}/$stage.json"
 
 outputs="$(aws cloudformation describe-stacks --stack-name "timeline-$stage" \
   --query 'Stacks[0].Outputs' --output json)"
