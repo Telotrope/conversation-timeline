@@ -1,6 +1,12 @@
 # Browser tests start and stop their own backend, never reuse one
 
-**Status:** revision 1, awaiting review.
+**Status:** done 2026-10-01. Differences from the plan below: the server binary is built and then
+run directly instead of through `cargo run`, so the process the run starts is the server itself
+(its process ID is the listener, and stopping it can't leave a child running); and the identity
+check is its own file, [test-server.spec.js](../../e2e/test-server.spec.js). Step 4 results:
+with the old server answering on port 3000 for the whole run, all 60 tests passed; with a decoy on
+3123, the run stopped after 2 seconds with the "port 3123 is in use" message; after each run,
+nothing was left listening on 3123.
 
 ## What went wrong
 
@@ -102,4 +108,7 @@ message names the port, so it's easy to find and stop. See [Fix, item 1 (line 50
 ### C3 [OPEN]: Which old server answered on 2026-10-01 isn't known
 Theory 1 reproduces the symptom, but there's no record of which process was listening during the
 failed runs. **Mitigation in plan:** the fix makes the tests independent of whatever is on port
-3000. **Open:** trigger is your answer about whether you stopped the dev backend around 03:07 UTC.
+3000. **Open:** you didn't stop the dev backend (2026-10-01). I checked your session log
+(`journalctl --user`) from 02:50 to 03:12 UTC and found no editor or terminal restart near 03:07;
+the system log needs permissions I don't have. So what stopped it is still unknown. Trigger: the
+dev backend disappearing again, at which point the launcher should record when its server exits.

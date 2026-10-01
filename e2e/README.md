@@ -19,8 +19,8 @@ against a real running server, asserting on the real rendered DOM.
   at this directly (`launchOptions.executablePath`) instead of Playwright's own bundled Chromium
   download, because that download's `--with-deps` step needs `sudo` for system libraries this
   machine's Chrome already has satisfied.
-- The Rust toolchain, per [backend/README.md](../backend/README.md) — the test starts
-  `cargo run -p timeline-api` itself.
+- The Rust toolchain, per [backend/README.md](../backend/README.md) — the test run builds and
+  starts `timeline-api` itself.
 
 ## Running
 
@@ -30,10 +30,19 @@ npm install
 npm test
 ```
 
-The test suite starts `timeline-api` in the background (polling the port, not sleeping), serves
-the repo root over HTTP on port 8123 (Playwright's `webServer` setting in
+Before any test, [backend-server.js](backend-server.js) (Playwright's global setup) builds
+`timeline-api` and starts it on **port 3123**, a port only the test run uses; your own dev backend
+on port 3000 is never touched or used. **It never reuses a server**: if anything already answers on
+3123, the run stops at once with a message naming the port. The page is pointed at the test
+backend with its `api_base` query parameter ([test-endpoints.js](test-endpoints.js)), and
+[test-server.spec.js](test-server.spec.js) checks that the process listening on 3123 is the one
+the run started. This exists because on 2026-10-01 the tests silently reused an old dev backend on
+port 3000 (see
+[docs/plans/2026-10-01-browser-tests-own-server.md](../docs/plans/2026-10-01-browser-tests-own-server.md)).
+
+The run also serves the repo root over HTTP on port 8123 (Playwright's `webServer` setting in
 [playwright.config.js](playwright.config.js)), drives `timeline.html` through the real upload flow,
-and tears both servers down afterward. The page is served rather than opened as a `file://` page
+and stops both servers afterward. The page is served rather than opened as a `file://` page
 because its scripts are JavaScript modules, which browsers refuse to load from disk. On failure,
 Playwright saves a screenshot (see its own output for the path).
 
