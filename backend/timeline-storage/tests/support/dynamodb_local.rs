@@ -14,14 +14,22 @@
 //!
 //! Launched with `-disableTelemetry`, since DynamoDB Local sends usage data
 //! by default (plan C15).
+//!
+//! **Ready means a real request succeeded**, not just that the port accepts
+//! connections (plan C10). An open port proves neither that DynamoDB Local
+//! can answer yet, nor that the process on the port is DynamoDB Local at
+//! all: `free_port` releases the port before java binds it, and another
+//! program could take it in that gap -- the same kind of "tests talking to
+//! the wrong server" failure the browser tests hit on 2026-10-01.
 
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpListener};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use aws_sdk_dynamodb::config::{BehaviorVersion, Credentials, Region};
+use aws_sdk_dynamodb::error::DisplayErrorContext;
 use aws_sdk_dynamodb::types::{
     AttributeDefinition, BillingMode, KeySchemaElement, KeyType, ScalarAttributeType,
 };
@@ -84,29 +92,68 @@ fn start() -> Server {
         .unwrap_or_else(|e| panic!("could not start DynamoDB Local: {e}\n{SETUP_HELP}"));
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_err() {
-        if Instant::now() > deadline {
-            panic!("DynamoDB Local did not start listening on {addr} within 20 seconds");
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
+    wait_until_answering(addr, Duration::from_secs(20));
     Server {
         addr,
         _wrapper: Mutex::new(wrapper),
     }
 }
 
-/// A client pointed at the shared DynamoDB Local, starting it if needed.
-pub fn client() -> aws_sdk_dynamodb::Client {
-    let server = SERVER.get_or_init(start);
+/// Blocks until a `ListTables` request to `addr` succeeds, or panics after
+/// `timeout` naming the address and the last error. A success also proves
+/// the process speaks DynamoDB's protocol, not merely that something is
+/// listening.
+///
+/// Runs on its own thread with its own runtime: `start` is called from
+/// inside a test's async runtime, where blocking on a second runtime on the
+/// same thread is not allowed.
+pub fn wait_until_answering(addr: SocketAddr, timeout: Duration) {
+    let outcome = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build a runtime for the readiness check");
+        runtime.block_on(async move {
+            let client = client_at(addr);
+            let deadline = Instant::now() + timeout;
+            loop {
+                match client.list_tables().send().await {
+                    Ok(_) => return Ok(()),
+                    // Not up yet: expected while java starts. The error that
+                    // matters is the one still happening at the deadline.
+                    Err(_) if Instant::now() < deadline => {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                    Err(e) => return Err(DisplayErrorContext(&e).to_string()),
+                }
+            }
+        })
+    })
+    .join()
+    .expect("the readiness-check thread panicked");
+    if let Err(last_error) = outcome {
+        panic!(
+            "DynamoDB Local on {addr} did not answer a ListTables request within {} seconds. \
+             If something else holds that port, the requests reach it instead. Last error: {last_error}",
+            timeout.as_secs()
+        );
+    }
+}
+
+fn client_at(addr: SocketAddr) -> aws_sdk_dynamodb::Client {
     let config = aws_sdk_dynamodb::Config::builder()
         .behavior_version(BehaviorVersion::latest())
         .credentials_provider(Credentials::new("test", "test", None, None, "test"))
         .region(Region::new("us-east-1"))
-        .endpoint_url(format!("http://{}", server.addr))
+        .endpoint_url(format!("http://{addr}"))
         .build();
     aws_sdk_dynamodb::Client::from_conf(config)
+}
+
+/// A client pointed at the shared DynamoDB Local, starting it if needed.
+pub fn client() -> aws_sdk_dynamodb::Client {
+    let server = SERVER.get_or_init(start);
+    client_at(server.addr)
 }
 
 /// Creates a new, empty table with a unique name and returns that name.
