@@ -188,7 +188,12 @@ Resources:
   HttpApi:
     Type: AWS::Serverless::HttpApi
     Properties:
-      StageName: !Ref Stage
+      # `$default` adds nothing to the API's address. A named stage would
+      # reach the Lambda as `/<stage>/conversations`, which lambda_http
+      # passes on unchanged and the router doesn't know (migration plan
+      # §V2e, E1; tests/lambda_events.rs). `Stage` still names the
+      # resources.
+      StageName: "$default"
       Auth:
         Authorizers:
           CognitoAuthorizer:
@@ -202,7 +207,7 @@ Resources:
 Outputs:
   ApiUrl:
     Description: Base URL of the deployed HTTP API.
-    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/"
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
   UserPoolId:
     Value: !Ref UserPool
   UserPoolClientId:
