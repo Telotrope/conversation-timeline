@@ -9,7 +9,8 @@ import { parseUploadedConversations } from '../core/export-format.js';
 import { attachFlags } from '../core/flags.js';
 import { formatBytes } from '../core/format.js';
 import { state } from '../core/state.js';
-import { API_BASE, clearAuthToken, describeFailure, ensureAuthToken, putWithProgress, readBodyWithProgress } from '../infra/api-client.js';
+import { API_BASE, clearAuthToken, describeFailure, ensureAuthToken, fetchUploadStatus, putWithProgress, readBodyWithProgress, serverUrl } from '../infra/api-client.js';
+import { waitForProcessing } from '../core/upload-wait.js';
 import { applyLocationHash } from './router.js';
 import { renderCalendar } from './views/calendar.js';
 import { renderConvList } from './views/conversations.js';
@@ -83,7 +84,7 @@ export async function tryRestoreSession(){
     });
     if(!exportRes.ok) return;
     const { export_url, flag_handles } = await exportRes.json();
-    const downloadRes = await fetch(`${API_BASE}${export_url}`);
+    const downloadRes = await fetch(serverUrl(export_url));
     if(!downloadRes.ok) return;
     if(!applyExportText(await downloadRes.text(), flag_handles)) return;
 
@@ -155,12 +156,12 @@ export async function handleLoadClick(){
       headers: { 'Authorization': `Bearer ${token}` },
     });
     if(!createRes.ok) throw new Error(await describeFailure('starting the upload', createRes));
-    const { upload_url } = await createRes.json();
+    const { upload_id, upload_url } = await createRes.json();
 
     const uploadFill = document.getElementById('loadProgressFill');
     const uploadLabel = document.getElementById('loadProgressLabel');
     const uploadEta = makeRateEstimator(3000);
-    const putRes = await putWithProgress(`${API_BASE}${upload_url}`, rawText, (loaded, total) => {
+    const putRes = await putWithProgress(serverUrl(upload_url), rawText, (loaded, total) => {
       const pct = Math.round((loaded / total) * 100);
       uploadFill.style.width = pct + '%';
       const eta = uploadEta(loaded, total);
@@ -171,14 +172,18 @@ export async function handleLoadClick(){
       throw new Error(`uploading the file failed (${putRes.status})${putRes.text ? ': ' + putRes.text : ''}`);
     }
 
-    // The bytes being sent is not the end of the wait: the local-dev PUT
-    // handler parses, dedups and stores the upload before it answers, and
-    // none of that is observable from here. Saying so beats a full bar that
-    // looks stuck. No polling is needed either -- by the time the PUT
-    // resolves the work is done. Real S3-triggered processing is
-    // asynchronous; that gap isn't solved here, see the migration plan's V2a.
+    // The bytes being sent is not the end of the wait: the server still has
+    // to parse, dedup and store the upload. Saying so beats a full bar that
+    // looks stuck. On AWS that happens separately, after the file lands in
+    // S3, so the page asks until it's done; locally the first answer is
+    // already "ready". See core/upload-wait.js.
     setLoadStatus('Processing on the server…');
     setLoadProgressIndeterminate('Processing on the server…');
+    await waitForProcessing({
+      fetchStatus: () => fetchUploadStatus(token, upload_id),
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      now: () => Date.now(),
+    });
 
     // Only if asked. Detection reads every message you sent, and nothing
     // here has measured how long that takes, so it is never implied by the
@@ -195,7 +200,7 @@ export async function handleLoadClick(){
     if(!exportRes.ok) throw new Error(await describeFailure('reading back the processed export', exportRes));
     const { export_url, flag_handles } = await exportRes.json();
 
-    const downloadRes = await fetch(`${API_BASE}${export_url}`);
+    const downloadRes = await fetch(serverUrl(export_url));
     if(!downloadRes.ok) throw new Error(await describeFailure('downloading the processed export', downloadRes));
     const downloadEta = makeRateEstimator(3000);
     const text = await readBodyWithProgress(downloadRes, (loaded, total) => {

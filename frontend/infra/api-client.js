@@ -4,6 +4,7 @@
 // readable messages.
 
 import { state } from '../core/state.js';
+import { resolveUrl } from '../core/server-url.js';
 
 // Not a relative path: timeline.html isn't served by timeline-api and is
 // opened separately, so relative fetch()es would resolve against the
@@ -29,6 +30,21 @@ function resolveApiBase(){
 }
 
 export const API_BASE = resolveApiBase();
+
+// An address the backend handed back, made fetchable; see core/server-url.js.
+export function serverUrl(url){
+  return resolveUrl(API_BASE, url);
+}
+
+// GET /uploads/{id}: whether the backend has finished processing an upload.
+// Resolves to the route's JSON; throws with the server's message otherwise.
+export async function fetchUploadStatus(token, uploadId){
+  const res = await fetch(`${API_BASE}/uploads/${encodeURIComponent(uploadId)}`, {
+    headers: { 'Authorization': `Bearer ${token}` },
+  });
+  if(!res.ok) throw new Error(await describeFailure('checking on the upload', res));
+  return res.json();
+}
 
 let AUTH_TOKEN = null;
 
