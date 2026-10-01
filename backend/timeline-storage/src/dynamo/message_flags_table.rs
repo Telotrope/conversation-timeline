@@ -150,6 +150,9 @@ fn message_id_from_sort_key(
             msg,
         )))
     };
+    // Currently unreachable: the table's key schema makes `sk` required, so
+    // DynamoDB never returns a row without it. Kept as a backstop if the
+    // schema or this read changes.
     let sk = item
         .get("sk")
         .and_then(|v| v.as_s().ok())

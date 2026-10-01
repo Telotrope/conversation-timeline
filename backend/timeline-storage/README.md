@@ -32,8 +32,8 @@ from the real service fails a test.
 | File | Line coverage | What's actually tested |
 |---|---|---|
 | [`s3.rs`](src/s3.rs) | 100% | `ObjectStore` contract against `s3s-fs`; presigned PUT/GET used by a plain HTTP client; tampered, expired and wrong-method URLs rejected; over-long presign and an unreachable server reported as `Backend`. |
-| [`dynamo/conversations_table.rs`](src/dynamo/conversations_table.rs) | 98.41% | `UploadOutcomeStore` and `ConversationSummaryStore` contracts against DynamoDB Local; both row kinds in one table; malformed rows; missing table. Two lines unreached: the missing-`sk` and missing-`CONV#`-prefix branches in `list_for_user`, which no row DynamoDB can return should reach. |
-| [`dynamo/message_flags_table.rs`](src/dynamo/message_flags_table.rs) | 99.20% | Message-flags contract (including the auto/user separation, read back through the real trait methods) against DynamoDB Local; a malformed sort key; missing table. One line unreached: the missing-`sk` branch, for the same reason. |
+| [`dynamo/conversations_table.rs`](src/dynamo/conversations_table.rs) | 98.41% | `UploadOutcomeStore` and `ConversationSummaryStore` contracts against DynamoDB Local; both row kinds in one table; malformed rows; missing table. Two lines unreached: the missing-`sk` and missing-`CONV#`-prefix checks in `list_for_user`, commented in the code as currently unreachable backstops (an accepted exception to 100% coverage). |
+| [`dynamo/message_flags_table.rs`](src/dynamo/message_flags_table.rs) | 99.20% | Message-flags contract (including the auto/user separation, read back through the real trait methods) against DynamoDB Local; a malformed sort key; missing table. One line unreached: the missing-`sk` check, likewise commented as a currently unreachable backstop. |
 | `memory/*.rs` | 54–78% within this crate | Contract suites plus the original `memory_*.rs` tests. The unreached lines in each file are its `Resettable::reset`, which is exercised through `timeline-api`'s `POST /_dev/reset` tests, not from this crate. |
 
 Not covered by the stand-ins: real S3's host-name bucket addressing and its `NoSuchBucket` error

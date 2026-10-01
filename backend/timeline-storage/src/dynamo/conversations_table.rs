@@ -201,10 +201,16 @@ impl ConversationSummaryStore for DynamoConversationsTable {
             .unwrap_or_default()
             .iter()
             .map(|item| {
+                // Currently unreachable: the table's key schema makes `sk`
+                // required, so DynamoDB never returns a row without it.
+                // Kept as a backstop if the schema or this read changes.
                 let sk = item
                     .get("sk")
                     .and_then(|v| v.as_s().ok())
                     .ok_or_else(|| invalid_data("conversation item is missing sk"))?;
+                // Currently unreachable: the query above only asks for rows
+                // whose `sk` begins with `CONV#`. Kept as a backstop if the
+                // query changes.
                 let id_str = sk
                     .strip_prefix(CONVERSATION_SORT_PREFIX)
                     .ok_or_else(|| invalid_data(format!("unexpected sk {sk:?}")))?;
