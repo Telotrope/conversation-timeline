@@ -3,9 +3,12 @@
 //! Auto and user flags live in separate attribute names (`auto_*` /
 //! `user_*`) specifically so the auto-write and user-write code paths can
 //! be given genuinely disjoint sets of attributes to touch -- see the
-//! `*_update_expression` functions and their tests below, which are the
-//! concrete, checkable version of the auto/user separation the migration
-//! plan section 4.1 calls for.
+//! `*_update_expression` functions below, the concrete version of the
+//! auto/user separation the migration plan section 4.1 calls for. It is
+//! proven through the public trait methods, against DynamoDB Local, by
+//! `tests/support/message_flags_contract.rs` (run from
+//! `tests/dynamo_message_flags.rs`), which reads back what each kind of
+//! write actually stored.
 
 use std::collections::HashMap;
 
@@ -52,8 +55,10 @@ type UpdateExpressionParts = (
 );
 
 /// Builds the UpdateExpression for writing *only* the auto-detected flags.
-/// See `auto_update_expression_never_references_a_user_attribute` below for
-/// the test this exists to make possible.
+/// It names only `auto_*` attributes, so an auto write can never change a
+/// user override; the contract test
+/// `a_second_auto_write_replaces_the_first_and_keeps_user_overrides`
+/// checks that against a real table.
 fn auto_update_expression(flags: FlagSet) -> UpdateExpressionParts {
     let names = HashMap::from([
         ("#auto_caps".to_string(), "auto_caps".to_string()),
@@ -76,8 +81,12 @@ fn auto_update_expression(flags: FlagSet) -> UpdateExpressionParts {
 
 /// Builds the UpdateExpression for writing *only* the flags actually
 /// present in `overrides` (a partial PATCH must not clobber the others).
-/// `None` if nothing was set. See
-/// `user_update_expression_never_references_an_auto_attribute` below.
+/// `None` if nothing was set, so no write is sent at all. It names only
+/// `user_*` attributes, so a user write can never change an auto flag; the
+/// contract tests `a_user_write_does_not_disturb_auto_flags`,
+/// `a_partial_user_update_only_touches_the_flags_it_names` and
+/// `an_empty_user_update_on_an_existing_record_changes_nothing` check that
+/// against a real table.
 fn user_update_expression(overrides: FlagOverrides) -> Option<UpdateExpressionParts> {
     let mut names = HashMap::new();
     let mut values = HashMap::new();
@@ -263,92 +272,3 @@ impl UserFlagWriter for DynamoMessageFlagsStore {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // TEMPORARY per CLAUDE.md's "test only through the public API" rule:
-    // these test the private expression-building functions directly,
-    // because verifying the auto/user separation through the real
-    // AutoFlagWriter/UserFlagWriter trait methods would need a mocked AWS
-    // HTTP client (aws-smithy-runtime's StaticReplayClient, matching
-    // DynamoDB's wire-protocol JSON exactly) that hasn't been built yet.
-    // Remove these once that exists in a `tests/` file calling the real
-    // trait methods; keep the doc comments above on `auto_update_expression`
-    // and `user_update_expression` as the record of *why* this separation
-    // matters regardless of which test proves it.
-
-    #[test]
-    fn auto_update_expression_never_references_a_user_attribute() {
-        let (expr, names, values) = auto_update_expression(FlagSet {
-            caps: true,
-            critical: false,
-            angry: true,
-        });
-        assert!(
-            !expr.contains("user"),
-            "expression must not mention a user attribute: {expr}"
-        );
-        assert!(
-            names.values().all(|v| !v.contains("user")),
-            "attribute names must not include a user attribute: {names:?}"
-        );
-        assert!(
-            values.keys().all(|k| !k.contains("user")),
-            "attribute values must not include a user placeholder: {values:?}"
-        );
-    }
-
-    #[test]
-    fn user_update_expression_never_references_an_auto_attribute() {
-        let (expr, names, values) = user_update_expression(FlagOverrides {
-            caps: Some(true),
-            critical: None,
-            angry: Some(false),
-        })
-        .unwrap();
-        assert!(
-            !expr.contains("auto"),
-            "expression must not mention an auto attribute: {expr}"
-        );
-        assert!(
-            names.values().all(|v| !v.contains("auto")),
-            "attribute names must not include an auto attribute: {names:?}"
-        );
-        assert!(
-            values.keys().all(|k| !k.contains("auto")),
-            "attribute values must not include an auto placeholder: {values:?}"
-        );
-    }
-
-    #[test]
-    fn user_update_expression_only_includes_flags_actually_set() {
-        let (expr, names, _) = user_update_expression(FlagOverrides {
-            caps: Some(true),
-            critical: None,
-            angry: None,
-        })
-        .unwrap();
-        assert!(expr.contains("user_caps"));
-        assert!(!expr.contains("user_critical"));
-        assert!(!expr.contains("user_angry"));
-        assert_eq!(names.len(), 1);
-    }
-
-    #[test]
-    fn user_update_expression_with_nothing_set_is_none() {
-        assert!(user_update_expression(FlagOverrides::default()).is_none());
-    }
-
-    #[test]
-    fn partition_and_sort_keys_are_distinct_per_conversation_and_message() {
-        let user = UserId("u1".to_string());
-        let conv_a = ConversationId(uuid::Uuid::from_u128(1));
-        let conv_b = ConversationId(uuid::Uuid::from_u128(2));
-        assert_ne!(partition_key(&user, conv_a), partition_key(&user, conv_b));
-
-        let msg_a = MessageId(uuid::Uuid::from_u128(10));
-        let msg_b = MessageId(uuid::Uuid::from_u128(11));
-        assert_ne!(sort_key(msg_a), sort_key(msg_b));
-    }
-}

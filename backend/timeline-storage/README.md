@@ -33,7 +33,7 @@ from the real service fails a test.
 |---|---|---|
 | [`s3.rs`](src/s3.rs) | 100% | `ObjectStore` contract against `s3s-fs`; presigned PUT/GET used by a plain HTTP client; tampered, expired and wrong-method URLs rejected; over-long presign and an unreachable server reported as `Backend`. |
 | [`dynamo/conversations_table.rs`](src/dynamo/conversations_table.rs) | 98.41% | `UploadOutcomeStore` and `ConversationSummaryStore` contracts against DynamoDB Local; both row kinds in one table; malformed rows; missing table. Two lines unreached: the missing-`sk` and missing-`CONV#`-prefix branches in `list_for_user`, which no row DynamoDB can return should reach. |
-| [`dynamo/message_flags_table.rs`](src/dynamo/message_flags_table.rs) | 99.44% | Message-flags contract (including the auto/user separation, read back through the real trait methods) against DynamoDB Local; a malformed sort key; missing table. One line unreached: the missing-`sk` branch, for the same reason. |
+| [`dynamo/message_flags_table.rs`](src/dynamo/message_flags_table.rs) | 99.20% | Message-flags contract (including the auto/user separation, read back through the real trait methods) against DynamoDB Local; a malformed sort key; missing table. One line unreached: the missing-`sk` branch, for the same reason. |
 | `memory/*.rs` | 54–78% within this crate | Contract suites plus the original `memory_*.rs` tests. The unreached lines in each file are its `Resettable::reset`, which is exercised through `timeline-api`'s `POST /_dev/reset` tests, not from this crate. |
 
 Not covered by the stand-ins: real S3's host-name bucket addressing and its `NoSuchBucket` error
@@ -56,8 +56,8 @@ real-AWS run in the migration plan's §V2.
   sort-key prefix (`UPLOAD#<id>` vs. `CONV#<id>`).
 - **`DynamoMessageFlagsStore`** implements the three flag traits against a separate `MessageFlags`
   table, with disjoint `auto_*`/`user_*` DynamoDB attribute names — the storage-level enforcement of
-  the auto/user separation, verified by `auto_update_expression`/`user_update_expression`'s tests
-  never referencing the other half's attributes.
+  the auto/user separation, verified by the message-flags contract suite reading back what each
+  kind of write stored, against DynamoDB Local.
 
 ## Class diagram
 
