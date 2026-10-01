@@ -787,6 +787,32 @@ test('a failed save says so and names the error', async ({ page }) => {
   await expect(page.locator('#saveStatus')).toHaveText(/^Could not save to the server: /);
 });
 
+test('a save the server refuses as out of date asks for a reload', async ({ page }) => {
+  // The server answers 403 when a save's flag handle doesn't match the
+  // message -- e.g. the server restarted with a new key since this page
+  // loaded its data (migration plan §V2c).
+  await loadFixture(page);
+  await page.route(`${API_BASE}/conversations/**/flags`, (route) =>
+    route.fulfill({ status: 403, contentType: 'application/json', body: '{"error":"flag handle does not match this message"}' }));
+  await page.click('button[data-tab="review"]');
+  await page.locator('.approve-btn').first().click();
+  await expect(page.locator('#saveStatus')).toHaveText("Could not save: this page's data is out of date. Reload the page.");
+});
+
+test('every save carries the handle the export issued for that message', async ({ page }) => {
+  await loadFixture(page);
+  let sentBody = null;
+  await page.route(`${API_BASE}/conversations/**/flags`, async (route) => {
+    sentBody = JSON.parse(route.request().postData());
+    await route.continue();
+  });
+  await page.click('button[data-tab="review"]');
+  await page.locator('.approve-btn').first().click();
+  await expect(page.locator('#saveStatus')).toHaveText('Saved.');
+  expect(typeof sentBody.handle).toBe('string');
+  expect(sentBody.handle).toHaveLength(43);
+});
+
 test('pressing Load with no file chosen asks for one', async ({ page }) => {
   await page.goto(TIMELINE_HTML);
   await page.click('#loadBtn');
