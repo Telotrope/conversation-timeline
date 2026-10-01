@@ -96,8 +96,16 @@ impl UserFlagWriter for InMemoryMessageFlagsStore {
         overrides: FlagOverrides,
     ) -> Result<MessageFlagRecord, StoreError> {
         let mut records = self.records.lock().expect("in-memory store mutex poisoned");
+        let key = (user_id.clone(), conversation_id, message_id);
+        // An empty update changes nothing, so it must not create a record
+        // either -- matching the DynamoDB adapter, which sends no write and
+        // then reports the missing record as NotFound. See the migration
+        // plan's §V2c.
+        if overrides == FlagOverrides::default() {
+            return records.get(&key).copied().ok_or(StoreError::NotFound);
+        }
         let record = records
-            .entry((user_id.clone(), conversation_id, message_id))
+            .entry(key)
             .or_insert_with(|| blank(message_id));
         if let Some(caps) = overrides.caps {
             record.user.caps = Some(caps);
