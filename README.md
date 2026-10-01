@@ -5,6 +5,7 @@ A tool for reviewing your exported Claude conversation history: session timing, 
 Originally a single self-contained `timeline.html` file; migrating to a Rust backend — see
 [docs/plans/2026-09-09-rust-aws-backend-migration.md](docs/plans/2026-09-09-rust-aws-backend-migration.md)
 for the full plan and [backend/README.md](backend/README.md) for the backend workspace itself.
+To deploy the backend to your own AWS account, see [infra/README.md](infra/README.md).
 
 ## Running this locally
 

@@ -63,6 +63,11 @@ with only a console message, which a test looking elsewhere on the page could mi
   page at a conversation or analysis address, and the load-screen and save failures.
   [synthetic-export.js](synthetic-export.js) builds the exports the checked-in fixture can't
   supply (Markdown, Claude-only conversations, hundreds of messages).
+- `cognito-login.spec.js`: the page pointed at a deployment (`?deploy=e2e`, its settings answered
+  by the test) signs in through a pretend Cognito, [cognito-standin.js](cognito-standin.js), which
+  checks the PKCE proof and hands out tokens the local backend accepts; then uploads and reloads.
+  Also a refused proof, uploading before signing in, missing settings, and switching back to
+  local development. Real Cognito is checked only by a deployment (migration plan §V2e, D3).
 
 ## Measuring coverage
 
@@ -81,8 +86,9 @@ The page's pure data logic (`frontend/core/`) also has unit tests, run from `fro
 
 ## What's not covered
 
-- Real AWS/LocalStack — this only ever exercises the in-memory local-dev backend. See the
-  migration plan's C10 for the (separate, not-yet-built) real-adapter testing story.
+- Real AWS and real Cognito — this only ever exercises the in-memory local-dev backend. The real
+  S3 and DynamoDB adapters are tested in the Rust suite against local stand-ins (migration plan
+  §V2b); real AWS is the first deployment's checks ([infra/README.md](../infra/README.md)).
 - Nothing here runs as part of `cargo test --workspace` — different toolchain entirely. Treat it
   as a required manual step before calling a change to `timeline.html` or `frontend/` done, the same way
   the plan already treats LocalStack/real-AWS verification for the backend.

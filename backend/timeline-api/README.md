@@ -2,13 +2,20 @@
 
 The deployed backend: an `axum` app assembling routes over [`timeline-core`](../timeline-core/README.md)'s
 domain logic and [`timeline-storage`](../timeline-storage/README.md)'s adapters, gated by
-[`timeline-auth`](../timeline-auth/README.md)'s Cognito verification. `main.rs` is the single
-entrypoint — it runs the same router either as a Lambda function
-(behind API Gateway) or as a local dev server (`cargo run -p timeline-api`), based on whether
-`AWS_LAMBDA_RUNTIME_API` is set.
+[`timeline-auth`](../timeline-auth/README.md)'s Cognito verification. Two entry points:
+
+- `main.rs` runs the API either as a Lambda function (behind API Gateway) or as a local dev server
+  (`cargo run -p timeline-api`), based on whether `AWS_LAMBDA_RUNTIME_API` is set.
+- [`src/bin/process_upload.rs`](src/bin/process_upload.rs) is the upload-processing Lambda, started
+  by S3 when a raw upload lands. Its handler is [`s3_trigger`](src/s3_trigger.rs) (migration plan
+  §V2e, E2). Locally, the `_dev/local-storage` upload route calls the same processing directly.
+
+`cargo lambda build --release --arm64 -p timeline-api` builds both, into
+`target/lambda/timeline-api/` and `target/lambda/process_upload/`.
 
 **Dependencies**: `timeline-core`, `timeline-storage`, `timeline-auth`, `axum`, `tokio`,
-`lambda_http`, `serde`/`serde_json`, `uuid`, `jsonwebtoken`, `tower-http` (CORS), `rsa`/`rand`/`base64`
+`lambda_http`, `lambda_runtime` and `aws_lambda_events` (the processing Lambda's S3 event),
+`percent-encoding` (S3 event keys), `serde`/`serde_json`, `uuid`, `jsonwebtoken`, `tower-http` (CORS), `rsa`/`rand`/`base64`
 (generating the dev-only signing keypair at runtime).
 
 ## Two routers, structurally separated
@@ -20,18 +27,21 @@ optional pieces:
   capability as its own `FromRef` implementation, so a route handler's function signature only ever
   names the one trait object it actually needs.
 - **`DevState`** ([src/dev_state.rs](src/dev_state.rs)) — the `_dev`-namespaced local-testing
-  surface. This is the **only** place `AutoFlagWriter` is reachable in this binary.
+  surface.
 
 `main.rs` merges `DevState`'s router into the running server **only** in the local-dev branch — the
 Lambda branch is handed `build_router(app_state)` alone and never even constructs the merge. So the
-`_dev` routes (and the `AutoFlagWriter` capability) are structurally absent from anything that could
-run in production, not a convention that could be forgotten.
+`_dev` routes are structurally absent from anything that could run in production, not a convention
+that could be forgotten. (`AutoFlagWriter` is in `AppState` since detection became a user-requested
+route, `POST /detect`; see [src/state.rs](src/state.rs)'s module doc.)
 
 ## Routes
 
 | Method & path | Handler | State |
 |---|---|---|
 | `POST /uploads` | [`routes::uploads::create_upload`](src/routes/uploads.rs) | `AppState` |
+| `GET /uploads/{upload_id}` | [`routes::uploads::upload_status`](src/routes/uploads.rs): `processing`, `ready` or `failed` with a reason | `AppState` |
+| `POST /detect` | [`routes::detect::detect`](src/routes/detect.rs) | `AppState` |
 | `GET /conversations` | [`routes::conversations::list_conversations`](src/routes/conversations.rs) | `AppState` |
 | `GET`/`PATCH /conversations/{id}/messages/{id}/flags` | [`routes::flags`](src/routes/flags.rs) | `AppState` (two *different* narrow states — see below) |
 | `GET /export` | [`routes::export::export`](src/routes/export.rs) | `AppState` |
@@ -70,8 +80,8 @@ locally; on Lambda it comes from `TIMELINE_FLAG_HANDLE_KEY` (filled from Secrets
 [`processing::process_upload`](src/processing.rs) turns a raw upload into stored conversation
 summaries and auto flags. It contains **no new domain logic** — it composes already-tested
 `timeline-core` functions (`unwrap_uploaded_json`, the three flag detectors) with the storage ports,
-generic over the trait objects so it's callable by either a real S3-triggered Lambda (not yet
-built) or the local-dev `PUT /_dev/local-storage/...` handler (which calls it directly as a
+generic over the trait objects so it's callable by either the S3-triggered processing Lambda
+([`s3_trigger`](src/s3_trigger.rs)) or the local-dev `PUT /_dev/local-storage/...` handler (which calls it directly as a
 stand-in for the real S3 event — see the migration plan's §V2a).
 
 ## Test coverage
@@ -80,7 +90,11 @@ stand-in for the real S3 event — see the migration plan's §V2a).
 (`tower::ServiceExt::oneshot` against the actual `Router`, not a mock) — [tests/app.rs](tests/app.rs),
 [tests/dev_routes.rs](tests/dev_routes.rs), [tests/export.rs](tests/export.rs),
 [tests/processing.rs](tests/processing.rs), [tests/flag_saves.rs](tests/flag_saves.rs),
-[tests/aws_state.rs](tests/aws_state.rs). Additionally verified with a real, driven headless
+[tests/aws_state.rs](tests/aws_state.rs), [tests/upload_status.rs](tests/upload_status.rs),
+[tests/s3_trigger.rs](tests/s3_trigger.rs) (the processing Lambda's handler against local S3 and
+DynamoDB stand-ins), [tests/lambda_events.rs](tests/lambda_events.rs) (AWS-format requests through
+`lambda_http`'s own conversion; see [tests/fixtures/aws-samples/](tests/fixtures/aws-samples/README.md)
+for where the sample events come from). Additionally verified with a real, driven headless
 browser via the top-level [`e2e/`](../../e2e/README.md) Playwright suite — uploading a real file
 through the real local-dev server and confirming it renders in `timeline.html`.
 
@@ -98,6 +112,8 @@ classDiagram
         +Arc~dyn ConversationSummaryStore~ conversation_summary_store
         +Arc~dyn MessageFlagsReader~ flags_reader
         +Arc~dyn UserFlagWriter~ user_flag_writer
+        +Arc~dyn AutoFlagWriter~ auto_flag_writer
+        +Arc~dyn UploadOutcomeStore~ upload_outcome_store
         +Arc~CognitoVerifier~ verifier
         +Arc~FlagHandleKey~ flag_handle_key
     }

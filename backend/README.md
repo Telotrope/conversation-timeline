@@ -63,7 +63,7 @@ shelling out to an external binary from the test suite.
 ```
 cd backend
 cargo build --workspace
-cargo test --workspace        # 303 tests; needs Java + DynamoDB Local, see below
+cargo test --workspace        # 325 tests; needs Java + DynamoDB Local, see below
 cargo clippy --workspace --all-targets   # should be silent
 cargo fmt --all
 
@@ -154,14 +154,16 @@ the same local stand-ins plus a local stand-in for Cognito's keys
 ([timeline-api/tests/aws_state.rs](timeline-api/tests/aws_state.rs)); the Lambda
 runtime itself is not.
 
-**Not verified, because there is no AWS access in this environment (no
-credentials, no SAM CLI):**
-- `infra/template.yaml` (the SAM template) has never been run through `sam
-  validate` or `sam deploy` — no SAM CLI in this environment.
+**Not verified, because nothing has been deployed:**
+- `infra/template.yaml` passes `sam validate --lint`
+  ([scripts/check-template.sh](../scripts/check-template.sh)), which checks its structure without
+  an AWS account. Whether AWS accepts and creates it is only known by deploying.
 - Nothing has been verified against a real Cognito user pool's actual
-  tokens — only against a self-signed test keypair standing in for one.
-- Deploying the built Lambda binary to real AWS Lambda — untested; the
-  binary now has confirmed local-emulator behavior (above), but that's
+  tokens — only against a self-signed test keypair standing in for one, and
+  the page's sign-in only against a pretend Cognito
+  ([e2e/cognito-standin.js](../e2e/cognito-standin.js)).
+- Deploying the built Lambda binaries to real AWS Lambda — untested; the
+  API binary has confirmed local-emulator behavior (above), but that's
   `cargo-lambda`'s emulation of the Runtime API, not the real service.
 
 This is exactly the gap the migration plan's V2 test list already expected
@@ -227,8 +229,8 @@ in memory, at process/test-binary start — never written to disk, never
 checked into git. It's not a secret in any meaningful sense (never used
 for anything real), but it also must never be mistaken for production
 configuration — a real deployment needs a real Cognito user pool's real
-JWKS, fetched from its `.well-known/jwks.json` endpoint (not built yet —
-see "What's not built" below). Generating it at runtime instead of
+JWKS, fetched from its `.well-known/jwks.json` endpoint (the Lambda build
+does this at start-up; `timeline_api::aws_state::fetch_jwks`). Generating it at runtime instead of
 checking in a PEM file (the original design) removes even the appearance
 of a leaked credential, at a small cost: 2048-bit RSA generation in pure
 Rust isn't free, adding a few seconds to the test binaries that need one.
@@ -244,21 +246,15 @@ Rust isn't free, adding a few seconds to the test binaries that need one.
   `timeline-core/src/model.rs`'s module doc for the deliberate trade-off
   this makes (one bad timestamp now fails the whole upload).
 
-## What's not built yet
+## What's not built yet, and what only a deployment can check
 
-- The S3-triggered upload-processing Lambda (parses the raw upload, runs
-  dedup/heuristics, writes conversation summaries and auto flags). `POST
-  /uploads` issues a presigned URL and a pending record, but nothing yet
-  turns an uploaded file into conversations and flags.
-- `GET /export` (generate and serve the annotated `conversations.json`).
-- Fetching/caching a real Cognito user pool's JWKS over HTTP (`CognitoVerifier`
-  takes an already-loaded `JwkSet` today — see `timeline-auth/src/lib.rs`'s
-  module doc).
-- `timeline.html` itself — still 100% unmodified, still using its own
-  client-side JS for everything. Nothing in the browser calls this backend
-  yet.
-- Real-AWS integration tests, a real Cognito user pool, and an actual
-  deployment — all blocked on AWS account access (see above).
+Everything V2 needs is built (migration plan §V2e): the API and upload-processing Lambdas, the
+upload-status route, Cognito sign-in in the page, CORS, and the template for all of it. None of it
+has run on AWS. The first deployment's checks are listed in the plan's §V2e, "What only the first
+deployment can check" (D1–D9), and walked through in [infra/README.md](../infra/README.md).
+
+Not built: hosting `timeline.html` on AWS (the page is served from your machine and pointed at
+the deployed API; plan C30), re-downloading Cognito's keys when they rotate (C22).
 
 ## Test fixture provenance
 
