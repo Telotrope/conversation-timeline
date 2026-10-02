@@ -176,7 +176,6 @@ After completing a round of plan edits to a `docs/plans/*.md` file, stage only t
 - **Post-addition check** (after adding functionality, before writing tests; record the result in the report):
   1. *Redundancy:* each new function or type — does something in the repo already do this? Does its name follow the naming already used next to it (e.g. `format…`, not a new prefix)?
   2. *Error paths:* for each new or changed AWS call, entry point (route, Lambda handler), background job and place the page waits: where does every failure end up? It must end in a response or a status the page reads and shows truthfully — including after retries run out, and for failures outside our code (time limit, out of memory, crash at start-up). A retry handed to AWS or another system needs an explicit "retries exhausted" path.
-  3. *Stale display:* no state shown to the user that was checked once and can change later (a login, a status) without being rechecked.
 - At the end of any user interaction that involves code modification, run all unit and regression tests to look for errors and fix them. Once fixes are complete, immediately commit changes to git.
 - Split git commits into small, topical commits whenever possible (for example: runtime behavior, validation, and tests in separate commits).
 - If you are unable to run tests without errors 10 times in a row, please warn the user and ask whether you should continue.
