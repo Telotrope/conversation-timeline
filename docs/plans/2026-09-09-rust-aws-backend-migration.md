@@ -2060,7 +2060,7 @@ One HTTPS request to Cognito per new instance. **Mitigation in plan:** none need
 **Open:** measure start-up time on the first deployment; if the download is a noticeable share,
 bundle the keys into the deployment instead. Trigger: the first `sam deploy`.
 
-### C24 [OPEN]: The sample AWS events come from a library, not from our deployment
+### C24 [RESOLVED for the S3 notification; OPEN for the API request]: The sample AWS events come from a library, not from our deployment
 E1 and E2 test with the sample events shipped in `aws_lambda_events` 0.16.1's `src/fixtures/`. They
 match AWS's published formats as far as I've read them, but they weren't captured from this
 project's API or bucket, so they aren't the verified samples CLAUDE.md asks for. **Mitigation in
@@ -2075,6 +2075,16 @@ the first deployment, clean it of the uploader's IP address and account details,
 `example-s3-event.json` with it. The API request stays the library's sample, because a real one
 carries a login token. **Still open:** the request sample, until a library upgrade or a bug traced
 to an event's format; and how the S3 notification is captured (C33).
+**Resolution 2026-10-02 (S3 notification):** captured from the dev stack by README step 9, cleaned
+of account number, bucket name, user and upload IDs, role ID, AWS request IDs and the file's eTag,
+and reviewed and approved by the user before it replaced
+`backend/timeline-api/tests/fixtures/aws-samples/example-s3-event.json`. The address the logger had
+already removed is set to `192.0.2.1` (a documentation-only range) so the redaction test has one to
+remove; it is the only value AWS did not send. AWS sent `eventVersion` 2.6 and an `awsGeneratedTags`
+block, which the library sample lacked; the upload processed to completion on the page, and the
+backend tests pass with the new sample. `example-destination-failure.json`'s `requestPayload` now
+carries the same sample (that file's other fields are still from AWS's documentation; see C5 of
+`2026-10-02-upload-processing-failures.md`).
 
 ### C25 [RESOLVED]: Adding a field to `AppState` edits committed tests
 E3 adds `upload_outcome_store` to `AppState`. Every test that builds an `AppState` by hand (at
@@ -2153,15 +2163,18 @@ text in five places instead of referred to. If one copy changed and another didn
 denied". **Resolution:** `timeline-api/tests/template_bucket_name.rs` checks every copy matches the
 bucket's own name, and fails when one is misspelled (checked by misspelling one); commit `8717329`.
 
-### C35 [OPEN]: Switching `LogS3Events` might reset the other deployment settings
+### C35 [RESOLVED, by avoidance]: Switching `LogS3Events` might reset the other deployment settings
 E9's capture step redeploys with `--parameter-overrides LogS3Events=on`. I believe that, given on
 the command line, it replaces every parameter override saved in `samconfig.toml` rather than adding
 to it, so `Stage` and `FrontendOrigin` would have to be repeated; I haven't checked SAM's
 documentation or tried it. **Mitigation in plan:** the README step will give the full command,
 `--parameter-overrides Stage=dev FrontendOrigin=http://localhost:8000 LogS3Events=on`, which is
 correct either way. **Open:** confirm when the capture step is first run. Trigger: that step.
+**Resolution 2026-10-02:** not tested; the user repeated every setting, as README steps 9 and 10
+direct, and chose to keep using that method. SAM's behavior with a single setting remains unknown;
+reopen only if a README step stops repeating every setting.
 
-### C36 [OPEN]: The switch's wiring in the binary is untested locally
+### C36 [RESOLVED]: The switch's wiring in the binary is untested locally
 Whether the processing binary actually logs when `LogS3Events` is `on` is only shown by running it
 inside Lambda, like `main.rs`'s wiring. **Mitigation in plan:** the binary is kept to a few lines;
 the redaction and the setting are tested. **Update 2026-10-01:** narrowed by building the
@@ -2169,6 +2182,9 @@ log-read-process step as a tested library function (see §E9's status note,
 [line 1254](2026-09-09-rust-aws-backend-migration.md#L1254)); untested now is only the binary reading
 the setting and passing `println!`. **Open:** trigger is the capture step: no log line means
 the wiring is wrong.
+**Resolution 2026-10-02:** the capture step ran on the dev stack with `LogS3Events=on` and
+`sam logs` returned the `s3 event (sourceIPAddress removed):` line, with the address replaced by
+`REDACTED`. The binary reads the setting and logs in Lambda.
 
 ### C37 [RESOLVED]: V3 had no way to use Bedrock from the locally running application
 Original concern (raised by the user, 2026-10-01): V3 only described isolated real-Bedrock tests,
