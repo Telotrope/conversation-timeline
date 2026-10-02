@@ -355,6 +355,12 @@ fn the_line_carries_every_recorded_count() {
     record.aws_calls.insert("DynamoDB.PutItem".to_string(), 410);
     record.aws_calls.insert("S3.GetObject".to_string(), 1);
     record.aws_retries = 2;
+    record
+        .aws_failures
+        .insert("DynamoDB.PutItem".to_string(), 1);
+    record
+        .aws_errors
+        .push("DynamoDB.PutItem: service error".to_string());
     let ids = RequestIds {
         request_id: Some("abc".to_string()),
         session: Some(SessionId(uuid::Uuid::parse_str(SESSION).unwrap())),
@@ -382,6 +388,8 @@ fn the_line_carries_every_recorded_count() {
             "facts": {},
             "aws_calls": { "DynamoDB.PutItem": 410, "S3.GetObject": 1 },
             "aws_retries": 2,
+            "aws_failures": { "DynamoDB.PutItem": 1 },
+            "aws_errors": ["DynamoDB.PutItem: service error"],
         })
     );
 }
