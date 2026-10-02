@@ -1404,6 +1404,17 @@ references stay valid.
 - **Rewrite the load screen.** The Load button sits far from the file chooser it depends on,
   separated by the sign-in area and a long paragraph about scanning; the user found the page
   confusing. Needs its own plan before any change.
+- **A leftover "Picked up where you left off" notice** (found 2026-10-02). The notice is shown
+  when the page opens and restores your last session
+  ([load-flow.js:98](../../frontend/ui/load-flow.js#L98)), and only its own dismiss button hides it
+  ([status-indicators.js:85-91](../../frontend/ui/widgets/status-indicators.js#L85-L91)); after
+  "Load a different file" and a fresh load it still claims the old session was restored.
+  **Proposed fix:** a `hideRestoredNotice()` next to `showRestoredNotice` in
+  status-indicators.js, called by the "Load a different file" handler
+  ([main.js](../../frontend/main.js)) and at the start of every load in `handleLoadClick`.
+  *Reuse check:* no existing function hides the notice; the new one sits beside the one that
+  shows it. *Test:* a browser test that restores a session (notice shown), clicks "Load a
+  different file" (notice gone), loads a file (still gone).
 - **Sign-in that goes stale** (found 2026-10-02; to be done after the deployment checks, at the
   user's request). "Signed in as …" is worked out once when the page loads
   ([login-panel.js:23-27](../../frontend/ui/login-panel.js#L23-L27)), while Cognito's access
