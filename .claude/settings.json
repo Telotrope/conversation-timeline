@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && mkdir -p backend/target && setsid -f nice -n 19 python3 scripts/clean-build.py --if-larger-than 12G >/dev/null 2>>backend/target/clean-build.log </dev/null"
+          }
+        ]
+      }
+    ]
+  }
+}
