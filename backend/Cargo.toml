@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["timeline-core", "timeline-storage", "timeline-auth", "timeline-api"]
+members = ["timeline-core", "timeline-storage", "timeline-auth", "timeline-api", "timeline-experiments"]
 
 [workspace.package]
 edition = "2021"

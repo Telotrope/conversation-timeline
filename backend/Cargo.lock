@@ -3871,6 +3871,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "timeline-experiments"
+version = "0.1.0"
+dependencies = [
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "lambda_runtime",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "timeline-storage"
 version = "0.1.0"
 dependencies = [
