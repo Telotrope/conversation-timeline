@@ -73,6 +73,45 @@ Parameters:
     Description: >
       How many days CloudWatch keeps every log group this stack owns before
       deleting older records itself (the plan's §6; the user chose 7).
+  HostPage:
+    Type: String
+    Default: "off"
+    AllowedValues: ["off", "on"]
+    Description: >
+      "on" serves the page from this stack: an S3 bucket behind CloudFront,
+      filled by scripts/publish-page.sh (docs/plans/2026-10-02-page-hosting.md
+      §1). Cognito and CORS then accept the hosted page's address instead of
+      FrontendUrl.
+  PageDomain:
+    Type: String
+    Default: ""
+    AllowedPattern: '^$|^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$'
+    ConstraintDescription: must be empty or a lowercase domain name, e.g. howangryami.telotrope.ai
+    Description: >
+      With HostPage on: the domain the page is served at, e.g.
+      howangryami.telotrope.ai. Empty uses CloudFront's own address. Its
+      DNS records are added by hand (the hosting plan's §1a).
+  AlsoAllowLocalPage:
+    Type: String
+    Default: "off"
+    AllowedValues: ["off", "on"]
+    Description: >
+      With HostPage on: "on" also accepts FrontendUrl, so a hosted dev stack
+      still works with a page served from your machine. Leave off for
+      production (the hosting plan's C6).
+
+Rules:
+  # CloudFront takes certificates only from us-east-1 (the hosting plan's
+  # §1a), and a domain without hosting would do nothing.
+  PageDomainNeedsHosting:
+    RuleCondition: !Not [!Equals [!Ref PageDomain, ""]]
+    Assertions:
+      - Assert: !Equals [!Ref HostPage, "on"]
+        AssertDescription: PageDomain is used only with HostPage on.
+      - Assert: !Equals [!Ref "AWS::Region", us-east-1]
+        AssertDescription: >
+          PageDomain needs the stack in us-east-1, the only region CloudFront
+          accepts certificates from.
 
 Conditions:
   # The dev stage also allows username-and-password sign-in through the
@@ -80,6 +119,10 @@ Conditions:
   IsDev: !Equals [!Ref Stage, dev]
   # Recording is for the development stack only (the plan's §9).
   RecordsActivity: !And [!Condition IsDev, !Equals [!Ref RecordActivity, "on"]]
+  # The page hosting plan's §1.
+  HostingPage: !Equals [!Ref HostPage, "on"]
+  HasPageDomain: !And [!Condition HostingPage, !Not [!Equals [!Ref PageDomain, ""]]]
+  AllowsLocalPage: !And [!Condition HostingPage, !Equals [!Ref AlsoAllowLocalPage, "on"]]
 
 Globals:
   Function:
@@ -139,12 +182,20 @@ Resources:
       CorsConfiguration:
         CorsRules:
           # The page PUTs uploads to, and GETs exports from, presigned
-          # addresses directly (migration plan §1.6), from its one origin:
-          # FrontendUrl's scheme and host (E10), the same expression as the
-          # API's CorsConfiguration.
+          # addresses directly (migration plan §1.6), from the page's origin
+          # (E10). The same list as the API's CorsConfiguration and the
+          # same addresses as UserPoolClient's CallbackURLs (the hosting
+          # plan's §1 table); CloudFormation has no variables, so the three
+          # copies must be changed together.
           - AllowedMethods: [PUT, GET]
-            AllowedOrigins:
-              - !Join ["", [!Select [0, !Split ["/", !Ref FrontendUrl]], "//", !Select [2, !Split ["/", !Ref FrontendUrl]]]]
+            AllowedOrigins: !If
+              - HostingPage
+              - !If
+                - AllowsLocalPage
+                - - !Sub ["https://${Host}", {Host: !If [HasPageDomain, !Ref PageDomain, !GetAtt PageDistribution.DomainName]}]
+                  - !Join ["", [!Select [0, !Split ["/", !Ref FrontendUrl]], "//", !Select [2, !Split ["/", !Ref FrontendUrl]]]]
+                - - !Sub ["https://${Host}", {Host: !If [HasPageDomain, !Ref PageDomain, !GetAtt PageDistribution.DomainName]}]
+              - - !Join ["", [!Select [0, !Split ["/", !Ref FrontendUrl]], "//", !Select [2, !Split ["/", !Ref FrontendUrl]]]]
             AllowedHeaders: [content-type]
 
   ConversationsTable:
@@ -226,10 +277,24 @@ Resources:
       AllowedOAuthFlows: [code]
       AllowedOAuthScopes: [openid, email]
       SupportedIdentityProviders: [COGNITO]
-      CallbackURLs:
-        - !Ref FrontendUrl
-      LogoutURLs:
-        - !Ref FrontendUrl
+      # The hosted page is at `/` only (the hosting plan's §1 table and C12):
+      # the page returns to the exact path it was opened at.
+      CallbackURLs: !If
+        - HostingPage
+        - !If
+          - AllowsLocalPage
+          - - !Sub ["https://${Host}/", {Host: !If [HasPageDomain, !Ref PageDomain, !GetAtt PageDistribution.DomainName]}]
+            - !Ref FrontendUrl
+          - - !Sub ["https://${Host}/", {Host: !If [HasPageDomain, !Ref PageDomain, !GetAtt PageDistribution.DomainName]}]
+        - - !Ref FrontendUrl
+      LogoutURLs: !If
+        - HostingPage
+        - !If
+          - AllowsLocalPage
+          - - !Sub ["https://${Host}/", {Host: !If [HasPageDomain, !Ref PageDomain, !GetAtt PageDistribution.DomainName]}]
+            - !Ref FrontendUrl
+          - - !Sub ["https://${Host}/", {Host: !If [HasPageDomain, !Ref PageDomain, !GetAtt PageDistribution.DomainName]}]
+        - - !Ref FrontendUrl
       ExplicitAuthFlows: !If
         - IsDev
         - [ALLOW_USER_SRP_AUTH, ALLOW_REFRESH_TOKEN_AUTH, ALLOW_USER_PASSWORD_AUTH]
@@ -437,10 +502,15 @@ Resources:
         DestinationArn: !GetAtt ApiAccessLogGroup.Arn
         Format: '{"requestId":"$context.requestId","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","routeKey":"$context.routeKey","path":"$context.path","status":"$context.status","responseLatency":"$context.responseLatency","integrationLatency":"$context.integrationLatency","authorizerError":"$context.authorizer.error","errorMessage":"$context.error.message"}'
       CorsConfiguration:
-        # FrontendUrl's scheme and host (E10), the same expression as the
-        # bucket's CorsRules.
-        AllowOrigins:
-          - !Join ["", [!Select [0, !Split ["/", !Ref FrontendUrl]], "//", !Select [2, !Split ["/", !Ref FrontendUrl]]]]
+        # The page's origin (E10): the same list as the bucket's CorsRules.
+        AllowOrigins: !If
+          - HostingPage
+          - !If
+            - AllowsLocalPage
+            - - !Sub ["https://${Host}", {Host: !If [HasPageDomain, !Ref PageDomain, !GetAtt PageDistribution.DomainName]}]
+              - !Join ["", [!Select [0, !Split ["/", !Ref FrontendUrl]], "//", !Select [2, !Split ["/", !Ref FrontendUrl]]]]
+            - - !Sub ["https://${Host}", {Host: !If [HasPageDomain, !Ref PageDomain, !GetAtt PageDistribution.DomainName]}]
+          - - !Join ["", [!Select [0, !Split ["/", !Ref FrontendUrl]], "//", !Select [2, !Split ["/", !Ref FrontendUrl]]]]
         # x-timeline-session: the page's session id (the activity plan's §1).
         AllowHeaders: [authorization, content-type, x-timeline-session]
         AllowMethods: [GET, POST, PATCH]
@@ -458,6 +528,119 @@ Resources:
             IdentitySource: "$request.header.Authorization"
         DefaultAuthorizer: CognitoAuthorizer
 
+  # --- Hosted page (docs/plans/2026-10-02-page-hosting.md §1) ---------------
+
+  # Private: only this stack's CloudFront distribution can read it. Named by
+  # CloudFormation; scripts/publish-page.sh reads the PageBucketName output.
+  PageBucket:
+    Type: AWS::S3::Bucket
+    Condition: HostingPage
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  PageOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Condition: HostingPage
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "timeline-page-${Stage}"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  PageBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: HostingPage
+    Properties:
+      Bucket: !Ref PageBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${PageBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${PageDistribution}"
+
+  # Files stay at the edge for a day; scripts/publish-page.sh clears them on
+  # every publish. Browsers are told to recheck each load by the files' own
+  # Cache-Control: no-cache, which CloudFront passes on (the hosting plan's
+  # C4, C7; deployment check H5). The query string (?code=..., ?deploy=...)
+  # is left out of the cache key: every address serves the same files.
+  PageCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Condition: HostingPage
+    Properties:
+      CachePolicyConfig:
+        Name: !Sub "timeline-page-${Stage}"
+        MinTTL: 86400
+        DefaultTTL: 86400
+        MaxTTL: 31536000
+        ParametersInCacheKeyAndForwardedToOrigin:
+          EnableAcceptEncodingGzip: true
+          EnableAcceptEncodingBrotli: true
+          CookiesConfig:
+            CookieBehavior: none
+          HeadersConfig:
+            HeaderBehavior: none
+          QueryStringsConfig:
+            QueryStringBehavior: none
+
+  # Validated by a DNS record added by hand at Porkbun while the deploy
+  # waits (the hosting plan's §1a; deployment check H8).
+  PageCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Condition: HasPageDomain
+    Properties:
+      DomainName: !Ref PageDomain
+      ValidationMethod: DNS
+
+  PageDistribution:
+    Type: AWS::CloudFront::Distribution
+    Condition: HostingPage
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub "timeline page (${Stage})"
+        # scripts/publish-page.sh uploads timeline.html as index.html.
+        DefaultRootObject: index.html
+        HttpVersion: http2and3
+        Aliases: !If [HasPageDomain, [!Ref PageDomain], !Ref "AWS::NoValue"]
+        ViewerCertificate: !If
+          - HasPageDomain
+          - AcmCertificateArn: !Ref PageCertificate
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1.2_2021
+          - CloudFrontDefaultCertificate: true
+        Origins:
+          - Id: page-bucket
+            DomainName: !GetAtt PageBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt PageOriginAccessControl.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+        DefaultCacheBehavior:
+          TargetOriginId: page-bucket
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          CachePolicyId: !Ref PageCachePolicy
+          # AWS's managed SecurityHeadersPolicy: HSTS, nosniff, frame and
+          # referrer headers. No Content-Security-Policy yet (the hosting
+          # plan's C5).
+          ResponseHeadersPolicyId: 67f7725c-6f97-4210-82d7-5512b31e9d03
+
 Outputs:
   ApiUrl:
     Description: Base URL of the deployed HTTP API.
@@ -474,3 +657,19 @@ Outputs:
   RecordActivity:
     Description: Whether the page records activity; read by scripts/write-deploy-config.sh.
     Value: !If [RecordsActivity, "on", "off"]
+  PageUrl:
+    Condition: HostingPage
+    Description: The hosted page's address.
+    Value: !Sub ["https://${Host}/", {Host: !If [HasPageDomain, !Ref PageDomain, !GetAtt PageDistribution.DomainName]}]
+  PageBucketName:
+    Condition: HostingPage
+    Description: Where scripts/publish-page.sh uploads the page.
+    Value: !Ref PageBucket
+  PageDistributionId:
+    Condition: HostingPage
+    Description: The distribution scripts/publish-page.sh clears after uploading.
+    Value: !Ref PageDistribution
+  PageDnsTarget:
+    Condition: HostingPage
+    Description: With PageDomain set, the CNAME target for PageDomain at Porkbun.
+    Value: !GetAtt PageDistribution.DomainName
