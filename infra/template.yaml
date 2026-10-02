@@ -58,11 +58,28 @@ Parameters:
       counting the attempt, so the retries and the final "failed" can be
       watched on the page (plan 2026-10-02-upload-processing-failures.md
       §2b). For that test only; leave off.
+  RecordActivity:
+    Type: String
+    Default: "on"
+    AllowedValues: ["off", "on"]
+    Description: >
+      "on" makes the page record what the user does and send it to
+      POST /activity (docs/plans/2026-10-02-activity-instrumentation.md §4).
+      Takes effect only on the dev stage; every other stage is off.
+  LogRetentionDays:
+    Type: Number
+    Default: 7
+    AllowedValues: [1, 3, 5, 7, 14, 30]
+    Description: >
+      How many days CloudWatch keeps every log group this stack owns before
+      deleting older records itself (the plan's §6; the user chose 7).
 
 Conditions:
   # The dev stage also allows username-and-password sign-in through the
   # API, for scripts/aws-dev-token.sh (migration plan §V2e, E7; C27).
   IsDev: !Equals [!Ref Stage, dev]
+  # Recording is for the development stack only (the plan's §9).
+  RecordsActivity: !And [!Condition IsDev, !Equals [!Ref RecordActivity, "on"]]
 
 Globals:
   Function:
@@ -72,6 +89,38 @@ Globals:
     Runtime: provided.al2023
 
 Resources:
+  # --- Logs ------------------------------------------------------------------
+  # One group per function plus API Gateway's request log, each kept for
+  # LogRetentionDays (docs/plans/2026-10-02-activity-instrumentation.md §6).
+  # New names: the groups Lambda created on first use keep the 2026-10-02
+  # deployment checks' records and are left alone.
+
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/timeline/${Stage}/api"
+      RetentionInDays: !Ref LogRetentionDays
+  ActivityLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/timeline/${Stage}/activity"
+      RetentionInDays: !Ref LogRetentionDays
+  ProcessUploadLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/timeline/${Stage}/process-upload"
+      RetentionInDays: !Ref LogRetentionDays
+  RecordFailedUploadLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/timeline/${Stage}/record-failed-upload"
+      RetentionInDays: !Ref LogRetentionDays
+  ApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/timeline/${Stage}/api-access"
+      RetentionInDays: !Ref LogRetentionDays
+
   # --- Storage -------------------------------------------------------------
 
   RawUploadsBucket:
@@ -217,6 +266,8 @@ Resources:
       # this path is where that build's output bootstrap binary/zip is expected.
       CodeUri: ../backend/target/lambda/timeline-api/
       Handler: bootstrap
+      LoggingConfig:
+        LogGroup: !Ref ApiLogGroup
       Environment:
         Variables:
           TIMELINE_UPLOADS_BUCKET: !Sub "timeline-uploads-${Stage}-${AWS::AccountId}"
@@ -277,6 +328,8 @@ Resources:
       FunctionName: !Sub "timeline-process-upload-${Stage}"
       CodeUri: ../backend/target/lambda/process_upload/
       Handler: bootstrap
+      LoggingConfig:
+        LogGroup: !Ref ProcessUploadLogGroup
       MemorySize: 512
       Timeout: 300
       Environment:
@@ -332,6 +385,8 @@ Resources:
       FunctionName: !Sub "timeline-record-failed-upload-${Stage}"
       CodeUri: ../backend/target/lambda/record_failed_upload/
       Handler: bootstrap
+      LoggingConfig:
+        LogGroup: !Ref RecordFailedUploadLogGroup
       MemorySize: 128
       Environment:
         Variables:
@@ -339,6 +394,32 @@ Resources:
       Policies:
         - DynamoDBWritePolicy:
             TableName: !Ref ConversationsTable
+
+  # Answers POST /activity, the page's record of what the user did; runs
+  # `src/bin/record_activity.rs`. Its own function so a report never
+  # occupies an API copy one of the user's requests then waits for (the
+  # plan's §5). API Gateway sends this exact route here, ahead of the API's
+  # catch-all POST /{proxy+}. Needs only the Cognito settings, no storage.
+  ActivityFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "timeline-activity-${Stage}"
+      CodeUri: ../backend/target/lambda/record_activity/
+      Handler: bootstrap
+      MemorySize: 128
+      LoggingConfig:
+        LogGroup: !Ref ActivityLogGroup
+      Environment:
+        Variables:
+          TIMELINE_COGNITO_USER_POOL_ID: !Ref UserPool
+          TIMELINE_COGNITO_CLIENT_ID: !Ref UserPoolClient
+      Events:
+        PostActivity:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /activity
+            Method: POST
 
   HttpApi:
     Type: AWS::Serverless::HttpApi
@@ -349,13 +430,23 @@ Resources:
       # §V2e, E1; tests/lambda_events.rs). `Stage` still names the
       # resources.
       StageName: "$default"
+      # One JSON line per request, including ones refused before any of our
+      # code runs (401s, CORS checks): the plan's §2. No IP address or
+      # browser description.
+      AccessLogSettings:
+        DestinationArn: !GetAtt ApiAccessLogGroup.Arn
+        Format: '{"requestId":"$context.requestId","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","routeKey":"$context.routeKey","path":"$context.path","status":"$context.status","responseLatency":"$context.responseLatency","integrationLatency":"$context.integrationLatency","authorizerError":"$context.authorizer.error","errorMessage":"$context.error.message"}'
       CorsConfiguration:
         # FrontendUrl's scheme and host (E10), the same expression as the
         # bucket's CorsRules.
         AllowOrigins:
           - !Join ["", [!Select [0, !Split ["/", !Ref FrontendUrl]], "//", !Select [2, !Split ["/", !Ref FrontendUrl]]]]
-        AllowHeaders: [authorization, content-type]
+        # x-timeline-session: the page's session id (the activity plan's §1).
+        AllowHeaders: [authorization, content-type, x-timeline-session]
         AllowMethods: [GET, POST, PATCH]
+        # So the page can read API Gateway's id for each of its requests
+        # and the timeline can match them (the activity plan's §5).
+        ExposeHeaders: [apigw-requestid]
         MaxAge: 600
       Auth:
         Authorizers:
@@ -380,3 +471,6 @@ Outputs:
     Value: !Sub "https://${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com"
   RawUploadsBucketName:
     Value: !Ref RawUploadsBucket
+  RecordActivity:
+    Description: Whether the page records activity; read by scripts/write-deploy-config.sh.
+    Value: !If [RecordsActivity, "on", "off"]

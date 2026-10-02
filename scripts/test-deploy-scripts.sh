@@ -86,6 +86,21 @@ else
   fail "the page refused the file it wrote: $(cat "$work/configs/dev.json")"
 fi
 
+python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["recordActivity"] is False' "$work/configs/dev.json" \
+  && pass "records no activity when the stack has no RecordActivity output" \
+  || fail "recordActivity without the output: $(cat "$work/configs/dev.json")"
+
+python3 - "$work/answer-cloudformation" <<'PY'
+import json, sys
+outputs = json.load(open(sys.argv[1]))
+outputs.append({"OutputKey": "RecordActivity", "OutputValue": "on"})
+json.dump(outputs, open(sys.argv[1], "w"))
+PY
+"$REPO_ROOT/scripts/write-deploy-config.sh" dev > "$work/out.txt"
+python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["recordActivity"] is True' "$work/configs/dev.json" \
+  && pass "records activity when the stack's RecordActivity output is on" \
+  || fail "recordActivity with the output on: $(cat "$work/configs/dev.json")"
+
 echo '[{"OutputKey": "ApiUrl", "OutputValue": "https://x.example"}]' > "$work/answer-cloudformation"
 if "$REPO_ROOT/scripts/write-deploy-config.sh" old > "$work/out.txt" 2>&1; then
   fail "succeeded although the stack lacks outputs"

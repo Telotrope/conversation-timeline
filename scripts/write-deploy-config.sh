@@ -32,6 +32,10 @@ config = {
     "apiBase": outputs["ApiUrl"],
     "cognitoDomain": outputs["CognitoDomain"],
     "clientId": outputs["UserPoolClientId"],
+    # Whether the page records what the user does (docs/plans/
+    # 2026-10-02-activity-instrumentation.md §4). A stack deployed before
+    # the RecordActivity output existed records nothing.
+    "recordActivity": outputs.get("RecordActivity") == "on",
 }
 with open(sys.argv[1], "w") as f:
     json.dump(config, f, indent=2)
