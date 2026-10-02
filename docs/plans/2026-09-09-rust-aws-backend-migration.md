@@ -1409,11 +1409,8 @@ this plan:
   committed, never deployed). Its address setting is `FrontendUrl =
   https://dev.tail13dce8.ts.net/proxy/8000/timeline.html` (E10), kept in `infra/samconfig.toml`,
   which is local and not committed.
-- **Deployment checks so far** (not yet written up in `docs/analysis/` as this section requires):
-  D1 passed (the stack deployed). D3 passed for the page's sign-in after E10; the command-line
-  script part was not run. D2, D4, D6, D7 not run. D5 and D9, partial numbers only, from the
-  processing function's logs for the 60.6 MB export: about 6 s per attempt, 227–286 MB used of
-  512 MB, start-up 118 ms.
+- **Deployment checks so far:** written up in
+  [docs/analysis/2026-10-02-deployment-checks-status.md](../analysis/2026-10-02-deployment-checks-status.md).
 - **The intermittent upload failure** ("item not found" while saving reviews) is diagnosed and
   measured: [read-after-write analysis](../analysis/2026-10-02-read-after-write-experiment.md).
   It happens only when review rows are new, so re-uploading the same file can't show it; review
