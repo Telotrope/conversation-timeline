@@ -49,6 +49,15 @@ Parameters:
       "on" makes the processing function log each S3 notification it
       receives (uploader's IP address removed), to capture one real
       notification as a test sample (migration plan §V2e, E9). Leave off.
+  FailProcessing:
+    Type: String
+    Default: "off"
+    AllowedValues: ["off", "on"]
+    Description: >
+      "on" makes every upload-processing attempt fail on purpose, after
+      counting the attempt, so the retries and the final "failed" can be
+      watched on the page (plan 2026-10-02-upload-processing-failures.md
+      §2b). For that test only; leave off.
 
 Conditions:
   # The dev stage also allows username-and-password sign-in through the
@@ -276,6 +285,7 @@ Resources:
           TIMELINE_CONVERSATIONS_TABLE: !Ref ConversationsTable
           TIMELINE_MESSAGE_FLAGS_TABLE: !Ref MessageFlagsTable
           TIMELINE_LOG_S3_EVENTS: !Ref LogS3Events
+          TIMELINE_FAIL_PROCESSING: !Ref FailProcessing
       Policies:
         - S3ReadPolicy:
             BucketName: !Sub "timeline-uploads-${Stage}-${AWS::AccountId}"

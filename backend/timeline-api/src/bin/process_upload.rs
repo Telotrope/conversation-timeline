@@ -9,15 +9,17 @@
 
 use lambda_runtime::{service_fn, LambdaEvent};
 use serde_json::Value;
-use timeline_api::aws_settings::{EventLogging, StorageSettings};
+use timeline_api::aws_settings::{DeliberateFailure, EventLogging, StorageSettings};
 use timeline_api::aws_state::{build_processing_stores, AwsClients};
-use timeline_api::s3_trigger::handle_raw_s3_event;
+use timeline_api::s3_trigger::handle_raw_s3_event_with;
 
 #[tokio::main]
 async fn main() -> Result<(), lambda_runtime::Error> {
     let settings = StorageSettings::from_lookup(|name| std::env::var(name).ok())
         .unwrap_or_else(|e| panic!("cannot start: {e}"));
     let logging = EventLogging::from_lookup(|name| std::env::var(name).ok())
+        .unwrap_or_else(|e| panic!("cannot start: {e}"));
+    let failure = DeliberateFailure::from_lookup(|name| std::env::var(name).ok())
         .unwrap_or_else(|e| panic!("cannot start: {e}"));
     let sdk_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let clients = AwsClients {
@@ -28,9 +30,11 @@ async fn main() -> Result<(), lambda_runtime::Error> {
     let stores = &stores;
     lambda_runtime::run(service_fn(move |event: LambdaEvent<Value>| async move {
         // A failure makes Lambda retry the event; see `s3_trigger`'s doc.
-        handle_raw_s3_event(event.payload, stores, logging, |line| println!("{line}"))
-            .await
-            .map_err(lambda_runtime::Error::from)
+        handle_raw_s3_event_with(event.payload, stores, logging, failure, |line| {
+            println!("{line}")
+        })
+        .await
+        .map_err(lambda_runtime::Error::from)
     }))
     .await
 }

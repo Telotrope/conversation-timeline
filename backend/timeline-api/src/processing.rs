@@ -57,6 +57,10 @@ pub enum ProcessingError {
         message_id: MessageId,
         source: StoreError,
     },
+    /// The `FailProcessing` test setting is on: the attempt fails before
+    /// reading the file (plan `2026-10-02-upload-processing-failures.md`
+    /// §2b). Retried like a storage failure.
+    FailingOnPurpose,
     /// Storing one conversation's summary failed; numbered like `SavingReview`.
     SavingSummary {
         number: usize,
@@ -80,6 +84,9 @@ impl fmt::Display for ProcessingError {
                     f,
                     "message {message_id} has an unreadable _claude_timeline_user review: {error}"
                 )
+            }
+            ProcessingError::FailingOnPurpose => {
+                write!(f, "failing on purpose (FailProcessing is on)")
             }
             ProcessingError::SavingReview {
                 number,
@@ -110,6 +117,7 @@ impl std::error::Error for ProcessingError {
             ProcessingError::Store(e) => Some(e),
             ProcessingError::ObjectStore(e) => Some(e),
             ProcessingError::ReviewField { error, .. } => Some(error),
+            ProcessingError::FailingOnPurpose => None,
             ProcessingError::SavingReview { source, .. } => Some(source),
             ProcessingError::SavingSummary { source, .. } => Some(source),
         }

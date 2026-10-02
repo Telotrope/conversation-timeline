@@ -36,7 +36,7 @@ use timeline_core::ports::message_flags::UserFlagWriter;
 use timeline_core::ports::object_store::ObjectStore;
 use timeline_core::ports::uploads::{parse_raw_object_key, UploadOutcomeStore};
 
-use crate::aws_settings::EventLogging;
+use crate::aws_settings::{DeliberateFailure, EventLogging};
 use crate::processing::{process_upload, ProcessingError};
 
 /// The stores processing writes through.
@@ -102,7 +102,11 @@ pub(crate) fn decode_key(raw: &str) -> Result<String, String> {
         .map_err(|e| format!("not valid UTF-8 once decoded: {e}"))
 }
 
-async fn handle_record(key: Option<&str>, stores: &ProcessingStores) -> Result<(), RecordError> {
+async fn handle_record(
+    key: Option<&str>,
+    stores: &ProcessingStores,
+    failure: DeliberateFailure,
+) -> Result<(), RecordError> {
     let raw = key.ok_or(RecordError::MissingKey)?;
     let key = decode_key(raw).map_err(|reason| RecordError::UnusableKey {
         key: raw.to_string(),
@@ -124,15 +128,19 @@ async fn handle_record(key: Option<&str>, stores: &ProcessingStores) -> Result<(
             key: key.clone(),
             error: ProcessingError::Store(e),
         })?;
-    let result = process_upload(
-        stores.object_store.as_ref(),
-        stores.upload_outcome_store.as_ref(),
-        stores.conversation_summary_store.as_ref(),
-        stores.user_flag_writer.as_ref(),
-        &user_id,
-        upload_id,
-    )
-    .await;
+    let result = if failure == DeliberateFailure::On {
+        Err(ProcessingError::FailingOnPurpose)
+    } else {
+        process_upload(
+            stores.object_store.as_ref(),
+            stores.upload_outcome_store.as_ref(),
+            stores.conversation_summary_store.as_ref(),
+            stores.user_flag_writer.as_ref(),
+            &user_id,
+            upload_id,
+        )
+        .await
+    };
     match result {
         Ok(()) => Ok(()),
         Err(
@@ -165,9 +173,21 @@ pub async fn handle_s3_event(
     event: S3Event,
     stores: &ProcessingStores,
 ) -> Result<(), TriggerError> {
+    handle_s3_event_with(event, stores, DeliberateFailure::Off).await
+}
+
+/// [`handle_s3_event`], failing every record on purpose when `failure` is
+/// on (after counting the attempt, so the page shows it), for testing the
+/// failure path on a real deployment (plan
+/// `2026-10-02-upload-processing-failures.md` §2b).
+pub async fn handle_s3_event_with(
+    event: S3Event,
+    stores: &ProcessingStores,
+    failure: DeliberateFailure,
+) -> Result<(), TriggerError> {
     let mut failures = Vec::new();
     for record in &event.records {
-        if let Err(e) = handle_record(record.s3.object.key.as_deref(), stores).await {
+        if let Err(e) = handle_record(record.s3.object.key.as_deref(), stores, failure).await {
             eprintln!("{e}");
             failures.push(e);
         }
@@ -234,11 +254,23 @@ pub async fn handle_raw_s3_event(
     logging: EventLogging,
     log: impl Fn(&str),
 ) -> Result<(), RawEventError> {
+    handle_raw_s3_event_with(raw, stores, logging, DeliberateFailure::Off, log).await
+}
+
+/// [`handle_raw_s3_event`] with the deliberate-failure setting; see
+/// [`handle_s3_event_with`]. What the processing Lambda runs.
+pub async fn handle_raw_s3_event_with(
+    raw: Value,
+    stores: &ProcessingStores,
+    logging: EventLogging,
+    failure: DeliberateFailure,
+    log: impl Fn(&str),
+) -> Result<(), RawEventError> {
     if logging == EventLogging::On {
         log(&s3_event_log_line(&raw));
     }
     let event: S3Event = serde_json::from_value(raw).map_err(RawEventError::Unreadable)?;
-    handle_s3_event(event, stores)
+    handle_s3_event_with(event, stores, failure)
         .await
         .map_err(RawEventError::Trigger)
 }

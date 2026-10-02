@@ -94,10 +94,62 @@ impl EventLogging {
     pub fn from_lookup(
         lookup: impl Fn(&str) -> Option<String>,
     ) -> Result<Self, InvalidEventLogging> {
-        match lookup(LOG_S3_EVENTS_VAR).as_deref() {
-            None | Some("off") => Ok(EventLogging::Off),
-            Some("on") => Ok(EventLogging::On),
-            Some(other) => Err(InvalidEventLogging(other.to_string())),
+        match on_off(lookup(LOG_S3_EVENTS_VAR)) {
+            Ok(false) => Ok(EventLogging::Off),
+            Ok(true) => Ok(EventLogging::On),
+            Err(other) => Err(InvalidEventLogging(other)),
+        }
+    }
+}
+
+/// An on/off setting: `on` and `off` exactly, missing means off, anything
+/// else comes back as the refused value. Shared by every such switch.
+fn on_off(value: Option<String>) -> Result<bool, String> {
+    match value.as_deref() {
+        None | Some("off") => Ok(false),
+        Some("on") => Ok(true),
+        Some(_) => Err(value.unwrap_or_default()),
+    }
+}
+
+pub const FAIL_PROCESSING_VAR: &str = "TIMELINE_FAIL_PROCESSING";
+
+/// Whether the processing Lambda fails every attempt on purpose, so the
+/// whole failure path (retries shown on the page, then "failed") can be
+/// watched on a real deployment (plan
+/// `2026-10-02-upload-processing-failures.md` §2b). Set by the template's
+/// `FailProcessing` parameter, `off` except during that test.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeliberateFailure {
+    Off,
+    On,
+}
+
+/// A `TIMELINE_FAIL_PROCESSING` value other than `on` or `off`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvalidDeliberateFailure(pub String);
+
+impl fmt::Display for InvalidDeliberateFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{FAIL_PROCESSING_VAR} must be \"on\" or \"off\", not {:?}",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for InvalidDeliberateFailure {}
+
+impl DeliberateFailure {
+    /// As [`EventLogging::from_lookup`]: missing means `Off`.
+    pub fn from_lookup(
+        lookup: impl Fn(&str) -> Option<String>,
+    ) -> Result<Self, InvalidDeliberateFailure> {
+        match on_off(lookup(FAIL_PROCESSING_VAR)) {
+            Ok(false) => Ok(DeliberateFailure::Off),
+            Ok(true) => Ok(DeliberateFailure::On),
+            Err(other) => Err(InvalidDeliberateFailure(other)),
         }
     }
 }
