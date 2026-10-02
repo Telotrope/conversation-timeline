@@ -63,7 +63,17 @@ Cognito and back).
 **Resolution:** recording is part of the `page` fixture, and §1 item 2 fails any spec that bypasses
 it.
 
-### C2 [OPEN]: navigations the page starts itself may still lose coverage
-Chrome's behaviour on a navigation it doesn't announce in time is not known. **Mitigation in
-plan:** §1 item 3, and the report names lost entries. **Open:** if login-panel's sign-in code still
-shows as never run after this, investigate before claiming the measurement is complete.
+### C2 [OPEN]: navigations the page starts itself lose coverage
+Chrome discards a document's coverage when the page leaves it. **Tried on 2026-10-02, all
+reverted:** holding the main frame's navigation request (`page.route`) while (a) stopping and
+restarting Playwright's recording, (b) taking a snapshot through Chrome's debugging protocol
+(`Profiler.takePreciseCoverage`), (c) doing (b) only for navigations the page starts itself. (a)
+and (b) aborted navigations (`net::ERR_ABORTED`); (c) broke the sign-in tests. Interception with no
+snapshot passed (5 of 5), so the snapshot during a held navigation is what breaks it; why, not
+established. **§1 item 3 is therefore not done:** recording is saved before `goto`, `reload` and
+`close` only. **Effect, measured:** in [login-panel.js](../../frontend/ui/login-panel.js),
+`signIn` and `signOut` (lines 76-83, 86-89) still show as never run, though the sign-in tests run
+them; the file shows 45 of 57 lines (was 16 of 57 before this plan). Also unexplained: three
+coverage entries for `frontend/infra/activity-recorder.js` arrived without text (in three
+different tests); the report names them. **Open:** trigger is the user asking for the sign-in
+redirect to be measured, or a change to the sign-in code.
