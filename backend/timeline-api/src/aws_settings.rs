@@ -174,6 +174,15 @@ pub struct AwsSettings {
     pub region: Region,
 }
 
+/// The Cognito settings alone: all the activity-recording Lambda needs to
+/// check logins (docs/plans/2026-10-02-activity-instrumentation.md §5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoginSettings {
+    pub user_pool_id: UserPoolId,
+    pub client_id: ClientId,
+    pub region: Region,
+}
+
 /// Every variable that was missing or empty, in the order they're read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MissingSettings(pub Vec<&'static str>);
@@ -223,6 +232,14 @@ impl<F: Fn(&str) -> Option<String>> Reader<F> {
         }
     }
 
+    fn login(&mut self) -> LoginSettings {
+        LoginSettings {
+            user_pool_id: UserPoolId(self.read(USER_POOL_ID_VAR)),
+            client_id: ClientId(self.read(CLIENT_ID_VAR)),
+            region: Region(self.read(REGION_VAR)),
+        }
+    }
+
     fn finish<T>(self, value: T) -> Result<T, MissingSettings> {
         if self.missing.is_empty() {
             Ok(value)
@@ -249,13 +266,14 @@ impl AwsSettings {
     pub fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, MissingSettings> {
         let mut reader = Reader::new(lookup);
         let storage = reader.storage();
+        let login = reader.login();
         let settings = AwsSettings {
             uploads_bucket: storage.uploads_bucket,
             conversations_table: storage.conversations_table,
             message_flags_table: storage.message_flags_table,
-            user_pool_id: UserPoolId(reader.read(USER_POOL_ID_VAR)),
-            client_id: ClientId(reader.read(CLIENT_ID_VAR)),
-            region: Region(reader.read(REGION_VAR)),
+            user_pool_id: login.user_pool_id,
+            client_id: login.client_id,
+            region: login.region,
         };
         reader.finish(settings)
     }
@@ -267,6 +285,35 @@ impl AwsSettings {
             conversations_table: self.conversations_table.clone(),
             message_flags_table: self.message_flags_table.clone(),
         }
+    }
+
+    /// The Cognito settings alone.
+    pub fn login(&self) -> LoginSettings {
+        LoginSettings {
+            user_pool_id: self.user_pool_id.clone(),
+            client_id: self.client_id.clone(),
+            region: self.region.clone(),
+        }
+    }
+
+    /// The `iss` claim Cognito puts in this pool's tokens.
+    pub fn issuer(&self) -> String {
+        self.login().issuer()
+    }
+
+    /// Where Cognito publishes this pool's public signing keys.
+    pub fn jwks_url(&self) -> String {
+        self.login().jwks_url()
+    }
+}
+
+impl LoginSettings {
+    /// Reads the three Cognito settings through `lookup`, as
+    /// [`AwsSettings::from_lookup`] does.
+    pub fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, MissingSettings> {
+        let mut reader = Reader::new(lookup);
+        let login = reader.login();
+        reader.finish(login)
     }
 
     /// The `iss` claim Cognito puts in this pool's tokens.

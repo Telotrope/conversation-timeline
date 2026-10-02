@@ -13,6 +13,8 @@ use axum::response::{IntoResponse, Response};
 use timeline_auth::cognito::CognitoVerifier;
 use timeline_core::ports::ids::UserId;
 
+use crate::request_record::note_user;
+
 pub struct AuthenticatedUser(pub UserId);
 
 #[derive(Debug)]
@@ -55,6 +57,8 @@ where
         let user_id = verifier
             .verify(token)
             .map_err(|_| AuthRejection::InvalidToken)?;
+        // For this request's log line (crate::request_log).
+        note_user(&user_id);
         Ok(AuthenticatedUser(user_id))
     }
 }

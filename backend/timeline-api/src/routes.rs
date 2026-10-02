@@ -1,6 +1,7 @@
 //! Route handlers, one file per resource per CLAUDE.md's file-organization
 //! rule.
 
+pub mod activity;
 pub mod conversations;
 pub mod detect;
 pub mod dev_local_storage;

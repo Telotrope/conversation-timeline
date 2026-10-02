@@ -18,6 +18,11 @@
 //!   `2026-10-02-upload-processing-failures.md` §3). After the last retry,
 //!   the separate `record_failed_upload` function records `Failed` (§2).
 //!
+//! Every record's run ends with one `processing_run` log line
+//! ([`processing_run_line`]; docs/plans/2026-10-02-activity-instrumentation.md
+//! §3): the key, user and upload, the outcome, how long it took, what
+//! processing read and stored, and the AWS calls it made.
+//!
 //! [`handle_raw_s3_event`] is what the Lambda runs: it takes the
 //! notification as plain JSON, logs it when [`EventLogging::On`] (with the
 //! uploader's IP address removed), then reads it and calls
@@ -27,10 +32,11 @@
 
 use std::fmt;
 use std::sync::Arc;
+use std::time::Instant;
 
 use aws_lambda_events::event::s3::S3Event;
 use percent_encoding::percent_decode_str;
-use serde_json::Value;
+use serde_json::{json, Value};
 use timeline_core::ports::conversations::ConversationSummaryStore;
 use timeline_core::ports::message_flags::UserFlagWriter;
 use timeline_core::ports::object_store::ObjectStore;
@@ -38,6 +44,7 @@ use timeline_core::ports::uploads::{parse_raw_object_key, UploadOutcomeStore};
 
 use crate::aws_settings::{DeliberateFailure, EventLogging};
 use crate::processing::{process_upload, ProcessingError};
+use crate::request_record::{self, note, note_user, RequestRecord};
 
 /// The stores processing writes through.
 #[derive(Clone)]
@@ -117,10 +124,12 @@ async fn handle_record(
             key: key.clone(),
             reason: "expected raw/<user>/<upload uuid>.json".to_string(),
         })?;
+    note_user(&user_id);
+    note("upload_id", upload_id.0.to_string());
     // Counted before processing, so the page can say which attempt this is
     // (plan `2026-10-02-upload-processing-failures.md` §3). Failing to count
     // is a storage failure like any other: retried.
-    stores
+    let attempt = stores
         .upload_outcome_store
         .record_attempt(&user_id, upload_id)
         .await
@@ -128,6 +137,7 @@ async fn handle_record(
             key: key.clone(),
             error: ProcessingError::Store(e),
         })?;
+    note("attempt", attempt);
     let result = if failure == DeliberateFailure::On {
         Err(ProcessingError::FailingOnPurpose)
     } else {
@@ -150,6 +160,7 @@ async fn handle_record(
         ) => {
             // Already recorded as `Failed` for the page; see module doc.
             eprintln!("upload {key:?} is not a usable export (recorded as failed): {e}");
+            note("unusable", e.to_string());
             Ok(())
         }
         Err(error) => {
@@ -185,9 +196,61 @@ pub async fn handle_s3_event_with(
     stores: &ProcessingStores,
     failure: DeliberateFailure,
 ) -> Result<(), TriggerError> {
+    handle_s3_event_logged(event, stores, failure, &|_line| {}).await
+}
+
+/// The `processing_run` line for one record's run: `key` as the event named
+/// it, `result` its outcome, `record` what was recorded while it ran.
+pub fn processing_run_line(
+    key: Option<&str>,
+    result: &Result<(), RecordError>,
+    millis: u128,
+    record: &RequestRecord,
+) -> String {
+    let mut facts = record.facts.clone();
+    let upload_id = facts.remove("upload_id");
+    let unusable = facts.remove("unusable");
+    let (outcome, error) = match (result, unusable) {
+        (Err(e), _) => ("error", Some(Value::String(e.to_string()))),
+        (Ok(()), Some(reason)) => ("unusable", Some(reason)),
+        (Ok(()), None) => ("ready", None),
+    };
+    json!({
+        "kind": "processing_run",
+        "key": key,
+        "user": record.user,
+        "upload_id": upload_id,
+        "outcome": outcome,
+        "error": error,
+        "ms": millis as u64,
+        "facts": Value::Object(facts),
+        "aws_calls": record.aws_calls,
+        "aws_retries": record.aws_retries,
+    })
+    .to_string()
+}
+
+/// [`handle_s3_event_with`], writing each record's `processing_run` line to
+/// `log`.
+pub async fn handle_s3_event_logged(
+    event: S3Event,
+    stores: &ProcessingStores,
+    failure: DeliberateFailure,
+    log: &dyn Fn(&str),
+) -> Result<(), TriggerError> {
     let mut failures = Vec::new();
     for record in &event.records {
-        if let Err(e) = handle_record(record.s3.object.key.as_deref(), stores, failure).await {
+        let key = record.s3.object.key.as_deref();
+        let started = Instant::now();
+        let (result, recorded) =
+            request_record::recording(handle_record(key, stores, failure)).await;
+        log(&processing_run_line(
+            key,
+            &result,
+            started.elapsed().as_millis(),
+            &recorded,
+        ));
+        if let Err(e) = result {
             eprintln!("{e}");
             failures.push(e);
         }
@@ -258,7 +321,7 @@ pub async fn handle_raw_s3_event(
 }
 
 /// [`handle_raw_s3_event`] with the deliberate-failure setting; see
-/// [`handle_s3_event_with`]. What the processing Lambda runs.
+/// [`handle_s3_event_with`].
 pub async fn handle_raw_s3_event_with(
     raw: Value,
     stores: &ProcessingStores,
@@ -266,11 +329,26 @@ pub async fn handle_raw_s3_event_with(
     failure: DeliberateFailure,
     log: impl Fn(&str),
 ) -> Result<(), RawEventError> {
+    handle_raw_s3_event_recorded(raw, stores, logging, failure, log, &|_line| {}).await
+}
+
+/// What the processing Lambda runs: [`handle_raw_s3_event_with`], also
+/// writing each record's `processing_run` line to `run_log`. Kept apart from
+/// `log`, which carries only the notification itself and only while
+/// [`EventLogging::On`].
+pub async fn handle_raw_s3_event_recorded(
+    raw: Value,
+    stores: &ProcessingStores,
+    logging: EventLogging,
+    failure: DeliberateFailure,
+    log: impl Fn(&str),
+    run_log: &dyn Fn(&str),
+) -> Result<(), RawEventError> {
     if logging == EventLogging::On {
         log(&s3_event_log_line(&raw));
     }
     let event: S3Event = serde_json::from_value(raw).map_err(RawEventError::Unreadable)?;
-    handle_s3_event_with(event, stores, failure)
+    handle_s3_event_logged(event, stores, failure, run_log)
         .await
         .map_err(RawEventError::Trigger)
 }

@@ -7,6 +7,9 @@
 //! "processing" forever, because the processing function deliberately
 //! doesn't record storage errors as failures (`s3_trigger`'s module doc).
 //!
+//! Each upload it handles gets one `upload_marked_failed` log line
+//! ([`upload_marked_failed_line`]; docs/plans/2026-10-02-activity-instrumentation.md §3).
+//!
 //! The input is AWS's invocation record: the original S3 notification as
 //! `requestPayload`, and the function's error as `responsePayload`. The
 //! test sample of it is written from AWS's documentation, not captured
@@ -15,7 +18,7 @@
 use std::fmt;
 
 use aws_lambda_events::event::s3::S3Event;
-use serde_json::Value;
+use serde_json::{json, Value};
 use timeline_core::ports::uploads::{parse_raw_object_key, UploadOutcome, UploadOutcomeStore};
 
 use crate::s3_trigger::{decode_key, MAX_PROCESSING_ATTEMPTS};
@@ -84,6 +87,36 @@ pub async fn handle_failed_invocation(
     record: Value,
     store: &dyn UploadOutcomeStore,
 ) -> Result<(), FailedUploadError> {
+    handle_failed_invocation_logged(record, store, &|_line| {}).await
+}
+
+/// The `upload_marked_failed` line for one S3 record. `key` is the decoded
+/// key when it could be decoded, else the raw one.
+pub fn upload_marked_failed_line(
+    key: &str,
+    reason: &str,
+    result: &Result<(), FailedUploadError>,
+) -> String {
+    let parsed = parse_raw_object_key(key);
+    json!({
+        "kind": "upload_marked_failed",
+        "key": key,
+        "user": parsed.as_ref().map(|(user, _)| user.to_string()),
+        "upload_id": parsed.as_ref().map(|(_, upload)| upload.0.to_string()),
+        "reason": reason,
+        "outcome": if result.is_ok() { "recorded" } else { "error" },
+        "error": result.as_ref().err().map(|e| e.to_string()),
+    })
+    .to_string()
+}
+
+/// [`handle_failed_invocation`], writing one `upload_marked_failed` line per
+/// upload to `log`.
+pub async fn handle_failed_invocation_logged(
+    record: Value,
+    store: &dyn UploadOutcomeStore,
+    log: &dyn Fn(&str),
+) -> Result<(), FailedUploadError> {
     let payload = record
         .get("requestPayload")
         .ok_or(FailedUploadError::NotAnInvocationRecord)?;
@@ -93,6 +126,9 @@ pub async fn handle_failed_invocation(
     let mut first_error = None;
     for s3_record in &event.records {
         let raw = s3_record.s3.object.key.as_deref().unwrap_or("");
+        // For the log line only: a key that can't be decoded is logged as it
+        // arrived, and the decoding error itself is reported by `result`.
+        let shown_key = decode_key(raw).unwrap_or_else(|_| raw.to_string());
         let result = async {
             let key = decode_key(raw).map_err(|reason| FailedUploadError::UnusableKey {
                 key: raw.to_string(),
@@ -115,6 +151,7 @@ pub async fn handle_failed_invocation(
                 .map_err(|error| FailedUploadError::Store { key, error })
         }
         .await;
+        log(&upload_marked_failed_line(&shown_key, &reason, &result));
         if let Err(e) = result {
             eprintln!("{e}");
             first_error.get_or_insert(e);

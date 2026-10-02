@@ -20,6 +20,7 @@ use timeline_core::ports::message_flags::{
 use crate::auth_extractor::AuthenticatedUser;
 use crate::error::ApiError;
 use crate::flag_handles::{FlagHandle, FlagHandleKey};
+use crate::request_record::note;
 
 /// The body of a flag save. Stricter than `FlagOverrides`, which upload
 /// processing also reads from uploaded files: an unknown field name is
@@ -69,11 +70,19 @@ pub async fn patch_flags(
                 .to_string(),
         ));
     }
+    // For this request's log line (crate::request_log).
+    note("conversation_id", conversation_id.to_string());
+    note("message_id", message_id.to_string());
+    note("caps", request.caps);
+    note("critical", request.critical);
+    note("angry", request.angry);
     if !key.verify(&user_id, conversation_id, message_id, &request.handle) {
+        note("handle", "refused");
         return Err(ApiError::Forbidden(
             "flag handle does not match this message; reload the page's data".to_string(),
         ));
     }
+    note("handle", "accepted");
     let record = writer
         .set_user_flags(&user_id, conversation_id, message_id, overrides)
         .await?;

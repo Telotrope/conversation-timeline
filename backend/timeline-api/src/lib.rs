@@ -6,6 +6,7 @@
 
 pub mod app;
 pub mod auth_extractor;
+pub mod aws_call_counter;
 pub mod aws_settings;
 pub mod aws_state;
 pub mod dev_only;
@@ -14,6 +15,8 @@ pub mod error;
 pub mod failed_upload;
 pub mod flag_handles;
 pub mod processing;
+pub mod request_log;
+pub mod request_record;
 pub mod routes;
 pub mod s3_trigger;
 pub mod state;

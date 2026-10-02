@@ -25,6 +25,7 @@ use timeline_core::{unwrap_uploaded_json, Sender};
 use crate::auth_extractor::AuthenticatedUser;
 use crate::error::ApiError;
 use crate::flag_handles::{FlagHandle, FlagHandleKey};
+use crate::request_record::note;
 
 /// Long enough for a slow download of a large export; see
 /// `routes::uploads::UPLOAD_URL_TTL` for the matching upload-side constant.
@@ -119,8 +120,12 @@ pub async fn export(
         annotated.push(conversation);
     }
 
+    let annotated_count = annotated.len();
     let export_bytes = serde_json::to_vec(&json!({ "conversations": annotated }))
         .map_err(|e| integrity_error("failed to serialize the export payload", e))?;
+    // For this request's log line (crate::request_log).
+    note("conversations", annotated_count);
+    note("export_bytes", export_bytes.len());
     let export_key = format!("export/{user_id}/{}.json", uuid::Uuid::new_v4());
     object_store.put(&export_key, export_bytes).await?;
     let export_url = object_store

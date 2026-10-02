@@ -33,12 +33,15 @@ use std::sync::Arc;
 use axum::Router;
 use tower_http::cors::CorsLayer;
 
-use timeline_api::app::{build_dev_router, build_router};
+use timeline_api::app::{build_activity_router, build_dev_router, build_router};
+use timeline_api::aws_call_counter;
 use timeline_api::aws_settings::AwsSettings;
 use timeline_api::aws_state::{build_aws_state, fetch_jwks, AwsClients};
 use timeline_api::dev_only::{DEV_KEYPAIR, DEV_ONLY_CLIENT_ID, DEV_ONLY_ISSUER};
 use timeline_api::dev_state::DevState;
 use timeline_api::flag_handles::{FlagHandleKey, KEY_ENV_VAR};
+use timeline_api::request_log::{stdout_sink, with_request_log};
+use timeline_api::routes::activity::ActivityState;
 use timeline_api::state::AppState;
 use timeline_auth::cognito::CognitoVerifier;
 use timeline_storage::memory::conversations::InMemoryConversationSummaryStore;
@@ -130,6 +133,8 @@ async fn run_locally(router: Router) {
 #[tokio::main]
 async fn main() {
     if std::env::var("AWS_LAMBDA_RUNTIME_API").is_ok() {
+        // Counts each request's AWS calls for its log line (crate::request_log).
+        aws_call_counter::install();
         // Every startup problem stops the Lambda with a message naming it;
         // nothing falls back to the in-memory stores or the dev keys, which
         // the Lambda used before §V2d.
@@ -149,17 +154,27 @@ async fn main() {
             dynamodb: aws_sdk_dynamodb::Client::new(&sdk_config),
         };
         let router = build_router(build_aws_state(&settings, clients, jwks, key));
-        lambda_http::run(router).await.expect("lambda runtime");
+        lambda_http::run(with_request_log(router, stdout_sink()))
+            .await
+            .expect("lambda runtime");
     } else {
         let (app_state, dev_state) = build_local_state(FlagHandleKey::generate());
+        // The page's activity reports, logged on standard output as on AWS,
+        // where the route has its own function (bin/record_activity.rs).
+        let activity_state = ActivityState {
+            verifier: app_state.verifier.clone(),
+            sink: stdout_sink(),
+        };
         // Permissive CORS, local-dev only -- timeline.html isn't served by
         // this binary and will be opened separately (a local file, or a
         // static server on a different port), so without this the browser
         // blocks every cross-origin fetch(). Never applied to the Lambda
         // branch above -- that router is returned before this layer exists.
         let router = build_router(app_state)
-            .merge(build_dev_router(dev_state))
-            .layer(CorsLayer::permissive());
+            .merge(build_activity_router(activity_state))
+            .merge(build_dev_router(dev_state));
+        // Every request logged, as on AWS (docs/plans/2026-10-02-activity-instrumentation.md §3).
+        let router = with_request_log(router, stdout_sink()).layer(CorsLayer::permissive());
         run_locally(router).await;
     }
 }

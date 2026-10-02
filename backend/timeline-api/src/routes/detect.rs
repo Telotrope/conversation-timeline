@@ -37,6 +37,7 @@ use timeline_core::{extract_text, unwrap_uploaded_json, Sender};
 use crate::auth_extractor::AuthenticatedUser;
 use crate::error::ApiError;
 use crate::processing::heuristic_flags;
+use crate::request_record::note;
 
 /// Chosen so a caller that omits `limit` still gets a bounded unit of work
 /// rather than the whole export in one unreportable block.
@@ -130,6 +131,12 @@ pub async fn detect(
             messages_detected += 1;
         }
     }
+
+    // For this request's log line (crate::request_log).
+    note("offset", request.offset);
+    note("limit", limit);
+    note("conversations_processed", conversations_processed);
+    note("messages_detected", messages_detected);
 
     let consumed = request.offset + conversations_processed;
     Ok(Json(DetectResponse {

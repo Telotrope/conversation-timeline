@@ -25,6 +25,7 @@ use timeline_core::ports::uploads::{raw_object_key, UploadOutcome, UploadOutcome
 
 use crate::auth_extractor::AuthenticatedUser;
 use crate::error::ApiError;
+use crate::request_record::note;
 use crate::s3_trigger::MAX_PROCESSING_ATTEMPTS;
 
 /// How long the presigned upload URL stays valid -- long enough for a slow
@@ -44,6 +45,8 @@ pub async fn create_upload(
     State(object_store): State<Arc<dyn ObjectStore>>,
 ) -> Result<Json<CreateUploadResponse>, ApiError> {
     let upload_id = UploadId(uuid::Uuid::new_v4());
+    // For this request's log line (crate::request_log).
+    note("upload_id", upload_id.0.to_string());
     let key = raw_object_key(&user_id, upload_id);
 
     let upload_url = object_store.presign_put(&key, UPLOAD_URL_TTL).await?;

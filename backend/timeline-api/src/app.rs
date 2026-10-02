@@ -8,6 +8,7 @@ use axum::routing::{get, post, put};
 use axum::Router;
 
 use crate::dev_state::DevState;
+use crate::routes::activity::{self, ActivityState};
 use crate::routes::{
     conversations, detect, dev_local_storage, dev_login, dev_reset, export, flags, uploads,
 };
@@ -26,6 +27,15 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/export", get(export::export))
         .route("/detect", post(detect::detect))
+        .with_state(state)
+}
+
+/// `POST /activity` alone: the page's record of what the user did. Its own
+/// Lambda function on AWS (`bin/record_activity.rs`); merged into the local
+/// server by `main.rs`. See `crate::routes::activity`.
+pub fn build_activity_router(state: ActivityState) -> Router {
+    Router::new()
+        .route("/activity", post(activity::record_activity))
         .with_state(state)
 }
 

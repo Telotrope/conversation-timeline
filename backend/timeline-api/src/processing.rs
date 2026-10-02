@@ -35,6 +35,8 @@ use timeline_core::ports::object_store::ObjectStore;
 use timeline_core::ports::uploads::{raw_object_key, UploadOutcome, UploadOutcomeStore};
 use timeline_core::{unwrap_uploaded_json, FormatError};
 
+use crate::request_record::note;
+
 #[derive(Debug)]
 pub enum ProcessingError {
     RawObjectNotUtf8(std::string::FromUtf8Error),
@@ -170,6 +172,9 @@ pub async fn process_upload(
 ) -> Result<(), ProcessingError> {
     let key = raw_object_key(user_id, upload_id);
     let raw_bytes = object_store.get(&key).await?;
+    // For the run's log line (crate::s3_trigger); nothing outside a
+    // recording sees these (crate::request_record).
+    note("bytes", raw_bytes.len());
     let raw_text = match String::from_utf8(raw_bytes) {
         Ok(t) => t,
         Err(e) => {
@@ -231,6 +236,7 @@ pub async fn process_upload(
         }
     }
     let total = reviews.len();
+    note("reviews", total);
     for (index, (conversation_id, message_id, review)) in reviews.into_iter().enumerate() {
         user_flag_writer
             .set_user_flags(user_id, conversation_id, message_id, review)
@@ -245,6 +251,7 @@ pub async fn process_upload(
     }
 
     let total = parsed.conversations.len();
+    note("conversations", total);
     let mut conversation_ids = Vec::with_capacity(total);
     for (index, conversation) in parsed.conversations.iter().enumerate() {
         let summary = ConversationSummary {
