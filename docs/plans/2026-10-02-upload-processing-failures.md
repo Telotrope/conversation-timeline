@@ -62,6 +62,35 @@ The user also asked for the error handling to be checked more widely, since this
   `timeline-storage`, to load the `aws login` credentials.
 - Results go in `docs/analysis/2026-10-02-read-after-write-experiment.md`.
 
+### 0b. The same experiment from inside Lambda (chosen by the user 2026-10-02 after §0 was inconclusive)
+
+§0 ran from `dev`, about 40 ms from DynamoDB per request, and found 0 misses in 300 default reads
+([analysis](../analysis/2026-10-02-read-after-write-experiment.md)). Production reads arrive much
+sooner after the write. This runs the same loop where production runs.
+
+- **A new workspace crate, `backend/timeline-experiments/`**: a library function
+  `read_after_write::run(client, table, rows) -> Report` (the §0 loop: write a new row under
+  `experiment#<run id>` with `set_user_flags`'s kind of request, read it straight back,
+  alternating default and strongly consistent reads, time both; then delete every row) and a
+  Lambda binary, `read_after_write`, that runs it with the row count from its input and returns
+  the report as JSON. Errors are returned in the report with the row number, never dropped.
+  Dependencies are ones the workspace already uses: `aws-config`, `aws-sdk-dynamodb`,
+  `lambda_runtime`, `tokio`, `serde`, `serde_json`, `uuid` (all MIT or Apache-2.0).
+- **Its own small stack, separate from `timeline-dev`**: `infra/experiments/read-after-write.yaml`,
+  stack `timeline-experiment-read-after-write`. One function: ARM, 512 MB (the processing
+  function's size, so the same CPU share), 300 s limit, allowed only `UpdateItem`, `GetItem` and
+  `DeleteItem` on the flags table, named by a parameter. Built with
+  `cargo lambda build --release --arm64 -p timeline-experiments`.
+- **Run:** Claude deploys the stack, invokes it once with 4,000 rows
+  (`aws lambda invoke`), records the report in the §0 analysis document, and deletes the stack.
+  The crate and template stay in the repository so the run can be repeated.
+- **Tests:** `run` against DynamoDB Local (the storage crate's existing helper, included by path):
+  every row is read back, the report counts both kinds, and nothing is left in the table; against a
+  table that doesn't exist, the report carries the first write's error and row 0.
+  `scripts/check-template.sh` is extended to also check the experiment template.
+- **Reading the result:** as §0. In addition, the report's median request time shows how close
+  this comes to production's timing.
+
 ## 1. Write-then-read without the read
 
 `set_user_flags` asks DynamoDB to return the row as it is after the update, in the same request
