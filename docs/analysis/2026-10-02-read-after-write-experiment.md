@@ -37,3 +37,37 @@ All 600 rows were deleted afterwards. Total run time was 81 s.
   This doesn't change the delay between each row's write and its read.
 - **Reads from inside Lambda**, which matches production's timing. This needs a small temporary
   function, or a switch in the processing function.
+
+## Second run: from inside Lambda (plan §0b)
+
+**Run:** 2026-10-02, with the `read_after_write` Lambda
+([timeline-experiments](../../backend/timeline-experiments/src/read_after_write.rs)), deployed as
+the temporary stack `timeline-experiment-read-after-write`
+([template](../../infra/experiments/read-after-write.yaml)): ARM, 512 MB, the same settings as the
+processing function. Invoked three times with 4,000 rows each. The plan said one invocation; I
+ran two more because one miss was too little to go on. The stack was deleted afterwards. A scan
+of the flags table for `experiment#` keys found 0 rows left behind.
+
+| Invocation | Default reads | Misses (row number) | Strongly consistent reads | Misses | Median write / read |
+|---|---|---|---|---|---|
+| 1 | 2,000 | 1 (row 1422) | 2,000 | 0 | 3.5 ms / 2.1 ms |
+| 2 | 2,000 | 2 (rows 2206, 2960) | 2,000 | 0 | 3.7 ms / 2.0 ms |
+| 3 | 2,000 | 0 | 2,000 | 0 | 4.7 ms / 2.3 ms |
+| **Total** | **6,000** | **3** | **6,000** | **0** | |
+
+Requests took about 2 to 4 ms from inside Lambda, against about 40 ms from `dev`. That's the
+timing difference the first run's analysis predicted.
+
+## What the second run shows
+
+- **Default reads straight after a write do miss the new row**: 3 times in 6,000, about 1 in
+  2,000. That's the inferred cause of the deployed failure, now observed directly.
+- **Strongly consistent reads didn't miss in 6,000.** If they missed as often as default reads,
+  0 in 6,000 would happen about 5% of the time (e^-3). So the difference is unlikely to be
+  chance, though 6,000 reads can't prove they never miss. DynamoDB documents strongly consistent
+  reads as reflecting every write acknowledged before them.
+- **It fits the deployed failure.** At about 1 in 2,000, each of the upload's 538 review
+  read-backs had that chance, so a whole attempt fails about 24% of the time
+  (1 − e^(−538/2000)). Two failures in three attempts is unlucky, but within reason (about 13%).
+- **What this doesn't show:** that no *other* cause contributed to the deployed failure, because
+  the original log names no row (plan §1 fixes that).
