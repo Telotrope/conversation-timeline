@@ -22,8 +22,8 @@ run the app, each one command where possible:
 | Deployed from | Working tree | Any branch, any state | `main` only, committed, no local changes |
 | Command | `scripts/dev-up.sh all` | `scripts/deploy.sh dev` | `scripts/deploy.sh public` |
 
-"A remote development branch" is read here as a separate **deployment** (a stack) for testing,
-deployable from any git branch, not a git branch of its own. Tell me if you meant a git branch.
+"A remote development branch" means a separate **deployment** (a stack) for testing, deployable
+from any git branch, not a git branch of its own (confirmed 2026-10-02).
 
 ## Reuse check
 
@@ -63,7 +63,9 @@ secret: certificate identifiers and the account number are visible to anyone the
 One command per remote deploy. Every step stops the script with a message naming the failed step.
 
 1. **Before anything:**
-   - checks that AWS sign-in is valid (`aws sts get-caller-identity`);
+   - checks that AWS sign-in is valid (`aws sts get-caller-identity`, profile `timeline`), and
+     when it has expired says to run `aws login --profile timeline --remote`. `aws sso` doesn't
+     work on this machine;
    - checks there are at least 3 GB free on the disk;
    - for `public` only, refuses unless on `main` with no local changes and nothing unpushed. The
      page's recorded version (`git describe --dirty`) then names a real commit.
@@ -143,8 +145,12 @@ Lessons to write into `OPERATING.md` (from 2026-10-02):
 3. After reloading, wait for the page to settle before clicking Load. The background restore can
    overtake a new load.
 4. Testing a first load needs your review rows deleted first
-   ([read-after-write analysis](../analysis/2026-10-02-read-after-write-experiment.md)). How
-   that was done isn't recorded (open question 2).
+   ([read-after-write analysis](../analysis/2026-10-02-read-after-write-experiment.md)). On
+   2026-10-02 this was done with a one-off script: back up the `timeline-message-flags-dev`
+   table, then `aws dynamodb batch-write-item` delete requests 25 at a time, then a consistent
+   `scan --select COUNT` to confirm zero. The planned delete checkbox
+   ([2026-10-02-dev-delete-before-load.md](2026-10-02-dev-delete-before-load.md), not yet built)
+   replaces this; until then `OPERATING.md` records those steps.
 5. Sign in afresh just before a test: Cognito's sign-in lasts an hour, and an expired one shows
    as a 401 even when processing succeeded.
 6. The build folder is cleaned automatically
@@ -195,13 +201,14 @@ All run on this machine without AWS, using stand-ins for `aws`, `sam`, `cargo` a
 Results go to a `docs/analysis/` file. Until then, the status is "code-level only, end-to-end
 TBD".
 
-## Open questions for you
+## Answered 2026-10-02
 
-1. Which AWS sign-in do you use: `aws sso login`, or `aws login --profile timeline --remote` (what
-   the 2026-10-02 sessions used, which lasts under a day)? `deploy.sh`'s first check tells you
-   which command to run when it has expired.
-2. How were your review rows deleted for first-load testing on 2026-10-02?
-3. Is starting the public stack empty acceptable, with your dev data left on `timeline-dev`?
+1. AWS sign-in is `aws login --profile timeline --remote`; `aws sso` doesn't work here (§2 step 1).
+2. Review rows were deleted with a one-off script (lesson 4).
+
+## Open question for you
+
+1. Is it acceptable that the public stack starts with no accounts and no data (§7)?
 
 ## Self-critique log
 
