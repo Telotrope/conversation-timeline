@@ -111,3 +111,11 @@ Trigger: the log shows `backend/target` over 12 GB right after a cleanup.
 Original concern: step 2 compiles whatever changed. **Resolution:** the size check runs first,
 so the compile only happens once the folder passes 12 GB, at low priority and in the background
 ([§2 (line 62)](2026-10-02-automatic-build-cleanup.md#L62)).
+
+### C5 [RESOLVED]: The size check measured folders the cleanup doesn't touch
+Found during implementation: after a cleanup, `backend/target` was still 15 GB: `debug` 7.7 GB
+plus coverage builds (5.7 GB, growing) and Lambda builds (about 1 GB). §1's
+`--if-larger-than` measured the whole folder, so against 12 GB the hook would have run a full
+cleanup after every turn and freed nothing. **Resolution:** the check measures `target/debug`,
+the part this cleans, still against 12 GB
+([scripts/clean-build.py](../../scripts/clean-build.py)). The other folders stay with C3.
