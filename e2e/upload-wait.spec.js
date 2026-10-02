@@ -48,16 +48,16 @@ test('a retry on the server is shown, with the error, while the bar keeps moving
 
   const label = page.locator('#loadProgressLabel');
   const fill = page.locator('#loadProgressFill');
-  await expect(label).toHaveText(/^Waiting for the server to start — 0:0\d$/);
+  await expect(label).toHaveText(/^Waiting for the server to start — \d+s$/);
   await expect(fill).toHaveClass(/is-working/);
   expect(await fill.evaluate((el) => getComputedStyle(el).animationName)).toBe('progressStripes');
 
-  await expect(label).toHaveText(/^Processing on the server — 0:0\d$/);
+  await expect(label).toHaveText(/^Processing on the server — \d+s$/);
   await expect(label).toHaveText(
-    /^The server hit an error \(item not found\) on attempt 1 of 3 and will try again automatically in 1–2 minutes\. — 0:0\d$/,
+    /^The server hit an error \(item not found\) on attempt 1 of 3 and will try again automatically in 1–2 minutes\. — \d+s$/,
   );
   await expect(label).toHaveText(
-    /^The server hit an error \(item not found\) and is trying again automatically: attempt 2 of 3\. AWS waits 1–2 minutes between attempts\. — 0:0\d$/,
+    /^The server hit an error \(item not found\) and is trying again automatically: attempt 2 of 3\. AWS waits 1–2 minutes between attempts\. — \d+s$/,
   );
 
   // Then the real server's "ready", and the timeline.
