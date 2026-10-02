@@ -25,15 +25,15 @@ files carry no hash, so the filter removed them). No library was rebuilt.
 | # | Check | Result |
 |---|---|---|
 | H1 | Page loads; bucket refuses direct access | **Pass**: `https://d3dl4z1yvtflex.cloudfront.net/` 200; the bucket's S3 address 403 |
-| H2 | `.js` served as JavaScript | **Pass** for `frontend/main.js` (`text/javascript; charset=utf-8`). Modules running in a browser not yet observed |
+| H2 | `.js` served as JavaScript | **Pass**: `frontend/main.js` served as `text/javascript; charset=utf-8`; the page runs in the user's browser |
 | H3 | Cognito sign-in returns to the page | **Pass** (user, in a browser, at `https://howangryami.telotrope.ai/`) |
-| H4 | Loading, uploading, flag edits pass CORS from the hosted origin | **Failed, fixed, retest pending**: see below |
+| H4 | Loading, uploading, flag edits pass CORS from the hosted origin | **Pass after a fix**: failed on the first deploy (see below); after the fix the user loaded an export at `https://howangryami.telotrope.ai/`. Uploading a new file and flag edits not separately reported |
 | H5 | A second publish shows the new version | **Not run** |
 | H6 | Compression and security headers | **Pass**: `content-encoding: br`; HSTS, nosniff, frame and referrer headers present |
 | H7 | A week's cost at $0.00 | **Not run** (due 2026-10-09) |
-| H8 | Custom domain serves with the given certificate | **Partial pass**: requests for `howangryami.telotrope.ai` sent to CloudFront's address return 200 with a valid certificate; Certificate Manager shows it in use and renewal `ELIGIBLE`. The Porkbun `CNAME` (`howangryami` → `d3dl4z1yvtflex.cloudfront.net`) did not exist yet |
-| H9 | Sign-in from `/`; files load below `/` | **Not run** |
-| H10 | The local page still works against the hosted stack | **Not run** |
+| H8 | Custom domain serves with the given certificate | **Partial pass**: requests for `howangryami.telotrope.ai` sent to CloudFront's address return 200 with a valid certificate; Certificate Manager shows it in use and renewal `ELIGIBLE`. The user then added the Porkbun `CNAME` (`howangryami` → `d3dl4z1yvtflex.cloudfront.net`) and used the page at that address. Renewal itself happens months later |
+| H9 | Sign-in from `/`; files load below `/` | **Pass** (user signed in and loaded at `/`) |
+| H10 | The local page still works against the hosted stack | **Pass** (user loaded on the Tailscale page) |
 
 Also observed: the published `index.html` carries `<meta name="timeline-deploy" content="dev">`,
 and `frontend/deploy-configs/dev.json` is served with the stack's API, Cognito and client values
