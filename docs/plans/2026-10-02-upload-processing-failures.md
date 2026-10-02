@@ -230,6 +230,21 @@ Items found broken are fixed under this plan if the fix is small and the same sh
 anything larger is listed in the analysis with its own proposed fix, and comes back to the user
 before it's built.
 
+## 3b. The failure message after the last attempt (from the user's live test, 2026-10-02)
+
+The first complete live failure (all 3 attempts hit "item not found") ended with the red text
+above the bar holding the whole error, which repeats "the server couldn't process the file", and
+the grey text below the bar still showing the last waiting line ("…trying again automatically:
+attempt 3 of 3… — 3m 31s"), frozen and no longer true.
+
+- **Red text above the bar is for the user:** a short statement that the file couldn't be
+  processed.
+- **Grey text below the bar is the full error, for an expert:** every diagnostic detail kept (the
+  object key, the review number, conversation and message ids, the store error), not shortened,
+  with the repeated phrase removed. It replaces the waiting line, so nothing stale remains.
+- **Open, to be decided in this plan later, not now:** how the text above and below the bar is
+  used in general, for every step of a load. Today the two often repeat each other.
+
 ## 2b. A switch to make processing fail on purpose (built 2026-10-02, at the user's request)
 
 **Status:** built and tested locally (commits `a9d09b1`, `c154618`); not yet run on AWS. The
