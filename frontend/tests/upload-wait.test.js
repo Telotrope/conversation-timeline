@@ -46,7 +46,10 @@ test("a failed upload rejects with the server's reason", async () => {
 
 test('gives up after ten minutes of "processing"', async () => {
   const r = run([processing]);
-  await assert.rejects(r.promise, /still processing the file after 10 minutes/);
+  await assert.rejects(
+    r.promise,
+    /^Error: No answer from the server after 10 minutes\. Its last status was: Waiting for the server to start — 10:00\. Reload later to check again\.$/,
+  );
   assert.ok(r.sleeps.reduce((a, b) => a + b, 0) >= GIVE_UP_AFTER_MS);
 });
 
