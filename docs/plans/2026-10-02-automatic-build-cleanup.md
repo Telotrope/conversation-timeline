@@ -1,6 +1,6 @@
 # Automatic build cleanup
 
-**Status:** draft, awaiting approval. Closes C3 of
+**Status:** approved and implemented 2026-10-02 (scripts/clean-build.py, the Stop hook in .claude/settings.json). Closes C3 of
 [2026-10-01-smaller-debug-builds.md](completed/2026-10-01-smaller-debug-builds.md#L62).
 
 ## Why
