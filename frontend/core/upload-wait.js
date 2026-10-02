@@ -11,6 +11,8 @@
 // and gives up after ten minutes. Everything that touches the network or
 // the clock is passed in, so tests can run it without either.
 
+import { formatDuration } from './format.js';
+
 export const FAST_INTERVAL_MS = 1000;
 export const FAST_PERIOD_MS = 10 * 1000;
 export const SLOW_INTERVAL_MS = 5000;
@@ -50,19 +52,13 @@ export async function waitForProcessing({ fetchStatus, sleep, now, onAnswer = ()
   }
 }
 
-// "1:34" for 94 000 ms: minutes and zero-padded seconds.
-export function formatElapsed(ms){
-  const total = Math.floor(ms / 1000);
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
-}
-
 // The line shown under the bar while the server works on an upload (plan
 // 2026-10-02-upload-processing-failures.md §3). `answer` is the latest
 // "processing" answer from GET /uploads/{id}: on AWS it may carry the
 // attempt number, the number of attempts AWS makes, and the last attempt's
 // error; before the first attempt, and always locally, it carries none.
 export function describeWait(answer, elapsedMs){
-  const clock = formatElapsed(elapsedMs);
+  const clock = formatDuration(Math.floor(elapsedMs / 1000));
   const { attempt, max_attempts: max, last_error: error } = answer;
   if(error && attempt && attempt > 1){
     return `The server hit an error (${error}) and is trying again automatically: attempt ${attempt} of ${max}. `
