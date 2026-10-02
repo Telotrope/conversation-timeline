@@ -1,0 +1,38 @@
+# Settings for the two remote deployments, used by scripts/deploy.sh
+# (docs/plans/2026-10-02-deployment-operating-guide.md §1). Committed so a
+# deploy never depends on one machine's copy; nothing here is secret.
+#
+# There is deliberately no [default] section: a bare `sam deploy` stops
+# instead of deploying with half-remembered settings. Use
+# `scripts/deploy.sh dev` or `scripts/deploy.sh public`.
+version = 0.1
+
+# Remote development: testing on real AWS before release. Password sign-in
+# for scripts, activity recording and the failure test switches are on
+# because Stage is dev. Also accepts the page served from your machine
+# (FrontendUrl, through VS Code's forwarding over Tailscale).
+[dev.deploy.parameters]
+stack_name = "timeline-dev"
+resolve_s3 = true
+s3_prefix = "timeline-dev"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = "Stage=\"dev\" FrontendUrl=\"https://dev.tail13dce8.ts.net/proxy/8000/timeline.html\" LogS3Events=\"off\" FailProcessing=\"off\" HostPage=\"on\" PageDomain=\"dev.howangryami.telotrope.ai\" PageCertificateArn=\"arn:aws:acm:us-east-1:014810124096:certificate/33130ff2-3a02-473a-9f54-f21c606f7b37\" AlsoAllowLocalPage=\"on\""
+image_repositories = []
+
+[dev.global.parameters]
+region = "us-east-1"
+
+# Public: real users. Stage "public" turns off everything development-only.
+# Only the hosted page may sign in and call the API.
+[public.deploy.parameters]
+stack_name = "timeline-public"
+resolve_s3 = true
+s3_prefix = "timeline-public"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = "Stage=\"public\" LogS3Events=\"off\" FailProcessing=\"off\" HostPage=\"on\" PageDomain=\"howangryami.telotrope.ai\" PageCertificateArn=\"arn:aws:acm:us-east-1:014810124096:certificate/c66ea752-6d0a-4726-9314-b0f017d9e156\" AlsoAllowLocalPage=\"off\""
+image_repositories = []
+
+[public.global.parameters]
+region = "us-east-1"

@@ -9,5 +9,3 @@ real-flags.json
 # One person's deployment settings, written by scripts/write-deploy-config.sh.
 frontend/deploy-configs/*.json
 
-# One person's `sam deploy --guided` answers (stack name, their FrontendUrl); see infra/README.md.
-infra/samconfig.toml
