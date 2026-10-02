@@ -40,3 +40,26 @@ Average cost per click across runs: 22–46 µs.
   readings were not used.
 
 The probe was a temporary test file, deleted afterwards; its code is not kept.
+
+## After reducing what the recorder allocates per click (2026-10-02, later)
+
+Changes (plan C18): records stamped in place instead of copied, the current tab remembered instead
+of looked up per click, tag names cached, already-clean text returned as is, no class-name arrays.
+The page-side helper measured, with a throwaway probe (300 clicks per run, precise memory readings):
+about 244 bytes per click before (typical 215–310), about 160 after (typical 128–233), 16 with
+recording skipped; two after-runs were outliers (1,056 and 2,107 bytes), not traced.
+
+The unchanged timing test, 20 runs requested, load average 0.3–2.2 (another session was running
+its own tests at the same time): 7 runs did not start, because the test's web server port was
+already in use, and are not counted. Of the 15 that ran, plus the full-suite run:
+
+- **The large clean-up pause (500s–600s, 1.5–2.0 ms): in none.** Before: about half the runs.
+- **Click 0: 0.5–1.2 ms; at or over 1 ms in 3 of 15** (1.0, 1.2, 1.0 ms), so the test still fails
+  intermittently, now on the first click. Before: 0.5–0.8 ms in about 20 runs. Not established
+  whether the change made the first click slower or the concurrent load did; the cheapest test is
+  the same 20 runs on an otherwise idle machine.
+- Average per click 16.6–38.0 µs; no other click reached 0.3 ms.
+
+The earlier warm-up probe (H4) found click 0 fast after 5 warm-up clicks, consistent with the first
+click on the review table being the first use of the recorder's code for describing elements inside
+it (message id and column).
