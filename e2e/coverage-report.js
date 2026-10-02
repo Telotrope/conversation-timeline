@@ -1,5 +1,10 @@
-// Merges the per-test coverage files coverage.js wrote and prints, per
+// Merges the per-test coverage files fixtures.js wrote and prints, per
 // script file, which lines and named functions never ran in any test.
+// Every program file under frontend/ is listed, including any no test
+// loaded (shown as never loaded, 0%). Scripts reported without their text,
+// and scripts that aren't repository files (a page a test made up), are
+// named at the top and left out
+// (docs/plans/2026-10-02-browser-coverage-every-test.md).
 //
 // Usage: node coverage-report.js <COVERAGE_DIR> <repo root>
 //
@@ -17,16 +22,32 @@ if (!dir || !repoRoot) {
   process.exit(2);
 }
 
-// url -> { source, covered: Uint8Array per character, functions: Map name -> ran }
+// repository path -> { source, covered: Uint8Array per character, functions: Map name -> ran }
 const merged = new Map();
+const withoutText = [];
+const notRepositoryFiles = new Set();
+
+// The repository file a script URL names, by path: the tests' servers all
+// serve the repository's own layout, whatever their address and query
+// string. null for a path that isn't a file here.
+function repositoryPath(url) {
+  const rel = decodeURIComponent(new URL(url).pathname).replace(/^\//, '');
+  const full = path.join(repoRoot, rel);
+  return rel && fs.existsSync(full) && fs.statSync(full).isFile() ? rel : null;
+}
 
 for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.json'))) {
-  const entries = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
+  const { test: testName, entries } = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
   for (const entry of entries) {
-    // The same file loaded with a query string (?api_base=...) is the same
-    // code, so merge by path.
-    const u = new URL(entry.url);
-    const key = u.origin + u.pathname;
+    if (typeof entry.source !== 'string') {
+      withoutText.push(`${entry.url} (in ${testName})`);
+      continue;
+    }
+    const key = repositoryPath(entry.url);
+    if (!key) {
+      notRepositoryFiles.add(new URL(entry.url).pathname);
+      continue;
+    }
     if (!merged.has(key)) {
       merged.set(key, {
         source: entry.source,
@@ -56,20 +77,37 @@ for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.json'))) {
   }
 }
 
-function lineOffsetInFile(url, source) {
-  const rel = decodeURIComponent(new URL(url).pathname).replace(/^\//, '');
+function lineOffsetInFile(rel, source) {
   const onDisk = fs.readFileSync(path.join(repoRoot, rel), 'utf8');
   const at = onDisk.indexOf(source);
-  if (at < 0) throw new Error(`could not find ${url}'s script text in ${rel}`);
+  if (at < 0) throw new Error(`could not find the script text recorded for ${rel} in the file`);
   return { rel, firstLine: onDisk.slice(0, at).split('\n').length - 1 };
+}
+
+// Every program file under frontend/, tests and installed packages aside.
+function programFiles(dirRel) {
+  return fs.readdirSync(path.join(repoRoot, dirRel), { withFileTypes: true }).flatMap((d) => {
+    const rel = path.posix.join(dirRel, d.name);
+    if (d.isDirectory()) return ['tests', 'node_modules'].includes(d.name) ? [] : programFiles(rel);
+    return d.name.endsWith('.js') ? [rel] : [];
+  });
+}
+
+// Files no test loaded: their whole text, nothing run.
+const neverLoaded = new Set();
+for (const rel of programFiles('frontend')) {
+  if (merged.has(rel)) continue;
+  const source = fs.readFileSync(path.join(repoRoot, rel), 'utf8');
+  merged.set(rel, { source, covered: new Uint8Array(source.length), functions: new Map() });
+  neverLoaded.add(rel);
 }
 
 let totalCode = 0;
 let totalRun = 0;
 const out = [];
 
-for (const [url, m] of [...merged.entries()].sort()) {
-  const { rel, firstLine } = lineOffsetInFile(url, m.source);
+for (const [key, m] of [...merged.entries()].sort()) {
+  const { rel, firstLine } = lineOffsetInFile(key, m.source);
   const lines = m.source.split('\n');
   let offset = 0;
   let code = 0;
@@ -104,7 +142,7 @@ for (const [url, m] of [...merged.entries()].sort()) {
     if (last && last[1] === n - 1) last[1] = n; else spans.push([n, n]);
   }
 
-  out.push(`## ${rel}`);
+  out.push(`## ${rel}${neverLoaded.has(rel) ? ' -- never loaded by any test' : ''}`);
   out.push(`${code - missed.length} of ${code} code lines ran (${((code - missed.length) / code * 100).toFixed(1)}%).`);
   out.push(`Named functions never called: ${neverCalled.length ? neverCalled.join(', ') : 'none'}.`);
   out.push(`Lines never run: ${spans.length ? spans.map(([a, b]) => (a === b ? `${a}` : `${a}-${b}`)).join(', ') : 'none'}.`);
@@ -112,4 +150,7 @@ for (const [url, m] of [...merged.entries()].sort()) {
 }
 
 console.log(`# Coverage: ${totalRun} of ${totalCode} code lines ran (${(totalRun / totalCode * 100).toFixed(1)}%)\n`);
+console.log(`Program files under frontend/ never loaded by any test: ${neverLoaded.size ? [...neverLoaded].join(', ') : 'none'}.`);
+console.log(`Scripts recorded without their text (left out): ${withoutText.length ? withoutText.join('; ') : 'none'}.`);
+console.log(`Scripts that are not repository files (left out): ${notRepositoryFiles.size ? [...notRepositoryFiles].join(', ') : 'none'}.\n`);
 console.log(out.join('\n'));

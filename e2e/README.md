@@ -78,7 +78,9 @@ with only a console message, which a test looking elsewhere on the page could mi
 ## Measuring coverage
 
 With `COVERAGE_DIR` set, every test records which lines of the page's own JavaScript ran
-([coverage.js](coverage.js)), and [coverage-report.js](coverage-report.js) merges the result:
+([fixtures.js](fixtures.js): every spec file takes `test` from it, which
+[coverage-setup.spec.js](coverage-setup.spec.js) checks), and [coverage-report.js](coverage-report.js)
+merges the result, listing every program file under `frontend/`, including any no test loaded:
 
 ```
 COVERAGE_DIR=/some/empty/dir npm test
