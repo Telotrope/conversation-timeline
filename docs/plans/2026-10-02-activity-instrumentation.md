@@ -354,10 +354,10 @@ timeline that no report was sent while a page request was in flight. **Proposed
 threshold: median detection page and processing time no more than 5% slower.** If it is slower,
 report it and stop, rather than tune it quietly.
 
-## Questions for the user
+## Decisions
 
-1. **Response-time limits:** at most 1 ms added to each action on the page, and server timings no
-   more than 5% slower than today's. Are those the right lines?
+- **Approved by the user, 2026-10-02**, with the response-time limits as written: at most 1 ms
+  added to each action on the page, and server timings no more than 5% slower than today's.
 
 ## Self-critique log
 
