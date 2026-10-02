@@ -1400,6 +1400,15 @@ document in `docs/analysis/`.
 D8 was removed on 2026-10-01; it is now C24's follow-up. The other numbers are kept so earlier
 references stay valid.
 
+**After the deployment checks (added at the user's request, 2026-10-02):**
+- **Rewrite the load screen.** The Load button sits far from the file chooser it depends on,
+  separated by the sign-in area and a long paragraph about scanning; the user found the page
+  confusing. Needs its own plan before any change.
+- **Sign-in that goes stale** (found 2026-10-02): "Signed in as …" is checked once when the page
+  loads, while the token lasts an hour; after that every request fails with "sign in first" under
+  a "Signed in" label. E5 said the page would send you through sign-in again; it doesn't. Proposed
+  fix (refresh-token renewal, rechecking before showing the status) awaits the user's go-ahead.
+
 **Done means:** all suites pass (Rust, frontend unit, browser); the new modules are at 100% line
 coverage; `scripts/check-template.sh` passes; `infra/README.md` exists. V2 itself is done only
 after D1–D7 and D9 are run on a real deployment and recorded.
