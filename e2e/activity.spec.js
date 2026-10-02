@@ -2,7 +2,8 @@
 // §4, §8 and §10), in a real browser against the real local backend:
 //
 // - what recording costs each click, measured on the review table, with the
-//   plan's limit of 1 ms per click;
+//   plan's limit of 4 ms per click, a quarter of one screen redraw (the
+//   user's limit; 1 ms at first, which no one could notice either);
 // - one session's records, as the local backend logs them to its standard
 //   output: in order, with one session id, and with no message text.
 //
@@ -81,7 +82,7 @@ test.beforeEach(async () => {
   await resetBackend();
 });
 
-test('recording a click on the review table takes under 1 ms', async ({ page }) => {
+test('recording a click on the review table takes under 4 ms', async ({ page }) => {
   await loadExport(page, { sub: uniqueSub(), scan: false });
   await page.click('button[data-tab="review"]');
   await expect(page.locator('#reviewTable .approve-btn').first()).toBeVisible();
@@ -139,7 +140,7 @@ test('recording a click on the review table takes under 1 ms', async ({ page }) 
     `recording one click, over 1,000 clicks: median ${median.toFixed(1)} ms (to the nearest 0.1 ms), ` +
     `average ${(meanMs * 1000).toFixed(1)} µs, slowest ${slowest.toFixed(1)} ms`
   );
-  expect(slowest, `slowest click took ${slowest} ms`).toBeLessThan(1);
+  expect(slowest, `slowest click took ${slowest} ms`).toBeLessThan(4);
 });
 
 test("one session's activity reaches the backend's log, in order, without message text", async ({ page }) => {
