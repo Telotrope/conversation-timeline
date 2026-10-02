@@ -34,7 +34,8 @@ export function setRowOverrides(id, changedType, changedValue){
     critical: changedType === 'critical' ? changedValue : effectiveFlag(msg, 'critical'),
   };
   state.overrides[id] = values;
-  patchFlagsToBackend(msg, values).then((result) => setSaveStatus(saveMessage(result)));
+  patchFlagsToBackend(msg, values)
+    .then((result) => setSaveStatus(saveMessage(result), result.outcome !== SaveOutcome.SAVED));
   refreshAllViews();
 }
 

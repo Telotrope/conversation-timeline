@@ -3,6 +3,8 @@
 // names.
 
 import { state } from '../core/state.js';
+import { viewEvent } from '../core/activity-event.js';
+import { recordActivity } from '../core/activity-sink.js';
 import { whileApplyingHash } from './navigation/location.js';
 import { switchTab } from './navigation/tabs.js';
 import { runAnalysis } from './views/analytics.js';
@@ -14,6 +16,7 @@ export function applyLocationHash(){
   const [tab, arg] = raw.split('/');
   if(!document.getElementById('view-' + tab)) return;
 
+  recordActivity(viewEvent(tab, 'router'));
   whileApplyingHash(()=>{
     switchTab(tab);
     if(tab === 'conversations' && arg !== undefined){

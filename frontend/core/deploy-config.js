@@ -29,8 +29,13 @@ function checkedAddress(value, field){
 }
 
 // text: the settings file's contents. Returns { apiBase, cognitoDomain,
-// clientId }, addresses without a trailing slash; throws naming the first
-// field that's missing or wrong.
+// clientId, recordActivity? }, addresses without a trailing slash; throws
+// naming the first field that's missing or wrong.
+//
+// recordActivity (optional): whether the page records your activity (plan
+// docs/plans/2026-10-02-activity-instrumentation.md §4). Absent means off.
+// It is returned only when the file has it, so a settings file without it
+// reads back exactly as before; readers treat absent as false.
 export function parseDeployConfig(text){
   let raw;
   try{ raw = JSON.parse(text); } catch(e){
@@ -47,9 +52,14 @@ export function parseDeployConfig(text){
   if(!/^[A-Za-z0-9]+$/.test(raw.clientId)){
     throw new Error(`deployment settings: clientId has unexpected characters: ${JSON.stringify(raw.clientId)}`);
   }
-  return {
+  if('recordActivity' in raw && typeof raw.recordActivity !== 'boolean'){
+    throw new Error(`deployment settings: recordActivity must be true or false: ${JSON.stringify(raw.recordActivity)}`);
+  }
+  const parsed = {
     apiBase: checkedAddress(raw.apiBase, 'apiBase'),
     cognitoDomain: checkedAddress(raw.cognitoDomain, 'cognitoDomain'),
     clientId: raw.clientId,
   };
+  if('recordActivity' in raw) parsed.recordActivity = raw.recordActivity;
+  return parsed;
 }

@@ -5,6 +5,8 @@
 
 import { state } from '../core/state.js';
 import { resolveUrl } from '../core/server-url.js';
+import { S3_EXPORT_ROUTE, S3_UPLOAD_ROUTE, requestEvent, routeTemplate } from '../core/activity-event.js';
+import { noteRequestFinished, noteRequestStarted, recordActivity } from '../core/activity-sink.js';
 
 // Not a relative path: timeline.html isn't served by timeline-api and is
 // opened separately, so relative fetch()es would resolve against the
@@ -43,12 +45,117 @@ export function serverUrl(url){
   return resolveUrl(API_BASE, url);
 }
 
+// One id per page load, sent with every request to our API as
+// x-timeline-session and kept with every activity record, so the page's
+// records and the server's log lines of one visit can be put together (plan
+// docs/plans/2026-10-02-activity-instrumentation.md §1). Never sent to S3.
+//
+// crypto.randomUUID exists only on secure pages (https, or this machine);
+// elsewhere a version-4 UUID is built from crypto.getRandomValues, which
+// every page has.
+function newSessionId(){
+  if(typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const hex = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+export const SESSION_ID = newSessionId();
+const SESSION_HEADER = 'x-timeline-session';
+
+// The answer's declared size in bytes, or undefined when it doesn't say.
+function contentLength(res){
+  const raw = res.headers.get('Content-Length');
+  if(raw === null) return undefined;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 0 ? n : undefined;
+}
+
+// Every request to our API goes through here: it adds the sign-in token (when
+// given) and the session id, tells the activity recorder a request is in
+// flight, and records the request (route with ids replaced by {id}, status,
+// time, and API Gateway's request id, which joins it to the server's log
+// lines). facts: extra fields for this route's record ({offset, limit} for
+// /detect, {scan} for /uploads). Resolves to fetch's Response; a request
+// that gets no answer is recorded with its error and the error is thrown on.
+export async function apiFetch(path, { method = 'GET', token = null, headers = {}, body, facts } = {}){
+  const sent = { ...headers, [SESSION_HEADER]: SESSION_ID };
+  if(token) sent['Authorization'] = `Bearer ${token}`;
+  const route = routeTemplate(path);
+  const started = Date.now();
+  noteRequestStarted();
+  try{
+    const res = await fetch(`${API_BASE}${path}`, { method, headers: sent, body });
+    recordActivity(requestEvent({
+      t: started, method, route, status: res.status, ms: Date.now() - started,
+      bytes: contentLength(res), requestId: res.headers.get('apigw-requestid'), facts,
+    }));
+    return res;
+  } catch(e){
+    recordActivity(requestEvent({
+      t: started, method, route, status: null, ms: Date.now() - started, requestId: null, error: e.message, facts,
+    }));
+    throw e;
+  } finally {
+    noteRequestFinished();
+  }
+}
+
+// Downloads the processed export from the signed link GET /export handed
+// back, reporting progress (see readBodyWithProgress). Not through apiFetch:
+// a signed S3 link gets no session header or token. Recorded as
+// "s3 GET export/…", the whole download counted as one request, body
+// included. Resolves to { res, text }, text null when the answer wasn't OK
+// (the body is then left unread, for describeFailure).
+export async function downloadSignedExport(url, onProgress){
+  const started = Date.now();
+  noteRequestStarted();
+  let res = null;
+  let received;
+  try{
+    res = await fetch(url);
+    const text = res.ok
+      ? await readBodyWithProgress(res, (loaded, total) => { received = loaded; onProgress(loaded, total); })
+      : null;
+    recordActivity(requestEvent({
+      t: started, method: 'GET', route: S3_EXPORT_ROUTE, status: res.status, ms: Date.now() - started,
+      bytes: received, requestId: null,
+    }));
+    return { res, text };
+  } catch(e){
+    recordActivity(requestEvent({
+      t: started, method: 'GET', route: S3_EXPORT_ROUTE, status: res ? res.status : null,
+      ms: Date.now() - started, requestId: null, error: e.message,
+    }));
+    throw e;
+  } finally {
+    noteRequestFinished();
+  }
+}
+
+// Sends one batch of activity records (infra/activity-recorder.js). Not
+// through apiFetch: sending records must not itself be recorded, nor count
+// as the page being busy. keepalive lets it finish after the page closes.
+export async function postActivityBatch(body, { token, keepalive }){
+  const res = await fetch(`${API_BASE}/activity`, {
+    method: 'POST',
+    keepalive,
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+      [SESSION_HEADER]: SESSION_ID,
+    },
+    body,
+  });
+  return { ok: res.ok, status: res.status };
+}
+
 // GET /uploads/{id}: whether the backend has finished processing an upload.
 // Resolves to the route's JSON; throws with the server's message otherwise.
 export async function fetchUploadStatus(token, uploadId){
-  const res = await fetch(`${API_BASE}/uploads/${encodeURIComponent(uploadId)}`, {
-    headers: { 'Authorization': `Bearer ${token}` },
-  });
+  const res = await apiFetch(`/uploads/${encodeURIComponent(uploadId)}`, { token });
   if(!res.ok) throw new Error(await describeFailure('checking on the upload', res));
   return res.json();
 }
@@ -73,6 +180,12 @@ export function signedInLabel(){
   return REAL_LOGIN ? REAL_LOGIN.label() : Promise.resolve(null);
 }
 
+// The token of the last sign-in, without asking for a new one, or null:
+// what the activity recorder sends its batches with.
+export function lastAuthToken(){
+  return AUTH_TOKEN;
+}
+
 // Forgets the login, so the next request signs in again.
 export function clearAuthToken(){
   AUTH_TOKEN = null;
@@ -93,7 +206,7 @@ export async function ensureAuthToken(sub){
   }
   if(AUTH_TOKEN) return AUTH_TOKEN;
   if(!sub) throw new Error('enter a dev login name first');
-  const res = await fetch(`${API_BASE}/_dev/login`, {
+  const res = await apiFetch('/_dev/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sub }),
@@ -132,18 +245,38 @@ export async function describeFailure(what, res){
 // xhr.upload.onprogress and its streaming request bodies aren't portable --
 // so the one request that carries the file body uses XMLHttpRequest. Every
 // other call in the load path stays on fetch.
+//
+// The url is a signed S3 link, so no session header or token goes with it.
+// Recorded as "s3 PUT raw/…" (the key and signature are never recorded),
+// with the bytes sent.
 export function putWithProgress(url, body, onProgress){
+  const started = Date.now();
+  let sentBytes;
+  const finish = (status, error) => {
+    noteRequestFinished();
+    recordActivity(requestEvent({
+      t: started, method: 'PUT', route: S3_UPLOAD_ROUTE, status, ms: Date.now() - started,
+      bytes: sentBytes, requestId: null, error,
+    }));
+  };
+  noteRequestStarted();
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('PUT', url);
     xhr.upload.onprogress = (e) => {
-      if(e.lengthComputable) onProgress(e.loaded, e.total);
+      if(e.lengthComputable){
+        sentBytes = e.loaded;
+        onProgress(e.loaded, e.total);
+      }
     };
-    xhr.onload = () => resolve({ ok: xhr.status >= 200 && xhr.status < 300, status: xhr.status, text: xhr.responseText });
+    xhr.onload = () => {
+      finish(xhr.status);
+      resolve({ ok: xhr.status >= 200 && xhr.status < 300, status: xhr.status, text: xhr.responseText });
+    };
     // Both fire for genuine transport failures; reject with something the
     // caller's TypeError hint can still recognize as "couldn't reach it".
-    xhr.onerror = () => reject(new TypeError('Failed to fetch'));
-    xhr.onabort = () => reject(new TypeError('upload aborted'));
+    xhr.onerror = () => { finish(null, 'Failed to fetch'); reject(new TypeError('Failed to fetch')); };
+    xhr.onabort = () => { finish(null, 'upload aborted'); reject(new TypeError('upload aborted')); };
     xhr.send(body);
   });
 }
@@ -198,9 +331,10 @@ export async function patchFlagsToBackend(msg, values){
     return { outcome: SaveOutcome.NO_SERVER_ID };
   }
   try{
-    const res = await fetch(`${API_BASE}/conversations/${conv.uuid}/messages/${rawMsg.uuid}/flags`, {
+    const res = await apiFetch(`/conversations/${conv.uuid}/messages/${rawMsg.uuid}/flags`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AUTH_TOKEN}` },
+      token: AUTH_TOKEN,
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...values, handle }),
     });
     if(res.status === 403) return { outcome: SaveOutcome.STALE_PAGE };

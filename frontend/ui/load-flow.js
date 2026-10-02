@@ -9,7 +9,7 @@ import { parseUploadedConversations } from '../core/export-format.js';
 import { attachFlags } from '../core/flags.js';
 import { formatBytes } from '../core/format.js';
 import { state } from '../core/state.js';
-import { API_BASE, clearAuthToken, describeFailure, ensureAuthToken, fetchUploadStatus, putWithProgress, readBodyWithProgress, serverUrl, signedInLabel, usesRealLogin } from '../infra/api-client.js';
+import { API_BASE, apiFetch, clearAuthToken, describeFailure, downloadSignedExport, ensureAuthToken, fetchUploadStatus, putWithProgress, serverUrl, signedInLabel, usesRealLogin } from '../infra/api-client.js';
 import { describeWait, waitForProcessing } from '../core/upload-wait.js';
 import { applyLocationHash } from './router.js';
 import { renderCalendar } from './views/calendar.js';
@@ -86,14 +86,12 @@ export async function tryRestoreSession(){
   }
   try{
     const token = await ensureAuthToken(document.getElementById('devLoginSub').value.trim());
-    const exportRes = await fetch(`${API_BASE}/export`, {
-      headers: { 'Authorization': `Bearer ${token}` },
-    });
+    const exportRes = await apiFetch('/export', { token });
     if(!exportRes.ok) return;
     const { export_url, flag_handles } = await exportRes.json();
-    const downloadRes = await fetch(serverUrl(export_url));
+    const { res: downloadRes, text } = await downloadSignedExport(serverUrl(export_url), () => {});
     if(!downloadRes.ok) return;
-    if(!applyExportText(await downloadRes.text(), flag_handles)) return;
+    if(!applyExportText(text, flag_handles)) return;
 
     showRestoredNotice(sub);
     applyLocationHash();
@@ -115,11 +113,14 @@ async function runDetectionPass(token){
   const label = document.getElementById('loadProgressLabel');
   let offset = 0;
   let detected = 0;
+  const limit = 5;
   for(;;){
-    const res = await fetch(`${API_BASE}/detect`, {
+    const res = await apiFetch('/detect', {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ offset, limit: 5 }),
+      token,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ offset, limit }),
+      facts: { offset, limit },
     });
     if(!res.ok) throw new Error(await describeFailure('scanning your messages', res));
     const body = await res.json();
@@ -158,10 +159,7 @@ export async function handleLoadClick(){
     setLoadStatus('Sending your file…');
     setLoadProgressIndeterminate('Reading the file…');
     const rawText = await convFile.text();
-    const createRes = await fetch(`${API_BASE}/uploads`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${token}` },
-    });
+    const createRes = await apiFetch('/uploads', { method: 'POST', token, facts: { scan: runDetection } });
     if(!createRes.ok) throw new Error(await describeFailure('starting the upload', createRes));
     const { upload_id, upload_url } = await createRes.json();
 
@@ -220,17 +218,16 @@ export async function handleLoadClick(){
       setLoadProgressIndeterminate('Processing on the server…');
     }
 
-    const exportRes = await fetch(`${API_BASE}/export`, {
-      headers: { 'Authorization': `Bearer ${token}` },
-    });
+    const exportRes = await apiFetch('/export', { token });
     if(!exportRes.ok) throw new Error(await describeFailure('reading back the processed export', exportRes));
     const { export_url, flag_handles } = await exportRes.json();
 
-    const downloadRes = await fetch(serverUrl(export_url));
-    if(!downloadRes.ok) throw new Error(await describeFailure('downloading the processed export', downloadRes));
     const downloadEta = makeRateEstimator(3000);
-    setLoadProgressMeasured();
-    const text = await readBodyWithProgress(downloadRes, (loaded, total) => {
+    // The bar becomes a measured one once the download's bytes start
+    // arriving, as it did when this read the body itself.
+    let measuring = false;
+    const { res: downloadRes, text } = await downloadSignedExport(serverUrl(export_url), (loaded, total) => {
+      if(!measuring){ measuring = true; setLoadProgressMeasured(); }
       if(total){
         const pct = Math.round((loaded / total) * 100);
         uploadFill.style.width = pct + '%';
@@ -244,6 +241,7 @@ export async function handleLoadClick(){
         uploadLabel.textContent = `Receiving your processed timeline — ${formatBytes(loaded)} so far`;
       }
     });
+    if(!downloadRes.ok) throw new Error(await describeFailure('downloading the processed export', downloadRes));
 
     setLoadProgressIndeterminate('Preparing the timeline…');
 
