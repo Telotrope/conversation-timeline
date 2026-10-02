@@ -55,6 +55,21 @@ in either guide.
    page report a 401 even when processing succeeds; and the Rust build folder grows to about 30 GB
    and filled the disk on 2026-10-02 (`cargo clean` in `backend/` frees it).
 
+## Hosting the page (moved here from the page-hosting plan's §4, 2026-10-02)
+
+The user moved this from [2026-10-02-page-hosting.md](2026-10-02-page-hosting.md) so all deployment
+documentation is written together, after that plan has been tested on a real stack.
+
+- **First-time setup (README):** deploying with `HostPage=on`, optionally `PageDomain` (e.g.
+  `howangryami.telotrope.ai`) and `AlsoAllowLocalPage=on` for a dev stack; the two `CNAME`
+  records added by hand at Porkbun (certificate validation while the deploy waits, then the
+  domain → the `PageDnsTarget` output); running `scripts/publish-page.sh <stage>` the first time.
+- **Repeated work (`OPERATING.md`):** run `scripts/publish-page.sh <stage>` after every page
+  change, and after every redeploy that changes the stack's outputs (the settings file is
+  rebuilt from them). Consider whether the redeploy script should run it.
+- **The migration plan's C30:** re-tag it `[OPEN, cross-plan]` pointing at the page-hosting plan;
+  `[RESOLVED]` once that plan's deployment checks H1–H10 pass.
+
 ## Directions for the rewrite
 
 - Run the reuse check: existing scripts in [scripts/](../../scripts/) (`check-template.sh`,

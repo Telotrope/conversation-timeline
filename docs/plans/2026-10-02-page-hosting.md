@@ -1,6 +1,6 @@
 # Hosting the page (closing the migration plan's C30)
 
-**Status:** draft, awaiting review. No code written.
+**Status:** approved 2026-10-02 (pay-as-you-go pricing; §4's documentation moved to the deployment operating guide plan).
 
 ## Why
 
@@ -173,8 +173,8 @@ In [infra/template.yaml](../../infra/template.yaml):
   rule rather than failing midway.
 - `Aliases: [PageDomain]` and the certificate on `PageDistribution`.
 
-A deploy with a new `PageDomain` pauses until the certificate is validated. The steps, written
-into [infra/README.md](../../infra/README.md) (§4):
+A deploy with a new `PageDomain` pauses until the certificate is validated. The steps, to be written
+up by the deployment operating guide plan (§4):
 
 1. While the stack is creating the certificate, read the validation record (a `CNAME` name and
    value) from the CloudFormation events or the Certificate Manager console. I recall that
@@ -224,13 +224,12 @@ never contains the tag, so local development is unchanged.
 Each failing step stops the script with the AWS CLI's own message (`set -euo pipefail`, as the
 existing scripts do).
 
-### §4. Documentation
+### §4. Documentation: moved
 
-- [infra/README.md](../../infra/README.md): a "Hosting the page" step (deploy with `HostPage=on`
-  and optionally `PageDomain` and `AlsoAllowLocalPage`, add the two Porkbun records, run
-  `publish-page.sh`).
-- Migration plan C30: re-tagged `[OPEN, cross-plan]` and pointed here. When this plan's
-  deployment checks pass, it becomes `[RESOLVED]`.
+At your direction, the deployment instructions for hosting (the README/`OPERATING.md` steps and the
+Porkbun records) and the migration plan's C30 re-tag are in
+[2026-10-02-deployment-operating-guide.md](2026-10-02-deployment-operating-guide.md), so all
+deployment documentation is written together after this plan is tested on a real stack.
 
 ## Tests
 
@@ -332,12 +331,12 @@ documentation and did not re-read it. **Mitigation in plan:** publishing always 
 the edge side is safe either way. **Open:** deployment check H5. If browsers cache anyway, fall
 back to `MinTTL` 0.
 
-### C8 [OPEN]: Pay-as-you-go has no spending cap under a traffic flood
-Beyond 10 million requests and 1 TB a month, charges are per use. The flat-rate plans cap the
-bill, but the free one's over-limit behavior is undocumented and Free Tier accounts can't use it.
-**Mitigation in plan:** the existing $10 budget alert ([infra/README.md](../../infra/README.md)).
-**Open:** switching to a flat-rate plan (subscribable from CloudFormation since September 2026).
-Trigger: the budget alert fires, or before public launch.
+### C8 [RESOLVED]: Pay-as-you-go has no spending cap under a traffic flood
+Original concern: beyond 10 million requests and 1 TB a month, charges are per use. The flat-rate
+plans cap the bill, but the free one's over-limit behavior is undocumented and Free Tier accounts
+can't use it. **Resolution:** you decided against the flat-rate plan (2026-10-02). The template
+uses pay-as-you-go, which needs no subscription resource; the existing $10 budget alert
+([infra/README.md](../../infra/README.md)) is the warning.
 
 ### C9 [RESOLVED]: GitHub Pages looked like the cheapest, simplest option
 Original concern: it was the first suggestion in conversation. **Resolution:** its terms forbid
