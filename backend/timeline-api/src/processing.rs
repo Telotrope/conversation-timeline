@@ -29,7 +29,7 @@ use timeline_core::flags::criticism::detect_critical;
 use timeline_core::ports::conversations::{ConversationSummary, ConversationSummaryStore};
 use timeline_core::ports::errors::{ObjectStoreError, StoreError};
 use timeline_core::ports::ids::{UploadId, UserId};
-use timeline_core::model::{MessageId, Sender};
+use timeline_core::model::{ConversationId, MessageId, Sender};
 use timeline_core::ports::message_flags::{FlagOverrides, FlagSet, UserFlagWriter};
 use timeline_core::ports::object_store::ObjectStore;
 use timeline_core::ports::uploads::{raw_object_key, UploadOutcome, UploadOutcomeStore};
@@ -44,6 +44,23 @@ pub enum ProcessingError {
     /// A message's `_claude_timeline_user` field is not a review this
     /// project wrote: not an object of optional caps/critical/angry booleans.
     ReviewField { message_id: MessageId, error: serde_json::Error },
+    /// Storing one of the reviews embedded in the file failed. Numbered from
+    /// 1 in the order they're saved, so a log line says how far it got
+    /// (plan `2026-10-02-upload-processing-failures.md` §1a).
+    SavingReview {
+        number: usize,
+        total: usize,
+        conversation_id: ConversationId,
+        message_id: MessageId,
+        source: StoreError,
+    },
+    /// Storing one conversation's summary failed; numbered like `SavingReview`.
+    SavingSummary {
+        number: usize,
+        total: usize,
+        conversation_id: ConversationId,
+        source: StoreError,
+    },
 }
 
 impl fmt::Display for ProcessingError {
@@ -58,6 +75,12 @@ impl fmt::Display for ProcessingError {
             ProcessingError::ReviewField { message_id, error } => {
                 write!(f, "message {message_id} has an unreadable _claude_timeline_user review: {error}")
             }
+            ProcessingError::SavingReview { number, total, conversation_id, message_id, source } => {
+                write!(f, "saving review {number} of {total} (conversation {conversation_id}, message {message_id}): {source}")
+            }
+            ProcessingError::SavingSummary { number, total, conversation_id, source } => {
+                write!(f, "saving conversation summary {number} of {total} (conversation {conversation_id}): {source}")
+            }
         }
     }
 }
@@ -70,6 +93,8 @@ impl std::error::Error for ProcessingError {
             ProcessingError::Store(e) => Some(e),
             ProcessingError::ObjectStore(e) => Some(e),
             ProcessingError::ReviewField { error, .. } => Some(error),
+            ProcessingError::SavingReview { source, .. } => Some(source),
+            ProcessingError::SavingSummary { source, .. } => Some(source),
         }
     }
 }
@@ -171,21 +196,38 @@ pub async fn process_upload(
             }
         }
     }
-    for (conversation_id, message_id, review) in reviews {
+    let total = reviews.len();
+    for (index, (conversation_id, message_id, review)) in reviews.into_iter().enumerate() {
         user_flag_writer
             .set_user_flags(user_id, conversation_id, message_id, review)
-            .await?;
+            .await
+            .map_err(|source| ProcessingError::SavingReview {
+                number: index + 1,
+                total,
+                conversation_id,
+                message_id,
+                source,
+            })?;
     }
 
-    let mut conversation_ids = Vec::with_capacity(parsed.conversations.len());
-    for conversation in &parsed.conversations {
+    let total = parsed.conversations.len();
+    let mut conversation_ids = Vec::with_capacity(total);
+    for (index, conversation) in parsed.conversations.iter().enumerate() {
         let summary = ConversationSummary {
             conversation_id: conversation.uuid,
             upload_id,
             name: conversation.name.clone(),
             message_count: conversation.chat_messages.len(),
         };
-        conversation_summary_store.put(user_id, summary).await?;
+        conversation_summary_store
+            .put(user_id, summary)
+            .await
+            .map_err(|source| ProcessingError::SavingSummary {
+                number: index + 1,
+                total,
+                conversation_id: conversation.uuid,
+                source,
+            })?;
         conversation_ids.push(conversation.uuid);
     }
 
