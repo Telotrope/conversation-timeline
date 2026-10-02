@@ -448,7 +448,7 @@ run, raise the limit with AWS before recording is left on.
 
 ### C11 [RESOLVED]: submitted text may contain words from the user's conversations
 Original concern: recorded search text could carry conversation words into the logs.
-**Resolution:** only text the user submits is recorded, capped at 80 characters, kept about a day
+**Resolution:** only text the user submits is recorded, capped at 80 characters, kept about a day (7 days since the user chose that retention)
 ([§9 (line 299)](#L299)); with today's page, that is only Enter in a search box.
 
 ### C12 [OPEN]: the cost figures are estimates
