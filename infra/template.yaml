@@ -520,23 +520,41 @@ Resources:
       AccessLogSettings:
         DestinationArn: !GetAtt ApiAccessLogGroup.Arn
         Format: '{"requestId":"$context.requestId","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","routeKey":"$context.routeKey","path":"$context.path","status":"$context.status","responseLatency":"$context.responseLatency","integrationLatency":"$context.integrationLatency","authorizerError":"$context.authorizer.error","errorMessage":"$context.error.message"}'
-      CorsConfiguration:
-        # The page's origin (E10): the same list as the bucket's CorsRules.
-        AllowOrigins: !If
-          - HostingPage
-          - !If
-            - AllowsLocalPage
-            - - !Sub ["https://${Host}", {Host: !If [HasPageDomain, !Ref PageDomain, !GetAtt PageDistribution.DomainName]}]
+      # API Gateway refuses to import a definition it has warnings about,
+      # instead of quietly keeping its old settings: on 2026-10-02 a CORS
+      # block it couldn't use was ignored (docs/analysis/
+      # 2026-10-02-page-hosting-deployment.md).
+      FailOnWarnings: true
+      # The page's origin (E10): the same list as the bucket's CorsRules.
+      # The whole block is chosen by condition, three full copies, because
+      # SAM takes a conditional AllowOrigins to be the entire CORS block and
+      # drops the other settings (samtranslator open_api.py, add_cors).
+      # x-timeline-session: the page's session id (the activity plan's §1).
+      # ExposeHeaders: so the page can read API Gateway's id for each of its
+      # requests and the timeline can match them (the activity plan's §5).
+      CorsConfiguration: !If
+        - HostingPage
+        - !If
+          - AllowsLocalPage
+          - AllowOrigins:
+              - !Sub ["https://${Host}", {Host: !If [HasPageDomain, !Ref PageDomain, !GetAtt PageDistribution.DomainName]}]
               - !Join ["", [!Select [0, !Split ["/", !Ref FrontendUrl]], "//", !Select [2, !Split ["/", !Ref FrontendUrl]]]]
-            - - !Sub ["https://${Host}", {Host: !If [HasPageDomain, !Ref PageDomain, !GetAtt PageDistribution.DomainName]}]
-          - - !Join ["", [!Select [0, !Split ["/", !Ref FrontendUrl]], "//", !Select [2, !Split ["/", !Ref FrontendUrl]]]]
-        # x-timeline-session: the page's session id (the activity plan's §1).
-        AllowHeaders: [authorization, content-type, x-timeline-session]
-        AllowMethods: [GET, POST, PATCH]
-        # So the page can read API Gateway's id for each of its requests
-        # and the timeline can match them (the activity plan's §5).
-        ExposeHeaders: [apigw-requestid]
-        MaxAge: 600
+            AllowHeaders: [authorization, content-type, x-timeline-session]
+            AllowMethods: [GET, POST, PATCH]
+            ExposeHeaders: [apigw-requestid]
+            MaxAge: 600
+          - AllowOrigins:
+              - !Sub ["https://${Host}", {Host: !If [HasPageDomain, !Ref PageDomain, !GetAtt PageDistribution.DomainName]}]
+            AllowHeaders: [authorization, content-type, x-timeline-session]
+            AllowMethods: [GET, POST, PATCH]
+            ExposeHeaders: [apigw-requestid]
+            MaxAge: 600
+        - AllowOrigins:
+            - !Join ["", [!Select [0, !Split ["/", !Ref FrontendUrl]], "//", !Select [2, !Split ["/", !Ref FrontendUrl]]]]
+          AllowHeaders: [authorization, content-type, x-timeline-session]
+          AllowMethods: [GET, POST, PATCH]
+          ExposeHeaders: [apigw-requestid]
+          MaxAge: 600
       Auth:
         Authorizers:
           CognitoAuthorizer:
