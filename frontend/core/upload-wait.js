@@ -26,9 +26,11 @@ export const GIVE_UP_AFTER_MS = 10 * 60 * 1000;
 // failed, or after GIVE_UP_AFTER_MS.
 export async function waitForProcessing({ fetchStatus, sleep, now, onAnswer = () => {} }){
   const started = now();
+  let last = null;
   for(;;){
     const answer = await fetchStatus();
     onAnswer(answer);
+    last = answer;
     if(answer.status === 'ready') return;
     if(answer.status === 'failed'){
       throw new Error(`the server couldn't process the file: ${answer.reason}`);
@@ -38,7 +40,11 @@ export async function waitForProcessing({ fetchStatus, sleep, now, onAnswer = ()
     }
     const elapsed = now() - started;
     if(elapsed >= GIVE_UP_AFTER_MS){
-      throw new Error('the server is still processing the file after 10 minutes; try reloading later');
+      // Not "still processing": after this long the server may have given
+      // up without saying so. Report only what it last said.
+      throw new Error(
+        `No answer from the server after 10 minutes. Its last status was: ${describeWait(last, elapsed)}. `
+        + 'Reload later to check again.');
     }
     await sleep(elapsed < FAST_PERIOD_MS ? FAST_INTERVAL_MS : SLOW_INTERVAL_MS);
   }
