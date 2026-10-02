@@ -13,6 +13,9 @@ export function isDeployName(name){
   return typeof name === 'string' && /^[a-z0-9-]{1,32}$/.test(name);
 }
 
+// A version as `git describe --always --dirty` writes it, e.g. 1a2b3c4-dirty.
+const PAGE_VERSION = /^[0-9A-Za-z._-]{1,64}$/;
+
 function checkedAddress(value, field){
   let url;
   try{ url = new URL(value); } catch(e){
@@ -34,8 +37,10 @@ function checkedAddress(value, field){
 //
 // recordActivity (optional): whether the page records your activity (plan
 // docs/plans/2026-10-02-activity-instrumentation.md §4). Absent means off.
-// It is returned only when the file has it, so a settings file without it
-// reads back exactly as before; readers treat absent as false.
+// pageVersion (optional): the page code's version (its commit, from `git
+// describe`), carried on every activity record; absent means unknown.
+// Each is returned only when the file has it, so a settings file without
+// them reads back exactly as before; readers treat absent as off / unknown.
 export function parseDeployConfig(text){
   let raw;
   try{ raw = JSON.parse(text); } catch(e){
@@ -55,11 +60,15 @@ export function parseDeployConfig(text){
   if('recordActivity' in raw && typeof raw.recordActivity !== 'boolean'){
     throw new Error(`deployment settings: recordActivity must be true or false: ${JSON.stringify(raw.recordActivity)}`);
   }
+  if('pageVersion' in raw && !(typeof raw.pageVersion === 'string' && PAGE_VERSION.test(raw.pageVersion))){
+    throw new Error(`deployment settings: pageVersion must be 1-64 letters, digits, dots, underscores or hyphens: ${JSON.stringify(raw.pageVersion)}`);
+  }
   const parsed = {
     apiBase: checkedAddress(raw.apiBase, 'apiBase'),
     cognitoDomain: checkedAddress(raw.cognitoDomain, 'cognitoDomain'),
     clientId: raw.clientId,
   };
   if('recordActivity' in raw) parsed.recordActivity = raw.recordActivity;
+  if('pageVersion' in raw) parsed.pageVersion = raw.pageVersion;
   return parsed;
 }

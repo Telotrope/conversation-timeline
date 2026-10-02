@@ -12,6 +12,7 @@
 // the clock is passed in, so tests can run it without either.
 
 import { formatDuration } from './format.js';
+import { PageError } from './page-error.js';
 
 export const FAST_INTERVAL_MS = 1000;
 export const FAST_PERIOD_MS = 10 * 1000;
@@ -35,18 +36,18 @@ export async function waitForProcessing({ fetchStatus, sleep, now, onAnswer = ()
     last = answer;
     if(answer.status === 'ready') return;
     if(answer.status === 'failed'){
-      throw new Error(`the server couldn't process the file: ${answer.reason}`);
+      throw new PageError(`the server couldn't process the file: ${answer.reason}`, 'processing_failed');
     }
     if(answer.status !== 'processing'){
-      throw new Error(`the server answered with an unknown upload status: ${JSON.stringify(answer.status)}`);
+      throw new PageError(`the server answered with an unknown upload status: ${JSON.stringify(answer.status)}`, 'unknown_status');
     }
     const elapsed = now() - started;
     if(elapsed >= GIVE_UP_AFTER_MS){
       // Not "still processing": after this long the server may have given
       // up without saying so. Report only what it last said.
-      throw new Error(
+      throw new PageError(
         `No answer from the server after 10 minutes. Its last status was: ${describeWait(last, elapsed)}. `
-        + 'Reload later to check again.');
+        + 'Reload later to check again.', 'timed_out');
     }
     await sleep(elapsed < FAST_PERIOD_MS ? FAST_INTERVAL_MS : SLOW_INTERVAL_MS);
   }
@@ -60,15 +61,28 @@ export async function waitForProcessing({ fetchStatus, sleep, now, onAnswer = ()
 export function describeWait(answer, elapsedMs){
   const clock = formatDuration(Math.floor(elapsedMs / 1000));
   const { attempt, max_attempts: max, last_error: error } = answer;
-  if(error && attempt && attempt > 1){
-    return `The server hit an error (${error}) and is trying again automatically: attempt ${attempt} of ${max}. `
-      + `AWS waits 1–2 minutes between attempts. — ${clock}`;
+  switch(waitMessageId(answer)){
+    case 'wait.retrying':
+      return `The server hit an error (${error}) and is trying again automatically: attempt ${attempt} of ${max}. `
+        + `AWS waits 1–2 minutes between attempts. — ${clock}`;
+    case 'wait.will_retry':
+      return `The server hit an error (${error}) on attempt ${attempt} of ${max} and will try again automatically `
+        + `in 1–2 minutes. — ${clock}`;
+    case 'wait.error': return `The server hit an error (${error}). — ${clock}`;
+    case 'wait.processing': return `Processing on the server — ${clock}`;
+    default: return `Waiting for the server to start — ${clock}`;
   }
-  if(error && attempt){
-    return `The server hit an error (${error}) on attempt ${attempt} of ${max} and will try again automatically `
-      + `in 1–2 minutes. — ${clock}`;
-  }
-  if(error) return `The server hit an error (${error}). — ${clock}`;
-  if(attempt) return `Processing on the server — ${clock}`;
-  return `Waiting for the server to start — ${clock}`;
+}
+
+// Which of describeWait's lines an answer gets, as a fixed identifier for
+// the activity log (which records the identifier and the attempt numbers,
+// never the line, whose error text comes from the server). describeWait
+// chooses its wording by this, so the two can't disagree.
+export function waitMessageId(answer){
+  const { attempt, last_error: error } = answer;
+  if(error && attempt && attempt > 1) return 'wait.retrying';
+  if(error && attempt) return 'wait.will_retry';
+  if(error) return 'wait.error';
+  if(attempt) return 'wait.processing';
+  return 'wait.waiting';
 }

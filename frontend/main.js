@@ -6,6 +6,7 @@
 import { buildBlocks } from './core/blocks.js';
 import { attachFlags } from './core/flags.js';
 import { state } from './core/state.js';
+import { noteMainShown } from './core/activity-sink.js';
 import { clearAuthToken } from './infra/api-client.js';
 import { decideActivityRecording, startActivityCapture } from './ui/activity-capture.js';
 import { installActivityListeners } from './ui/activity-listeners.js';
@@ -29,9 +30,10 @@ installActivityListeners({ win: window, doc: document, ...startActivityCapture()
 document.getElementById('loadBtn').addEventListener('click', handleLoadClick);
 document.getElementById('loadDifferentBtn').addEventListener('click', ()=>{
   document.getElementById('mainContent').style.display = 'none';
+  noteMainShown(false);
   document.getElementById('loadScreen').style.display = '';
   document.getElementById('loadConvFile').value = '';
-  setLoadStatus('');
+  setLoadStatus(null);
   // Asking for a different file is also how you say "stop bringing the old
   // one back", so the remembered session goes with it. Without this, the
   // next reload would silently restore exactly what you just dismissed.
@@ -77,7 +79,7 @@ document.getElementById('cognitoSignOutBtn').addEventListener('click', signOut);
 // backend must not hold the page hostage while it decides there is nothing to
 // restore. Restoring waits for the sign-in to be set up (instant without a
 // chosen deployment), since it needs to know who you are.
-initLogin().then(({ recordActivity }) => {
-  decideActivityRecording(recordActivity);
+initLogin().then(({ recordActivity, pageVersion }) => {
+  decideActivityRecording(recordActivity, pageVersion);
   return tryRestoreSession();
 });

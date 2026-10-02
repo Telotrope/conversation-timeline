@@ -9,8 +9,10 @@ import { parseUploadedConversations } from '../core/export-format.js';
 import { attachFlags } from '../core/flags.js';
 import { formatBytes } from '../core/format.js';
 import { state } from '../core/state.js';
-import { API_BASE, apiFetch, clearAuthToken, describeFailure, downloadSignedExport, ensureAuthToken, fetchUploadStatus, putWithProgress, serverUrl, signedInLabel, usesRealLogin } from '../infra/api-client.js';
-import { describeWait, waitForProcessing } from '../core/upload-wait.js';
+import { errorKindOf, errorStatusOf, PageError } from '../core/page-error.js';
+import { noteMainShown } from '../core/activity-sink.js';
+import { API_BASE, apiFetch, clearAuthToken, downloadSignedExport, ensureAuthToken, fetchUploadStatus, putWithProgress, requestFailure, serverUrl, signedInLabel, usesRealLogin } from '../infra/api-client.js';
+import { waitForProcessing, waitMessageId } from '../core/upload-wait.js';
 import { applyLocationHash } from './router.js';
 import { renderCalendar } from './views/calendar.js';
 import { renderConvList } from './views/conversations.js';
@@ -47,11 +49,12 @@ function applyExportText(text, flagHandles){
 
   attachFlags();
   if(embeddedCount > 0){
-    setSaveStatus(`Loaded ${embeddedCount} of your confirmed flag${embeddedCount===1?'':'s'} from the server.`);
+    setSaveStatus('flags.loaded', { count: embeddedCount });
   }
 
   document.getElementById('loadScreen').style.display = 'none';
   document.getElementById('mainContent').style.display = '';
+  noteMainShown(true);
 
   renderSubtitle();
   renderCalendar();
@@ -122,7 +125,7 @@ async function runDetectionPass(token){
       body: JSON.stringify({ offset, limit }),
       facts: { offset, limit },
     });
-    if(!res.ok) throw new Error(await describeFailure('scanning your messages', res));
+    if(!res.ok) throw await requestFailure('scanning your messages', res);
     const body = await res.json();
     detected += body.messages_detected;
 
@@ -145,22 +148,22 @@ export async function handleLoadClick(){
   const runDetection = document.getElementById('autoDetectCheckbox').checked;
 
   if(!convFile){
-    setLoadStatus('Choose a conversations.json file first.', true);
+    setLoadStatus('load.choose_file');
     hideLoadProgress();
     return;
   }
 
   try{
     showLoadProgress();
-    setLoadStatus('Logging in…');
-    setLoadProgressIndeterminate('Signing in…');
+    setLoadStatus('load.signing_in');
+    setLoadProgressIndeterminate('progress.signing_in');
     const token = await ensureAuthToken(document.getElementById('devLoginSub').value.trim());
 
-    setLoadStatus('Sending your file…');
-    setLoadProgressIndeterminate('Reading the file…');
+    setLoadStatus('load.sending');
+    setLoadProgressIndeterminate('progress.reading_file');
     const rawText = await convFile.text();
     const createRes = await apiFetch('/uploads', { method: 'POST', token, facts: { scan: runDetection } });
-    if(!createRes.ok) throw new Error(await describeFailure('starting the upload', createRes));
+    if(!createRes.ok) throw await requestFailure('starting the upload', createRes);
     const { upload_id, upload_url } = await createRes.json();
 
     const uploadFill = document.getElementById('loadProgressFill');
@@ -175,7 +178,7 @@ export async function handleLoadClick(){
         `Sending your file — ${formatBytes(loaded)} of ${formatBytes(total)} (${pct}%)` + (eta ? ` — ${eta}` : '');
     });
     if(!putRes.ok){
-      throw new Error(`uploading the file failed (${putRes.status})${putRes.text ? ': ' + putRes.text : ''}`);
+      throw new PageError(`uploading the file failed (${putRes.status})${putRes.text ? ': ' + putRes.text : ''}`, 'server_error', putRes.status);
     }
 
     // The bytes being sent is not the end of the wait: the server still has
@@ -188,12 +191,17 @@ export async function handleLoadClick(){
     // one failed; the line under the bar shows that with a clock that ticks
     // every second, so a retry doesn't look like a hang (plan
     // 2026-10-02-upload-processing-failures.md §3).
-    setLoadStatus('Processing on the server…');
-    setLoadProgressIndeterminate('Processing on the server…');
+    setLoadStatus('load.processing');
+    setLoadProgressIndeterminate('progress.processing');
     const waitStarted = Date.now();
     let lastAnswer = null;
     const showWait = () => {
-      if(lastAnswer) setLoadProgressLabel(describeWait(lastAnswer, Date.now() - waitStarted));
+      if(lastAnswer){
+        setLoadProgressLabel(waitMessageId(lastAnswer), {
+          answer: lastAnswer, elapsedMs: Date.now() - waitStarted,
+          attempt: lastAnswer.attempt, max_attempts: lastAnswer.max_attempts,
+        });
+      }
     };
     const clock = setInterval(showWait, 1000);
     try{
@@ -213,13 +221,13 @@ export async function handleLoadClick(){
     // here has measured how long that takes, so it is never implied by the
     // act of uploading.
     if(runDetection){
-      setLoadStatus('Scanning your messages for flags…');
+      setLoadStatus('load.scanning');
       await runDetectionPass(token);
-      setLoadProgressIndeterminate('Processing on the server…');
+      setLoadProgressIndeterminate('progress.processing');
     }
 
     const exportRes = await apiFetch('/export', { token });
-    if(!exportRes.ok) throw new Error(await describeFailure('reading back the processed export', exportRes));
+    if(!exportRes.ok) throw await requestFailure('reading back the processed export', exportRes);
     const { export_url, flag_handles } = await exportRes.json();
 
     const downloadEta = makeRateEstimator(3000);
@@ -241,12 +249,12 @@ export async function handleLoadClick(){
         uploadLabel.textContent = `Receiving your processed timeline — ${formatBytes(loaded)} so far`;
       }
     });
-    if(!downloadRes.ok) throw new Error(await describeFailure('downloading the processed export', downloadRes));
+    if(!downloadRes.ok) throw await requestFailure('downloading the processed export', downloadRes);
 
-    setLoadProgressIndeterminate('Preparing the timeline…');
+    setLoadProgressIndeterminate('progress.preparing');
 
     if(!applyExportText(text, flag_handles)){
-      setLoadStatus('That file parsed, but contained no conversations — is it the right export?', true);
+      setLoadStatus('load.no_conversations');
       failLoadProgress();
       return;
     }
@@ -255,11 +263,13 @@ export async function handleLoadClick(){
     console.error(err);
     failLoadProgress();
     // A TypeError here (not an HTTP error response -- those are handled by
-    // describeFailure, in infra/api-client.js) means fetch() itself couldn't reach the
+    // requestFailure, in infra/api-client.js) means fetch() itself couldn't reach the
     // server at all -- almost always because it isn't running.
     const hint = err instanceof TypeError
       ? ` Is the backend running (cargo run -p timeline-api) at ${API_BASE}?`
       : '';
-    setLoadStatus('Could not load that file through the backend — ' + err.message + hint, true);
+    setLoadStatus('load.failed', {
+      detail: err.message, hint, status: errorStatusOf(err), error_kind: errorKindOf(err),
+    });
   }
 }

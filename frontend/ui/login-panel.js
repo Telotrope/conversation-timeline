@@ -8,34 +8,39 @@
 
 import { shownEvent } from '../core/activity-event.js';
 import { recordActivity } from '../core/activity-sink.js';
+import { errorKindOf } from '../core/page-error.js';
 import { setApiBase, useRealLogin } from '../infra/api-client.js';
 import { createCognitoLogin } from '../infra/cognito-login.js';
 import { chosenDeployName, loadDeployConfig } from '../infra/deploy-config-file.js';
+import { pageMessage, recordedValues } from './widgets/page-messages.js';
 
 let LOGIN = null;
 
-function show(signedIn, message, isError = false){
+// id: the sign-in line's message (ui/widgets/page-messages.js), shown with
+// its values and recorded for the activity log by identifier only: the
+// line can show the email address (plan
+// docs/plans/2026-10-02-activity-instrumentation.md §4, C8 and C17).
+function show(signedIn, id, values = {}){
+  const entry = pageMessage(id);
   const status = document.getElementById('cognitoLoginStatus');
-  status.textContent = message;
-  status.style.color = isError ? '#B0392F' : 'var(--ink-faint)';
+  status.textContent = entry.text(values);
+  status.style.color = entry.isError ? '#B0392F' : 'var(--ink-faint)';
   document.getElementById('cognitoSignInBtn').style.display = signedIn ? 'none' : '';
   document.getElementById('cognitoSignOutBtn').style.display = signedIn ? '' : 'none';
-  // Recorded as signed in or out only: the label itself shows the email
-  // address (plan docs/plans/2026-10-02-activity-instrumentation.md §4, C8).
-  // A failure's own message goes to the error record.
-  recordActivity(shownEvent('signIn', signedIn ? 'signed in' : 'signed out', isError));
-  if(isError) recordActivity(shownEvent('error', message, true));
+  recordActivity(shownEvent('signIn', id, entry.isError, recordedValues(entry, values)));
 }
 
 async function refresh(){
   const who = await LOGIN.signedInAs();
-  if(who) show(true, `Signed in as ${who}.`);
-  else show(false, 'Sign in to upload your export.');
+  if(who) show(true, 'signIn.signed_in', { who });
+  else show(false, 'signIn.signed_out');
 }
 
 // Sets up whichever sign-in applies. Resolves once a return from Cognito,
-// if this page load is one, has been completed, to { recordActivity }:
-// whether the page's activity is recorded (ui/activity-capture.js).
+// if this page load is one, has been completed, to { recordActivity,
+// pageVersion }: whether the page's activity is recorded
+// (ui/activity-capture.js), and the version its records carry ('local' for
+// local development, 'unknown' when a deployment's settings don't say).
 //
 // Local development (no deployment chosen) records, and sends to the local
 // backend, which logs the records to its output. This departs from the plan's
@@ -47,7 +52,7 @@ async function refresh(){
 export async function initLogin(){
   const tag = document.querySelector('meta[name="timeline-deploy"]');
   const name = chosenDeployName(tag ? tag.getAttribute('content') ?? '' : null);
-  if(name === null) return { recordActivity: true };
+  if(name === null) return { recordActivity: true, pageVersion: 'local' };
   document.getElementById('devLoginField').style.display = 'none';
   document.getElementById('cognitoLoginField').style.display = '';
   try{
@@ -57,13 +62,13 @@ export async function initLogin(){
     useRealLogin({ token: () => LOGIN.accessToken(), label: () => LOGIN.signedInAs() });
     await LOGIN.completeIfReturning();
     await refresh();
-    return { recordActivity: config.recordActivity === true };
+    return { recordActivity: config.recordActivity === true, pageVersion: config.pageVersion || 'unknown' };
   } catch(e){
     console.error(e);
     // Loading must not quietly use something else.
     useRealLogin({ token: async () => { throw e; }, label: async () => null });
-    show(false, `Signing in to "${name}" isn't working: ${e.message}`, true);
-    return { recordActivity: false };
+    show(false, 'signIn.failed', { name, detail: e.message, error_kind: errorKindOf(e) });
+    return { recordActivity: false, pageVersion: 'unknown' };
   }
 }
 
@@ -73,7 +78,7 @@ export async function signIn(){
     await LOGIN.signIn();
   } catch(e){
     console.error(e);
-    show(false, `Could not start signing in: ${e.message}`, true);
+    show(false, 'signIn.start_failed', { detail: e.message, error_kind: errorKindOf(e) });
   }
 }
 

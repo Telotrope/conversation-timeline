@@ -10,8 +10,8 @@
 
 let SINK = null;
 
-// sink: { record(event), requestStarted(), requestFinished() }, or null to
-// stop recording.
+// sink: { record(event), requestStarted(), requestFinished(),
+// tabShown(name), mainShown(shown) }, or null to stop recording.
 export function connectActivitySink(sink){
   SINK = sink;
 }
@@ -39,4 +39,15 @@ export function noteRequestStarted(){
 
 export function noteRequestFinished(){
   call('requestFinished');
+}
+
+// Which tab is shown (ui/navigation/tabs.js), and whether the tabs are shown
+// at all rather than the load screen. Every record carries the tab; told
+// here when it changes, the recorder never has to look it up on a click.
+export function noteTabShown(name){
+  call('tabShown', name);
+}
+
+export function noteMainShown(shown){
+  call('mainShown', shown);
 }

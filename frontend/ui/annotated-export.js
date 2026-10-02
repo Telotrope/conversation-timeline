@@ -14,7 +14,7 @@ import { setSaveStatus } from './widgets/status-indicators.js';
 // tags, and your corrections together.
 export function exportAnnotatedConversations(){
   if(!state.rawData){
-    setSaveStatus('No conversation data loaded to annotate.');
+    setSaveStatus('export.no_data');
     return;
   }
   // Mutate state.rawData directly rather than deep-cloning it first — for a
@@ -58,5 +58,5 @@ export function exportAnnotatedConversations(){
   a.download = 'conversations-with-flags.json';
   a.click();
   URL.revokeObjectURL(url);
-  setSaveStatus('Downloaded conversations-with-flags.json — load this file directly next time.');
+  setSaveStatus('export.downloaded');
 }

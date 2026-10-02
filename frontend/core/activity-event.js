@@ -2,19 +2,27 @@
 // (plan docs/plans/2026-10-02-activity-instrumentation.md §4). Pure: it
 // reads only the element or values it is handed, never the page itself.
 //
-// What an element description may hold is deliberately narrow: its tag, its
-// `id`, a short label (a button's text, a checkbox's label, a tab's name),
-// and, inside the parts of the page that show your conversations, a message
-// id and a column. Never text from table cells, message bodies, file names,
-// file contents or tokens: those parts of the page are described by where
-// the element is, not by what it says.
+// No wording from the page goes into a record (§4, C17): not button text,
+// labels, messages, table cells, message bodies, file names or contents,
+// tokens, or server error text. An element is described by its tag and its
+// stable attributes only (`id`, `name`, `data-tab`, `data-analysis`), and,
+// inside the parts of the page that show your conversations, by a message
+// id and a column. A message the page shows is recorded by a fixed
+// identifier; what it said is found from the page's code at the recorded
+// page version. The one exception is a text box's contents when you submit
+// it, which is what you typed, not the page's wording.
 //
-// Every string goes through cleanText: whitespace runs become one space,
-// control and invisible characters (zero-width, right-to-left overrides,
-// byte-order marks, NUL) are removed, and the result is capped.
+// Recording runs inside every click, so the click path avoids making
+// throwaway objects and strings where it can (plan C18): text that is
+// already clean is used as is, and tag names are looked up, not rebuilt.
+//
+// Every string from the page goes through cleanText: whitespace runs become
+// one space, control and invisible characters (zero-width, right-to-left
+// overrides, byte-order marks, NUL) are removed, and the result is capped.
 
-export const LABEL_CAP = 80;
-export const SHOWN_TEXT_CAP = 200;
+import { ERROR_KINDS } from './page-error.js';
+
+export const TEXT_CAP = 80;
 
 // The parts of the page whose text comes from your conversations: the review
 // table, the calendar's timeline, the conversation list and transcript, the
@@ -33,14 +41,16 @@ const WHITESPACE = /\s+/g;
 // characters (zero-width space and joiner, right-to-left override, byte-order
 // mark, soft hyphen).
 const INVISIBLE = /[\p{Cc}\p{Cf}]/gu;
+// Text that cleaning would change: anything but printable ASCII and single
+// spaces between words.
+const NEEDS_CLEANING = /[^\x21-\x7e ]| {2}|^ | $/;
 
 // Cleans and caps a piece of text. Not a string (null, a number) gives ''.
 // The cap counts characters, not UTF-16 units, so it never splits an emoji.
-export function cleanText(value, cap = LABEL_CAP){
+export function cleanText(value, cap = TEXT_CAP){
   if(typeof value !== 'string') return '';
+  if(value.length <= cap && !NEEDS_CLEANING.test(value)) return value;
   const cleaned = value.slice(0, cap * 4).replace(WHITESPACE, ' ').replace(INVISIBLE, '').trim();
-  // Most text is already short enough: splitting it into characters only
-  // when it might be too long keeps a click's recording cheap.
   if(cleaned.length <= cap) return cleaned;
   return Array.from(cleaned).slice(0, cap).join('');
 }
@@ -49,23 +59,27 @@ function attr(el, name){
   return el.getAttribute ? el.getAttribute(name) : null;
 }
 
+// Lower-case tag names, made once per tag rather than once per click.
+const TAGS = new Map();
+
 function tagOf(el){
-  return cleanText(String(el.tagName || '').toLowerCase(), 20);
+  const name = el.tagName;
+  if(typeof name !== 'string') return '';
+  let tag = TAGS.get(name);
+  if(tag === undefined){
+    tag = cleanText(name.toLowerCase(), 20);
+    TAGS.set(name, tag);
+  }
+  return tag;
 }
 
-// A control's visible name, for elements outside the conversation regions.
-// Only controls get one: a plain <div> or <p> can hold any text at all.
-function labelOf(el){
-  const tag = tagOf(el);
-  const aria = attr(el, 'aria-label');
-  if(aria) return cleanText(aria);
-  if(tag === 'button' || tag === 'a' || tag === 'label') return cleanText(el.textContent);
-  if(tag === 'input' && (el.type === 'checkbox' || el.type === 'radio')){
-    const label = el.closest ? el.closest('label') : null;
-    return label ? cleanText(label.textContent) : '';
-  }
-  return '';
+function firstWord(text){
+  const start = text.trimStart();
+  const space = start.indexOf(' ');
+  return space < 0 ? start : start.slice(0, space);
 }
+
+const APPROVE = /(?:^|\s)approve-btn(?:\s|$)/;
 
 // Where in a conversation region an element is, without its text: the flag
 // column a checkbox belongs to, the Approve button, a table cell's kind, or
@@ -73,17 +87,16 @@ function labelOf(el){
 // number, a day). `target` is the exact element under the pointer, whose
 // table cell names the column when `el` is the whole row.
 function columnOf(el, target){
-  if(el.dataset && el.dataset.type) return cleanText(el.dataset.type, 40);
-  if(el.dataset && el.dataset.flagType) return cleanText(el.dataset.flagType, 40);
-  const classes = String(el.className || '').split(' ').filter(Boolean);
-  if(classes.includes('approve-btn')) return 'approve';
+  const type = attr(el, 'data-type');
+  if(type) return cleanText(type, 40);
+  const flagType = attr(el, 'data-flag-type');
+  if(flagType) return cleanText(flagType, 40);
+  const classes = typeof el.className === 'string' ? el.className : '';
+  if(APPROVE.test(classes)) return 'approve';
   const cell = target.closest ? target.closest('td') : null;
-  const kind = (cell && cell !== el && cell.className) || classes[0] || '';
-  const position = el.dataset
-    ? el.dataset.idx ?? el.dataset.blockIdx ?? el.dataset.day ?? el.dataset.analysis
-    : undefined;
-  const name = String(kind).split(' ')[0];
-  return cleanText(position === undefined ? name : `${name}:${position}`, 40);
+  const kind = firstWord(cell && cell !== el && cell.className ? cell.className : classes);
+  const position = attr(el, 'data-idx') ?? attr(el, 'data-block-idx') ?? attr(el, 'data-day') ?? attr(el, 'data-analysis');
+  return cleanText(position === null ? kind : `${kind}:${position}`, 40);
 }
 
 function messageIdOf(el){
@@ -94,21 +107,24 @@ function messageIdOf(el){
 }
 
 // Describes an element for a click, change or submit record:
-// { tag, id?, label?, message_id?, column? }, absent keys left out.
+// { tag, id?, name?, tab?, analysis?, message_id?, column? }, absent keys
+// left out. `tab` and `analysis` are the element's data-tab and
+// data-analysis (a tab button, an analysis button).
 export function describeElement(target){
   const el = (target.closest && target.closest(ACTIONABLE)) || target;
   const out = { tag: tagOf(el) };
-  const id = cleanText(el.id || '');
-  if(id) out.id = id;
-  const inContent = el.closest ? el.closest(CONTENT_REGIONS) !== null : false;
-  if(inContent){
+  if(el.id) out.id = cleanText(el.id);
+  const name = attr(el, 'name');
+  if(name) out.name = cleanText(name);
+  const tab = attr(el, 'data-tab');
+  if(tab) out.tab = cleanText(tab);
+  const analysis = attr(el, 'data-analysis');
+  if(analysis) out.analysis = cleanText(analysis);
+  if(el.closest && el.closest(CONTENT_REGIONS) !== null){
     const messageId = messageIdOf(el);
     if(messageId) out.message_id = messageId;
     const column = columnOf(el, target);
     if(column) out.column = column;
-  } else {
-    const label = labelOf(el);
-    if(label) out.label = label;
   }
   return out;
 }
@@ -122,10 +138,14 @@ export function clickEvent(target){
 // deliberately not among them, so a password is never recorded.
 const TEXT_INPUT_TYPES = new Set(['text', 'search', 'email', 'url', 'tel', 'number', '']);
 
+function typeOf(el){
+  return typeof el.type === 'string' ? el.type.toLowerCase() : '';
+}
+
 export function isTextBox(el){
   const tag = tagOf(el);
   if(tag === 'textarea') return true;
-  return tag === 'input' && TEXT_INPUT_TYPES.has(String(el.type || '').toLowerCase());
+  return tag === 'input' && TEXT_INPUT_TYPES.has(typeOf(el));
 }
 
 // A change to a checkbox, a selector or the file chooser; null for anything
@@ -134,19 +154,23 @@ export function isTextBox(el){
 // be personal.
 export function changeEvent(target){
   const tag = tagOf(target);
-  const type = String(target.type || '').toLowerCase();
-  const base = { kind: 'change', target: describeElement(target) };
-  if(tag === 'input' && (type === 'checkbox' || type === 'radio')) return { ...base, value: Boolean(target.checked) };
-  if(tag === 'select') return { ...base, value: cleanText(String(target.value)) };
-  if(tag === 'input' && type === 'file'){
+  const type = typeOf(target);
+  let event = null;
+  if(tag === 'input' && (type === 'checkbox' || type === 'radio')){
+    event = { kind: 'change', target: describeElement(target), value: Boolean(target.checked) };
+  } else if(tag === 'select'){
+    event = { kind: 'change', target: describeElement(target), value: cleanText(String(target.value)) };
+  } else if(tag === 'input' && type === 'file'){
+    event = { kind: 'change', target: describeElement(target), file_size: 0, file_ext: '' };
     const file = target.files && target.files[0];
-    if(!file) return { ...base, file_size: 0, file_ext: '' };
-    const name = String(file.name || '');
-    const dot = name.lastIndexOf('.');
-    const ext = dot > 0 ? cleanText(name.slice(dot + 1).toLowerCase(), 10) : '';
-    return { ...base, file_size: Number(file.size) || 0, file_ext: ext };
+    if(file){
+      const name = String(file.name || '');
+      const dot = name.lastIndexOf('.');
+      event.file_size = Number(file.size) || 0;
+      event.file_ext = dot > 0 ? cleanText(name.slice(dot + 1).toLowerCase(), 10) : '';
+    }
   }
-  return null;
+  return event;
 }
 
 // What a text box held when you submitted it (Enter, or a form's submit).
@@ -161,10 +185,25 @@ export function viewEvent(view, via){
 }
 
 // The places the page shows a message; see the activity contract.
-export const SHOWN_PLACES = Object.freeze(['loadStatus', 'saveStatus', 'loadProgress', 'restoredNotice', 'signIn', 'error']);
+export const SHOWN_PLACES = Object.freeze(['loadStatus', 'saveStatus', 'loadProgress', 'restoredNotice', 'signIn']);
 
-export function shownEvent(where, text, isError){
-  return { kind: 'shown', where, text: cleanText(text, SHOWN_TEXT_CAP), is_error: Boolean(isError) };
+// A message the page showed, by its identifier (ui/widgets/page-messages.js).
+// facts: the message's live values; only numbers (`count`, `attempt`,
+// `max_attempts`, `status`) and a known `error_kind` are kept, so wording
+// passed by mistake never reaches the record.
+export function shownEvent(where, message, isError, facts){
+  const event = { kind: 'shown', where, message, is_error: Boolean(isError) };
+  if(facts){
+    for(const key of Object.keys(facts)){
+      const value = facts[key];
+      if(key === 'error_kind'){
+        if(ERROR_KINDS.includes(value)) event.error_kind = value;
+      } else if(typeof value === 'number' && Number.isFinite(value)){
+        event[key] = value;
+      }
+    }
+  }
+  return event;
 }
 
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
@@ -173,7 +212,7 @@ const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 // ("/uploads/7f3e…" -> "/uploads/{id}").
 export function routeTemplate(path){
   const bare = String(path).split(/[?#]/)[0];
-  return cleanText(bare.replace(UUID, '{id}'), LABEL_CAP);
+  return cleanText(bare.replace(UUID, '{id}'), TEXT_CAP);
 }
 
 // The route recorded for a signed link to S3: only the operation and the key's
@@ -182,9 +221,10 @@ export const S3_UPLOAD_ROUTE = 's3 PUT raw/…';
 export const S3_EXPORT_ROUTE = 's3 GET export/…';
 
 // One request the page made. status is null when no answer came back, and
-// error then says why. facts: route-specific extras ({offset, limit} for
-// /detect, {scan} for /uploads).
-export function requestEvent({ t, method, route, status, ms, bytes, requestId, error, facts }){
+// errorKind (one of core/page-error.js's ERROR_KINDS) then says what kind
+// of failure it was; never the error's message. facts: route-specific
+// extras ({offset, limit} for /detect, {scan} for /uploads).
+export function requestEvent({ t, method, route, status, ms, bytes, requestId, errorKind, facts }){
   const event = {
     kind: 'request',
     t,
@@ -195,6 +235,6 @@ export function requestEvent({ t, method, route, status, ms, bytes, requestId, e
     request_id: requestId ? cleanText(requestId) : null,
   };
   if(Number.isInteger(bytes)) event.bytes = bytes;
-  if(error !== undefined) event.error = cleanText(error, SHOWN_TEXT_CAP);
-  return { ...event, ...facts };
+  if(errorKind !== undefined) event.error_kind = ERROR_KINDS.includes(errorKind) ? errorKind : 'other';
+  return Object.assign(event, facts);
 }

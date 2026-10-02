@@ -5,19 +5,27 @@
 import { formatEta } from '../../core/format.js';
 import { shownEvent } from '../../core/activity-event.js';
 import { recordActivity } from '../../core/activity-sink.js';
+import { pageMessage, recordedValues } from './page-messages.js';
 
-// Each message shown here is also recorded for the activity log (plan
-// docs/plans/2026-10-02-activity-instrumentation.md §4, `shown`). Clearing a
-// line (an empty message) shows nothing and isn't recorded.
-function recordShown(where, text, isError){
-  if(text) recordActivity(shownEvent(where, text, isError));
+// Every setter here takes a message's identifier (page-messages.js) and its
+// live values, shows the wording, and records the identifier for the
+// activity log (plan docs/plans/2026-10-02-activity-instrumentation.md §4,
+// `shown`), never the wording.
+function recordShown(where, id, entry, values){
+  recordActivity(shownEvent(where, id, entry.isError, recordedValues(entry, values)));
 }
 
-export function setLoadStatus(msg, isError){
+// id null clears the line, which shows nothing and isn't recorded.
+export function setLoadStatus(id, values = {}){
   const el = document.getElementById('loadStatus');
-  el.textContent = msg;
-  el.style.color = isError ? '#B0392F' : 'var(--ink-faint)';
-  recordShown('loadStatus', msg, isError);
+  if(id === null){
+    el.textContent = '';
+    return;
+  }
+  const entry = pageMessage(id);
+  el.textContent = entry.text(values);
+  el.style.color = entry.isError ? '#B0392F' : 'var(--ink-faint)';
+  recordShown('loadStatus', id, entry, values);
 }
 
 // --- Load-screen progress ---
@@ -44,7 +52,7 @@ export function failLoadProgress(){
   const fill = document.getElementById('loadProgressFill');
   fill.classList.remove('is-working');
   fill.classList.add('is-error');
-  recordShown('loadProgress', document.getElementById('loadProgressLabel').textContent || 'failed', true);
+  recordShown('loadProgress', 'progress.failed', pageMessage('progress.failed'));
 }
 
 // A phase whose duration can't be observed: full-width track, no number.
@@ -56,13 +64,15 @@ export function failLoadProgress(){
 // reads as work in progress, not a bar frozen at 100% (plan
 // 2026-10-02-upload-processing-failures.md §3). A measured transfer calls
 // setLoadProgressMeasured first, which stops the stripes.
-export function setLoadProgressIndeterminate(label){
+export function setLoadProgressIndeterminate(id){
+  const entry = pageMessage(id);
   document.getElementById('loadProgress').style.display = 'block';
   const fill = document.getElementById('loadProgressFill');
   fill.classList.add('is-working');
   fill.style.width = '100%';
-  document.getElementById('loadProgressLabel').textContent = label;
-  recordShown('loadProgress', label, false);
+  document.getElementById('loadProgressLabel').textContent = entry.text({});
+  lastLabelRecord = null;
+  recordShown('loadProgress', id, entry);
 }
 
 // Before a transfer whose progress is measured: a plain bar again.
@@ -70,10 +80,19 @@ export function setLoadProgressMeasured(){
   document.getElementById('loadProgressFill').classList.remove('is-working');
 }
 
+// What setLoadProgressLabel last recorded, so a label that only changes its
+// ticking clock (the wait for the server, rewritten every second) is
+// recorded once, and again only when the message or its numbers change.
+let lastLabelRecord = null;
+
 // Replaces the label only, keeping the bar as it is.
-export function setLoadProgressLabel(label){
-  document.getElementById('loadProgressLabel').textContent = label;
-  recordShown('loadProgress', label, false);
+export function setLoadProgressLabel(id, values = {}){
+  const entry = pageMessage(id);
+  document.getElementById('loadProgressLabel').textContent = entry.text(values);
+  const key = `${id} ${JSON.stringify(recordedValues(entry, values) || {})}`;
+  if(key === lastLabelRecord) return;
+  lastLabelRecord = key;
+  recordShown('loadProgress', id, entry, values);
 }
 
 // Estimates remaining time from a rolling window of recent progress events
@@ -97,18 +116,18 @@ export function makeRateEstimator(windowMs){
 
 export function showRestoredNotice(sub){
   const notice = document.getElementById('restoredNotice');
-  document.getElementById('restoredNoticeText').textContent =
-    `Picked up where you left off — the export you last loaded as "${sub}". Use "Load a different file…" to start fresh.`;
+  const entry = pageMessage('restored');
+  document.getElementById('restoredNoticeText').textContent = entry.text({ sub });
   notice.style.display = 'flex';
-  // A fixed wording, not the notice's text: with a real sign-in the name in
-  // it is your email address.
-  recordShown('restoredNotice', 'Picked up where you left off', false);
+  recordShown('restoredNotice', 'restored', entry);
   document.getElementById('restoredNoticeDismiss').onclick = () => { notice.style.display = 'none'; };
 }
 
-// isError only marks the activity record; the line looks the same either way.
-export function setSaveStatus(msg, isError = false){
+// An error message here only marks the activity record; the line looks the
+// same either way.
+export function setSaveStatus(id, values = {}){
+  const entry = pageMessage(id);
   const el = document.getElementById('saveStatus');
-  if(el) el.textContent = msg;
-  recordShown('saveStatus', msg, isError);
+  if(el) el.textContent = entry.text(values);
+  recordShown('saveStatus', id, entry, values);
 }

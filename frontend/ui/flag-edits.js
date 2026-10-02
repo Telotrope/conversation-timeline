@@ -9,15 +9,19 @@ import { SaveOutcome, patchFlagsToBackend } from '../infra/api-client.js';
 import { refreshAllViews } from './refresh-views.js';
 import { setSaveStatus } from './widgets/status-indicators.js';
 
-// The save indicator's wording for each outcome of a save.
-function saveMessage({ outcome, detail }){
-  switch(outcome){
-    case SaveOutcome.SAVED: return 'Saved.';
-    case SaveOutcome.NOT_LOGGED_IN: return 'Not saved to the server — log in first.';
-    case SaveOutcome.NO_SERVER_ID: return "Could not save — couldn't find this message's server-side id.";
-    case SaveOutcome.SERVER_ERROR: return 'Could not save to the server: ' + detail;
-    case SaveOutcome.STALE_PAGE: return "Could not save: this page's data is out of date. Reload the page.";
-  }
+// The save indicator's message (ui/widgets/page-messages.js) for each
+// outcome of a save, and the error kind the activity log records for it.
+const SAVE_MESSAGES = {
+  [SaveOutcome.SAVED]: ['save.saved', undefined],
+  [SaveOutcome.NOT_LOGGED_IN]: ['save.not_logged_in', 'not_logged_in'],
+  [SaveOutcome.NO_SERVER_ID]: ['save.no_server_id', 'no_server_id'],
+  [SaveOutcome.SERVER_ERROR]: ['save.server_error', undefined],
+  [SaveOutcome.STALE_PAGE]: ['save.stale_page', 'stale_page'],
+};
+
+function showSaveResult({ outcome, detail, status, errorKind }){
+  const [id, kind] = SAVE_MESSAGES[outcome];
+  setSaveStatus(id, { detail, status, error_kind: errorKind || kind });
 }
 
 // Clicking any single checkbox, or the Approve button, promotes ALL THREE
@@ -34,8 +38,7 @@ export function setRowOverrides(id, changedType, changedValue){
     critical: changedType === 'critical' ? changedValue : effectiveFlag(msg, 'critical'),
   };
   state.overrides[id] = values;
-  patchFlagsToBackend(msg, values)
-    .then((result) => setSaveStatus(saveMessage(result), result.outcome !== SaveOutcome.SAVED));
+  patchFlagsToBackend(msg, values).then(showSaveResult);
   refreshAllViews();
 }
 

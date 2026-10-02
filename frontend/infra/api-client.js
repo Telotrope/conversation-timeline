@@ -7,6 +7,7 @@ import { state } from '../core/state.js';
 import { resolveUrl } from '../core/server-url.js';
 import { S3_EXPORT_ROUTE, S3_UPLOAD_ROUTE, requestEvent, routeTemplate } from '../core/activity-event.js';
 import { noteRequestFinished, noteRequestStarted, recordActivity } from '../core/activity-sink.js';
+import { PageError, errorKindOf } from '../core/page-error.js';
 
 // Not a relative path: timeline.html isn't served by timeline-api and is
 // opened separately, so relative fetch()es would resolve against the
@@ -95,7 +96,7 @@ export async function apiFetch(path, { method = 'GET', token = null, headers = {
     return res;
   } catch(e){
     recordActivity(requestEvent({
-      t: started, method, route, status: null, ms: Date.now() - started, requestId: null, error: e.message, facts,
+      t: started, method, route, status: null, ms: Date.now() - started, requestId: null, errorKind: errorKindOf(e), facts,
     }));
     throw e;
   } finally {
@@ -127,7 +128,7 @@ export async function downloadSignedExport(url, onProgress){
   } catch(e){
     recordActivity(requestEvent({
       t: started, method: 'GET', route: S3_EXPORT_ROUTE, status: res ? res.status : null,
-      ms: Date.now() - started, requestId: null, error: e.message,
+      ms: Date.now() - started, requestId: null, errorKind: errorKindOf(e),
     }));
     throw e;
   } finally {
@@ -156,7 +157,7 @@ export async function postActivityBatch(body, { token, keepalive }){
 // Resolves to the route's JSON; throws with the server's message otherwise.
 export async function fetchUploadStatus(token, uploadId){
   const res = await apiFetch(`/uploads/${encodeURIComponent(uploadId)}`, { token });
-  if(!res.ok) throw new Error(await describeFailure('checking on the upload', res));
+  if(!res.ok) throw await requestFailure('checking on the upload', res);
   return res.json();
 }
 
@@ -201,17 +202,17 @@ export function clearAuthToken(){
 export async function ensureAuthToken(sub){
   if(REAL_LOGIN){
     AUTH_TOKEN = await REAL_LOGIN.token();
-    if(!AUTH_TOKEN) throw new Error('sign in first, with the Sign in button above');
+    if(!AUTH_TOKEN) throw new PageError('sign in first, with the Sign in button above', 'not_logged_in');
     return AUTH_TOKEN;
   }
   if(AUTH_TOKEN) return AUTH_TOKEN;
-  if(!sub) throw new Error('enter a dev login name first');
+  if(!sub) throw new PageError('enter a dev login name first', 'not_logged_in');
   const res = await apiFetch('/_dev/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sub }),
   });
-  if(!res.ok) throw new Error(await describeFailure('dev login', res));
+  if(!res.ok) throw await requestFailure('dev login', res);
   const body = await res.json();
   AUTH_TOKEN = body.token;
   // Remembered so a reload can offer to pick the session back up without
@@ -228,6 +229,12 @@ export async function ensureAuthToken(sub){
 // discarding it. Reading the body can itself fail (already consumed,
 // network cut mid-read); that failure is folded into the message too,
 // not silently dropped.
+// A failed answer as an error to throw: describeFailure's message, with the
+// HTTP status and the kind 'server_error' for the activity log.
+export async function requestFailure(what, res){
+  return new PageError(await describeFailure(what, res), 'server_error', res.status);
+}
+
 export async function describeFailure(what, res){
   try{
     const text = await res.text();
@@ -252,11 +259,11 @@ export async function describeFailure(what, res){
 export function putWithProgress(url, body, onProgress){
   const started = Date.now();
   let sentBytes;
-  const finish = (status, error) => {
+  const finish = (status, errorKind) => {
     noteRequestFinished();
     recordActivity(requestEvent({
       t: started, method: 'PUT', route: S3_UPLOAD_ROUTE, status, ms: Date.now() - started,
-      bytes: sentBytes, requestId: null, error,
+      bytes: sentBytes, requestId: null, errorKind,
     }));
   };
   noteRequestStarted();
@@ -275,8 +282,8 @@ export function putWithProgress(url, body, onProgress){
     };
     // Both fire for genuine transport failures; reject with something the
     // caller's TypeError hint can still recognize as "couldn't reach it".
-    xhr.onerror = () => { finish(null, 'Failed to fetch'); reject(new TypeError('Failed to fetch')); };
-    xhr.onabort = () => { finish(null, 'upload aborted'); reject(new TypeError('upload aborted')); };
+    xhr.onerror = () => { finish(null, 'network'); reject(new TypeError('Failed to fetch')); };
+    xhr.onabort = () => { finish(null, 'aborted'); reject(new TypeError('upload aborted')); };
     xhr.send(body);
   });
 }
@@ -307,12 +314,12 @@ export const SaveOutcome = Object.freeze({
   SAVED: 'saved',
   NOT_LOGGED_IN: 'not-logged-in',
   NO_SERVER_ID: 'no-server-id',   // the message has no server-side id to save under
-  SERVER_ERROR: 'server-error',   // `detail` says what went wrong
+  SERVER_ERROR: 'server-error',   // `detail` says what went wrong; `status` and `errorKind` its kind
   STALE_PAGE: 'stale-page',       // the server refused the message's handle: reload the page's data
 });
 
 // Persists your confirmed flags to the real backend, resolving to
-// { outcome: SaveOutcome, detail? }. setRowOverrides already updates
+// { outcome: SaveOutcome, detail?, status?, errorKind? }. setRowOverrides already updates
 // state.overrides and re-renders optimistically before calling this; a failed
 // PATCH is reported in the outcome, not silently swallowed, but doesn't roll
 // back the optimistic local update. See the migration plan's
@@ -337,10 +344,13 @@ export async function patchFlagsToBackend(msg, values){
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...values, handle }),
     });
-    if(res.status === 403) return { outcome: SaveOutcome.STALE_PAGE };
-    if(!res.ok) throw new Error(`server returned ${res.status}`);
+    if(res.status === 403) return { outcome: SaveOutcome.STALE_PAGE, status: 403 };
+    if(!res.ok) throw new PageError(`server returned ${res.status}`, 'server_error', res.status);
     return { outcome: SaveOutcome.SAVED };
   } catch(e){
-    return { outcome: SaveOutcome.SERVER_ERROR, detail: e.message };
+    return {
+      outcome: SaveOutcome.SERVER_ERROR, detail: e.message,
+      status: e instanceof PageError ? e.status : null, errorKind: errorKindOf(e),
+    };
   }
 }

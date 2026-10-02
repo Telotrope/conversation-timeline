@@ -38,7 +38,8 @@ export const KEEPALIVE_BUDGET_BYTES = 60_000;
 //   post(body, { token, keepalive }) -> Promise<{ ok, status }>; body is the
 //                     batch's JSON text
 //   defer(fn)      -> runs fn after the current event has been handled
-//   currentTab()   -> the tab shown now ('' if none)
+//   currentTab()   -> the tab shown now ('' if none); called on every
+//                     record, so it should only read a remembered value
 //   warn(message)  -> reports a failed send (console.warn in the page)
 export function createActivityRecorder({ now, tracker, token, post, defer, currentTab, warn }){
   // 'undecided' (recording, not yet sending: the deployment's settings
@@ -49,6 +50,10 @@ export function createActivityRecorder({ now, tracker, token, post, defer, curre
   let lastSendAt = null;
   let sending = false;
   let scheduled = false;
+  // The page's version, added to every record as it is sent (not as it is
+  // recorded: it is known only once the deployment's settings are read, and
+  // adding it while serializing makes no extra object per click).
+  let versionTail = ',"page_version":"unknown"}';
 
   function keep(events){
     kept = events.concat(kept);
@@ -84,7 +89,7 @@ export function createActivityRecorder({ now, tracker, token, post, defer, curre
     const taken = [];
     let size = 40;
     while(kept.length && parts.length < BATCH_EVENTS){
-      const json = JSON.stringify(kept[0]);
+      const json = JSON.stringify(kept[0]).slice(0, -1) + versionTail;
       if(json.length > MAX_EVENT_BYTES){
         kept.shift();
         dropped += 1;
@@ -144,10 +149,14 @@ export function createActivityRecorder({ now, tracker, token, post, defer, curre
 
   return {
     // Adds one record, stamped with the time (unless it brings its own, as
-    // a request does with its start) and the tab shown now.
+    // a request does with its start) and the tab shown now. The record is
+    // kept as given, stamped in place rather than copied (plan C18): it
+    // belongs to the recorder from here on.
     record(event){
       if(mode === 'off') return;
-      kept.push({ ...event, t: event.t ?? now(), tab: currentTab() });
+      if(event.t === undefined) event.t = now();
+      event.tab = currentTab();
+      kept.push(event);
       trim();
       if(!scheduled && due()){
         scheduled = true;
@@ -155,10 +164,13 @@ export function createActivityRecorder({ now, tracker, token, post, defer, curre
       }
     },
 
-    // Whether recording is on, once the deployment's settings are known.
-    // Off forgets everything recorded so far and records nothing more.
-    decide(on){
+    // Whether recording is on, once the deployment's settings are known,
+    // and the page's version (a string; see core/deploy-config.js), which
+    // every record is sent with. Off forgets everything recorded so far and
+    // records nothing more.
+    decide(on, pageVersion = 'unknown'){
       mode = on ? 'on' : 'off';
+      versionTail = `,"page_version":${JSON.stringify(String(pageVersion))}}`;
       if(!on){
         kept = [];
         dropped = 0;

@@ -15,18 +15,24 @@ import { lastAuthToken, postActivityBatch } from '../infra/api-client.js';
 
 let RECORDER = null;
 
-// The tab shown now, '' on the load screen.
+// The tab shown now, '' on the load screen: read from the page once at the
+// start, then kept up to date by the page as it changes (core/activity-sink.js's
+// noteTabShown and noteMainShown), so a click never has to look it up (plan C18).
+let ACTIVE_TAB = '';
+let MAIN_SHOWN = false;
+
 function currentTab(){
-  const main = document.getElementById('mainContent');
-  if(!main || main.style.display === 'none') return '';
-  const active = document.querySelector('nav.tabs button.active');
-  return active ? active.dataset.tab : '';
+  return MAIN_SHOWN ? ACTIVE_TAB : '';
 }
 
 const warn = (message) => console.warn(message);
 
 // Returns { record(event), leave(), now(), warn(message) } for the listeners.
 export function startActivityCapture(){
+  const active = document.querySelector('nav.tabs button.active');
+  ACTIVE_TAB = active ? active.dataset.tab : '';
+  const main = document.getElementById('mainContent');
+  MAIN_SHOWN = Boolean(main) && main.style.display !== 'none';
   const now = () => Date.now();
   const tracker = createRequestTracker(now);
   RECORDER = createActivityRecorder({
@@ -43,6 +49,8 @@ export function startActivityCapture(){
     record: (event) => recorder.record(event),
     requestStarted: () => tracker.start(),
     requestFinished: () => tracker.finish(),
+    tabShown: (name) => { ACTIVE_TAB = name; },
+    mainShown: (shown) => { MAIN_SHOWN = shown; },
   });
   return {
     record: (event) => recorder.record(event),
@@ -52,10 +60,11 @@ export function startActivityCapture(){
   };
 }
 
-// on: whether this page load's activity is recorded; see initLogin in
-// ui/login-panel.js for how that is decided. Off also disconnects the
-// recorder, so the rest of the page records nothing more.
-export function decideActivityRecording(on){
-  RECORDER.decide(on);
+// on: whether this page load's activity is recorded; pageVersion: the
+// version its records carry. See initLogin in ui/login-panel.js for how
+// both are decided. Off also disconnects the recorder, so the rest of the
+// page records nothing more.
+export function decideActivityRecording(on, pageVersion){
+  RECORDER.decide(on, pageVersion);
   if(!on) connectActivitySink(null);
 }
