@@ -106,17 +106,22 @@ exactly four kinds of user action, `click` (31 handlers), `change` (6: checkboxe
 filter, the file chooser), `input` (2: the conversation search and the review search, one event
 per keystroke) and `hashchange` (1: the address's `#` part, which selects the tab). Nothing
 listens for key presses, scrolling, mouse movement, dragging or pasting. So one capture-phase
-listener per kind, on the document or window, records every action JavaScript responds to,
-without touching existing handlers. A test re-runs the inventory and fails when a handler for a
+listener per kind, on the document or window, records `click`, `change` and `hashchange` without
+touching existing handlers; `input` is the exception, recorded only on submit (below). A test re-runs the inventory and fails when a handler for a
 new kind of event appears, so the recorder can't silently fall behind the page.
 
 **What is recorded**, each with time, session ID and the current tab:
 - `click`: every click.
 - `change`: checkboxes and selectors with their new value; the file chooser with the file's size
   and extension only, not its name, which can be personal.
-- `input`: the search boxes, **once typing pauses for 1 second**, not per keystroke, with the
-  search text (capped at 80 characters) and the number of results shown. Search text is typed by
-  the user and can contain words from their conversations; see §9.
+- `submit`: a text box's contents, **only when the user submits it**: presses Enter in it, or a
+  form's own `submit` happens (the user's direction, 2026-10-02: a pause in typing is not an
+  action). Recorded with the text (capped at 80 characters) and the box's `id`. Typing itself is
+  not recorded. **Consequence today:** neither search box has a submit action (both filter as
+  you type, and the page has no `<form>`), so searches are not recorded at all unless the user
+  presses Enter in one. The clicks that follow a search are still recorded, with message IDs.
+  This needs one listener the page doesn't otherwise have: Enter key presses in text boxes, and
+  nothing else about the keyboard.
 - `view`: tab changes (`hashchange` and the router,
   [frontend/ui/router.js](../../frontend/ui/router.js)).
 - `shown`: every message the page shows, by recording inside the setters in
@@ -206,7 +211,8 @@ dependency. The deployment analysis documents cite its output from now on.
   the two new settings. `scripts/check-template.sh` passes.
 - **Frontend unit:** the handler inventory (§4): scans the frontend source for `addEventListener`
   and `on…=` handlers and fails if any listens for a kind of event the recorder doesn't record;
-  search typing recorded once per 1-second pause, not per keystroke; element descriptions (an id; a label; a review-row checkbox gives message ID
+  typing in a text box records nothing, Enter in it records one `submit` with its text, and Enter
+  elsewhere records nothing; element descriptions (an id; a label; a review-row checkbox gives message ID
   and column and **no cell text**; caps and character stripping); the recorder's batching,
   2,000-event cap and "dropped" count, waiting for sign-in, and sending nothing when off.
 - **Browser** (against the local backend, which logs `/activity` the same way): sign in, tick
@@ -227,10 +233,10 @@ dependency. The deployment analysis documents cite its output from now on.
 ## §9 Privacy
 
 - **Privacy:** records hold user IDs, message and conversation IDs, flag values, file sizes,
-  button labels, the page's own messages, and **search text the user typed** (capped at 80
-  characters), which may contain words from their conversations. No message text, file names,
-  file contents, tokens, IP addresses or email addresses. With a 1-day retention, the search text
-  is gone within about a day of being typed. This is a development stack with one user; before anyone
+  button labels, the page's own messages, and **text-box contents the user submitted with Enter**
+  (capped at 80 characters), which may contain words from their conversations. No message text, file names,
+  file contents, tokens, IP addresses or email addresses. With a 1-day retention, submitted text
+  is gone about a day after submission. This is a development stack with one user; before anyone
   else uses it, recording should be reviewed (and `RecordActivity` defaults `off` for any stage
   but `dev`).
 
@@ -276,8 +282,8 @@ action a flag save; well above today):
 | **Total** | **about $0.60 a month** |
 
 A day like today's (301 API requests) is roughly a fiftieth of that. **The expensive choice would
-be recording every keystroke** in the search boxes; the 1-second pause rule (§4) is what keeps it
-off this table. Mouse movement and scrolling, excluded by the user, would have been the largest
+have been recording every keystroke** in the search boxes; recording text only when submitted (§4)
+keeps it off this table. Mouse movement and scrolling, excluded by the user, would have been the largest
 items by far.
 
 **Response time** (expected; measured after building, see the acceptance check below):
@@ -308,15 +314,13 @@ report it and stop, rather than tune it quietly.
 
 1. **Retention:** 1 day (your direction; the default) or 7 days (about half a cent a month more on
    the heavy estimate, so a session can still be analysed after a weekend)?
-2. **Search text:** record what was typed in the search boxes (proposed; it shows what the user was
-   looking for), or only that a search happened and how many results it showed?
-3. **Response-time threshold:** is "no more than 5% slower" the right line?
+2. **Response-time threshold:** is "no more than 5% slower" the right line?
 
 ## Self-critique log
 
 ### C1 [RESOLVED]: S3 uploads and downloads would be invisible
 Original concern: A and B see only the API; the upload and export download go straight to S3.
-**Resolution:** the page records its own S3 requests ([§4 (line 126)](#L126)); S3's own logging
+**Resolution:** the page records its own S3 requests ([§4 (line 131)](#L131)); S3's own logging
 was considered and not chosen ([§1 (line 40)](#L40)).
 
 ### C2 [RESOLVED]: refused requests never reach our code
@@ -328,12 +332,12 @@ line, so D2 and D4 would stay unprovable. **Resolution:** API Gateway's access l
 Original concern: describing clicked elements by their text would copy message text from the
 review table into CloudWatch. **Resolution:** elements inside the review table and the timeline are
 described by message ID and column only, and a browser test checks that no synthetic message text
-reaches the log ([§4 (line 91)](#L91), [§8 (line 212)](#L212)).
+reaches the log ([§4 (line 91)](#L91), [§8 (line 218)](#L218)).
 
 ### C4 [RESOLVED]: the existing log groups can't be given a retention by a template
 Original concern: Lambda created them on first run; a template that declares groups with the same
 names fails because they already exist. **Resolution:** new, template-owned groups through
-`LoggingConfig` ([§6 (line 162)](#L162)); the old groups are left in place.
+`LoggingConfig` ([§6 (line 167)](#L167)); the old groups are left in place.
 
 ### C5 [OPEN]: counting the SDK's calls depends on its tracing output
 The per-request AWS call counts rely on span names the AWS SDK emits, not yet read. **Mitigation in
@@ -351,22 +355,25 @@ and run unchanged. **Open:** none expected; revisit if any browser test needs ch
 
 ### C8 [RESOLVED]: the sign-in label would put the email address in the logs
 Original concern: §4 recorded the sign-in label, "Signed in as <email>", contradicting §9's "no
-email addresses". **Resolution:** only signed in or out is recorded ([§4 (line 125)](#L125)).
+email addresses". **Resolution:** only signed in or out is recorded ([§4 (line 130)](#L130)).
 
 ### C9 [RESOLVED]: recording every keystroke would dominate the cost
 Original concern: the two search boxes respond to every keystroke; recording each would multiply
-the page's events. **Resolution:** typing is recorded once per 1-second pause ([§4 (line 117)](#L117)),
-with a test; the cost table assumes this ([§10 (line 261)](#L261)).
+the page's events. First resolution: record once typing paused for 1 second. **User pushback
+(2026-10-02):** a pause is not an action; record a text box only when submitted (Enter, or a
+form's submit). **Resolution:** done ([§4 (line 117)](#L117)), with a test; typing adds nothing to
+the cost table ([§10 (line 267)](#L267)).
 
 ### C10 [OPEN]: the account's limit of 10 Lambda copies at once
 Background batches share that limit with the user's own requests. **Mitigation in plan:** batches
 are short and only sent when there are events; a refused batch is kept and retried; the
-acceptance check looks for any 429 ([§10 (line 296)](#L296)). **Open:** if any 429 appears in that
+acceptance check looks for any 429 ([§10 (line 302)](#L302)). **Open:** if any 429 appears in that
 run, raise the limit with AWS before recording is left on.
 
-### C11 [OPEN]: search text may contain words from the user's conversations
-**Mitigation in plan:** capped at 80 characters, and kept about a day ([§9 (line 230)](#L230)).
-**Open:** the user's answer to question 2.
+### C11 [RESOLVED]: submitted text may contain words from the user's conversations
+Original concern: recorded search text could carry conversation words into the logs.
+**Resolution:** only text the user submits is recorded, capped at 80 characters, kept about a day
+([§9 (line 236)](#L236)); with today's page, that is only Enter in a search box.
 
 ### C12 [OPEN]: the cost figures are estimates
 Event sizes and counts are guesses until the code exists. **Mitigation in plan:** the end-to-end
