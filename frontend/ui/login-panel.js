@@ -45,8 +45,9 @@ async function refresh(){
 // recordActivity: true, and a deployment whose settings can't be read
 // records nothing.
 export async function initLogin(){
-  const name = chosenDeployName();
-  if(!name) return { recordActivity: true };
+  const tag = document.querySelector('meta[name="timeline-deploy"]');
+  const name = chosenDeployName(tag ? tag.getAttribute('content') ?? '' : null);
+  if(name === null) return { recordActivity: true };
   document.getElementById('devLoginField').style.display = 'none';
   document.getElementById('cognitoLoginField').style.display = '';
   try{
