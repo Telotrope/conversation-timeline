@@ -48,6 +48,12 @@ pub struct ProcessingStores {
     pub user_flag_writer: Arc<dyn UserFlagWriter>,
 }
 
+/// How many times AWS runs the processing function for one upload: the
+/// first attempt plus the template's `MaximumRetryAttempts` (2). The page
+/// shows "attempt 2 of 3" from this; `tests/template_processing_retries.rs`
+/// checks the template agrees.
+pub const MAX_PROCESSING_ATTEMPTS: usize = 3;
+
 /// One record that couldn't be handled.
 #[derive(Debug)]
 pub enum RecordError {

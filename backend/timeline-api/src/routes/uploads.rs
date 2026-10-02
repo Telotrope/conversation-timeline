@@ -24,6 +24,7 @@ use timeline_core::ports::object_store::ObjectStore;
 use timeline_core::ports::uploads::{raw_object_key, UploadOutcome, UploadOutcomeStore};
 
 use crate::auth_extractor::AuthenticatedUser;
+use crate::s3_trigger::MAX_PROCESSING_ATTEMPTS;
 use crate::error::ApiError;
 
 /// How long the presigned upload URL stays valid -- long enough for a slow
@@ -57,10 +58,23 @@ pub async fn create_upload(
 /// recorded yet", which is also what an upload id that doesn't exist, or
 /// belongs to someone else, looks like: outcomes are stored under the
 /// logged-in user's id, so another user's upload reveals nothing.
+///
+/// On AWS, `Processing` also says which attempt is running and why the
+/// last one failed, so the page can show a retry rather than a silent wait
+/// (plan `2026-10-02-upload-processing-failures.md` §3). Before the first
+/// attempt, and always locally, those fields are absent and the answer is
+/// plain `{"status": "processing"}`.
 #[derive(Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum UploadStatusResponse {
-    Processing,
+    Processing {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        attempt: Option<usize>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        max_attempts: Option<usize>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        last_error: Option<String>,
+    },
     Ready,
     Failed { reason: String },
 }
@@ -78,7 +92,17 @@ pub async fn upload_status(
         .get_outcome(&user_id, upload_id)
         .await?
     {
-        None => UploadStatusResponse::Processing,
+        None => {
+            let progress = upload_outcome_store
+                .get_progress(&user_id, upload_id)
+                .await?;
+            let attempt = progress.as_ref().map(|p| p.attempts).filter(|&n| n > 0);
+            UploadStatusResponse::Processing {
+                attempt,
+                max_attempts: attempt.map(|_| MAX_PROCESSING_ATTEMPTS),
+                last_error: progress.and_then(|p| p.last_error),
+            }
+        }
         Some(UploadOutcome::Ready { .. }) => UploadStatusResponse::Ready,
         Some(UploadOutcome::Failed { reason }) => UploadStatusResponse::Failed { reason },
     };
