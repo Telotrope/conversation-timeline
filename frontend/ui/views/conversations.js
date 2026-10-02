@@ -2,7 +2,7 @@
 // transcript of the one you open, with links from its sessions and flags
 // into the review tab.
 
-import { fmtClock, fmtDayHeading, fmtDuration } from '../../core/format.js';
+import { formatClock, formatDayHeading, formatDuration } from '../../core/format.js';
 import { localDaysTouched } from '../../core/blocks.js';
 import { state } from '../../core/state.js';
 import { rememberLocation } from '../navigation/location.js';
@@ -35,7 +35,7 @@ export function renderConvList(filter=''){
     if(hasCaps) icons += '<span class="flag-icon caps">A</span> ';
     return `<div class="conv-item" data-idx="${c.idx}">
       ${icons}${escapeHtml(c.name)}
-      <span class="meta">${c.total_messages} messages · ${dayCount} ${dayCount===1?'day':'days'} · ${fmtDuration(totalSec)} active</span>
+      <span class="meta">${c.total_messages} messages · ${dayCount} ${dayCount===1?'day':'days'} · ${formatDuration(totalSec)} active</span>
     </div>`;
   }).join('');
 
@@ -66,9 +66,9 @@ export function selectConversation(idx){
     if(b.capsItems.length) flags.push(`<span data-block-idx="${b._idx}" data-flag-type="caps" class="flag-icon caps" style="cursor:pointer;" title="${b.capsItems.length} ALL-CAPS — click to review">A</span>`);
     return `
     <tr class="session-row" data-block-idx="${b._idx}" style="cursor:pointer;" title="Click to review these messages">
-      <td>${fmtDayHeading(b.date)}</td>
-      <td>${fmtClock(b.start)} – ${fmtClock(b.end)}</td>
-      <td class="dur">${fmtDuration(b.duration_sec)}</td>
+      <td>${formatDayHeading(b.date)}</td>
+      <td>${formatClock(b.start)} – ${formatClock(b.end)}</td>
+      <td class="dur">${formatDuration(b.duration_sec)}</td>
       <td>${b.count}</td>
       <td>${flags.join(' ')}</td>
     </tr>`;
@@ -84,7 +84,7 @@ export function selectConversation(idx){
 
   document.getElementById('convDetail').innerHTML = `
     <h3>${escapeHtml(conv.name)}</h3>
-    <div class="summary">${conv.total_messages} messages total · active across ${dayCount} ${dayCount===1?'day':'days'} · ${fmtDuration(totalSec)} of combined active time</div>
+    <div class="summary">${conv.total_messages} messages total · active across ${dayCount} ${dayCount===1?'day':'days'} · ${formatDuration(totalSec)} of combined active time</div>
     ${critNote}
     <table class="sessions">
       <thead><tr><th>Day</th><th>Time span</th><th>Duration</th><th>Messages</th><th>Flags</th></tr></thead>

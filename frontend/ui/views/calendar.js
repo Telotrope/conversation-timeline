@@ -2,7 +2,7 @@
 // markers for flagged messages. Clicking a day, a session or a marker opens
 // the matching messages in the review tab.
 
-import { fmtClock, fmtDuration, fmtMonthHeading } from '../../core/format.js';
+import { formatClock, formatDuration, formatMonthHeading } from '../../core/format.js';
 import { localDateKey, localDaysTouched } from '../../core/blocks.js';
 import { state } from '../../core/state.js';
 import { escapeHtml } from '../render/markup.js';
@@ -29,7 +29,7 @@ export function renderCalendar(){
   let html = '';
   let lastMonth = null;
   days.forEach(day=>{
-    const mh = fmtMonthHeading(day);
+    const mh = formatMonthHeading(day);
     if(mh !== lastMonth){
       html += `<div class="month-heading">${mh}</div>`;
       lastMonth = mh;
@@ -44,7 +44,7 @@ export function renderCalendar(){
       const leftPct = ((piece.start - dayStart) / dayLength) * 100;
       const widthPct = Math.max(((piece.end - piece.start) / dayLength) * 100, 0.5);
       const conv = state.conversations[b.conv];
-      let tip = `${conv.name} · ${fmtClock(b.start)}–${fmtClock(b.end)} · ${fmtDuration(b.duration_sec)} · ${b.count} messages · click to review these messages`;
+      let tip = `${conv.name} · ${formatClock(b.start)}–${formatClock(b.end)} · ${formatDuration(b.duration_sec)} · ${b.count} messages · click to review these messages`;
       // Each marker sits on the piece of the session that holds its messages.
       const onPiece = (items) => items.filter(m => localDateKey(new Date(m.ts)) === piece.date);
       const crit = onPiece(b.criticalItems), angry = onPiece(b.angryItems), caps = onPiece(b.capsItems);

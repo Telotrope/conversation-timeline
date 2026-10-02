@@ -4,7 +4,7 @@
 // between chunks) and returns the data its renderer takes.
 
 import { countsTowardRates, isFlagged } from './flags.js';
-import { fmtDayHeading } from './format.js';
+import { formatDayHeading } from './format.js';
 import { state } from './state.js';
 
 export function pearsonR(xs, ys){
@@ -64,7 +64,7 @@ export async function computeFrictionAnalysis(opts, runChunked){
     rows = await runChunked(counted, b => {
       const { total, flagged } = sessionRate(b);
       return {
-        label: `${state.conversations[b.conv].name} — ${fmtDayHeading(b.date)}`,
+        label: `${state.conversations[b.conv].name} — ${formatDayHeading(b.date)}`,
         total,
         flagged,
         pct: ratePct(flagged, total),
@@ -121,7 +121,7 @@ export async function computeLengthAnalysis(opts, runChunked){
     return {
       x: b.duration_sec / 60, // minutes
       y: ratePct(flagged, total),
-      label: `${state.conversations[b.conv].name} — ${fmtDayHeading(b.date)}`,
+      label: `${state.conversations[b.conv].name} — ${formatDayHeading(b.date)}`,
       conv: b.conv,
       rangeStart: new Date(b.start).getTime(),
       rangeEnd: new Date(b.end).getTime(),
@@ -172,7 +172,7 @@ export async function computeIdleGapAnalysis(opts, runChunked){
     return {
       x: Math.max(gapHours, 0.01), // avoid log(0)
       y: ratePct(flagged, total),
-      label: `${state.conversations[cur.conv].name} — ${fmtDayHeading(cur.date)}`,
+      label: `${state.conversations[cur.conv].name} — ${formatDayHeading(cur.date)}`,
       conv: cur.conv,
       rangeStart: new Date(cur.start).getTime(),
       rangeEnd: new Date(cur.end).getTime(),

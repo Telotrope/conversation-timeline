@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatBytes, formatEta, fmtDuration, fmtClock, fmtDayHeading, fmtMonthHeading } from '../core/format.js';
+import { formatBytes, formatEta, formatDuration, formatClock, formatDayHeading, formatMonthHeading } from '../core/format.js';
 
 test('formatBytes picks B, KB or MB', () => {
   assert.equal(formatBytes(512), '512 B');
@@ -17,14 +17,14 @@ test('formatEta is deliberately coarse', () => {
   assert.equal(formatEta(600), 'about 10 minutes left');
 });
 
-test('fmtDuration shows seconds, minutes, then hours', () => {
-  assert.equal(fmtDuration(42), '42s');
-  assert.equal(fmtDuration(125), '2m 5s');
-  assert.equal(fmtDuration(3 * 3600 + 7 * 60), '3h 7m');
+test('formatDuration shows seconds, minutes, then hours', () => {
+  assert.equal(formatDuration(42), '42s');
+  assert.equal(formatDuration(125), '2m 5s');
+  assert.equal(formatDuration(3 * 3600 + 7 * 60), '3h 7m');
 });
 
 test('the date and time formats name the day, month and year', () => {
-  assert.match(fmtClock('2026-03-02T15:04:00Z'), /3:04/);
-  assert.match(fmtDayHeading('2026-03-02'), /Monday.*March.*2.*2026/);
-  assert.match(fmtMonthHeading('2026-03-02'), /March.*2026/);
+  assert.match(formatClock('2026-03-02T15:04:00Z'), /3:04/);
+  assert.match(formatDayHeading('2026-03-02'), /Monday.*March.*2.*2026/);
+  assert.match(formatMonthHeading('2026-03-02'), /March.*2026/);
 });

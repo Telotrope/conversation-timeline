@@ -18,7 +18,7 @@ export function formatEta(seconds){
   return `about ${Math.round(seconds / 60)} minutes left`;
 }
 
-export function fmtDuration(sec){
+export function formatDuration(sec){
   if(sec < 60) return sec + 's';
   const h = Math.floor(sec/3600);
   const m = Math.floor((sec%3600)/60);
@@ -27,16 +27,16 @@ export function fmtDuration(sec){
   return `${m}m ${s}s`;
 }
 
-export function fmtClock(iso){
+export function formatClock(iso){
   return new Date(iso).toLocaleTimeString(undefined, {hour:'numeric', minute:'2-digit'});
 }
 
-export function fmtDayHeading(dateStr){
+export function formatDayHeading(dateStr){
   const d = new Date(dateStr + 'T00:00:00');
   return d.toLocaleDateString(undefined, {weekday:'long', month:'long', day:'numeric', year:'numeric'});
 }
 
-export function fmtMonthHeading(dateStr){
+export function formatMonthHeading(dateStr){
   const d = new Date(dateStr + 'T00:00:00');
   return d.toLocaleDateString(undefined, {month:'long', year:'numeric'});
 }
