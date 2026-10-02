@@ -26,8 +26,8 @@ files carry no hash, so the filter removed them). No library was rebuilt.
 |---|---|---|
 | H1 | Page loads; bucket refuses direct access | **Pass**: `https://d3dl4z1yvtflex.cloudfront.net/` 200; the bucket's S3 address 403 |
 | H2 | `.js` served as JavaScript | **Pass** for `frontend/main.js` (`text/javascript; charset=utf-8`). Modules running in a browser not yet observed |
-| H3 | Cognito sign-in returns to the page | **Not run**: needs a browser sign-in |
-| H4 | Loading, uploading, flag edits pass CORS from the hosted origin | **Not run** |
+| H3 | Cognito sign-in returns to the page | **Pass** (user, in a browser, at `https://howangryami.telotrope.ai/`) |
+| H4 | Loading, uploading, flag edits pass CORS from the hosted origin | **Failed, fixed, retest pending**: see below |
 | H5 | A second publish shows the new version | **Not run** |
 | H6 | Compression and security headers | **Pass**: `content-encoding: br`; HSTS, nosniff, frame and referrer headers present |
 | H7 | A week's cost at $0.00 | **Not run** (due 2026-10-09) |
@@ -38,3 +38,28 @@ files carry no hash, so the filter removed them). No library was rebuilt.
 Also observed: the published `index.html` carries `<meta name="timeline-deploy" content="dev">`,
 and `frontend/deploy-configs/dev.json` is served with the stack's API, Cognito and client values
 and `pageVersion` `1cc52de`.
+
+## H4 failure: the API kept its old CORS settings
+
+After signing in, the user's load failed with "Failed to fetch". The upload bucket's CORS listed
+the hosted origin, but the API's (`aws apigatewayv2 get-api`) still listed only
+`https://dev.tail13dce8.ts.net`, and lacked the `x-timeline-session` header added that day by the
+activity work.
+
+Cause, read in the processed template (`aws cloudformation get-template --template-stage
+Processed`) and in SAM's source (`samtranslator/open_api/open_api.py`, `add_cors`): when
+`AllowOrigins` is a conditional (`!If`), SAM treats it as the *whole* CORS block. The API
+definition's `x-amazon-apigateway-cors` became the conditional origin list itself, with no
+headers, methods or other settings. API Gateway kept its previous CORS settings without failing
+the deploy. `sam validate --lint` and the template's text tests passed, because the template was
+valid; the fault was in SAM's conversion.
+
+Fix (commits `a5291ca`, `dbec0d8`): the whole `CorsConfiguration` is chosen by condition, three
+full copies; `FailOnWarnings: true` makes API Gateway fail a deploy whose definition it has
+warnings about. The processed template from the change set was checked before applying: a
+complete CORS object. After the update, `get-api` lists both origins and the session header, and
+a preflight from `https://howangryami.telotrope.ai` for `POST /uploads` is answered with that
+origin allowed.
+
+The Cognito return addresses and the bucket's CORS are plain CloudFormation, not converted by
+SAM, and were correct after the first deploy.
