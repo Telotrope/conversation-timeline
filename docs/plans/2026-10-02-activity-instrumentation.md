@@ -300,8 +300,7 @@ dependency. The deployment analysis documents cite its output from now on.
   user submitted with Enter** (capped at 80 characters; never a password box), which may contain
   words from their conversations. No page wording, message text, server or browser error text,
   file names, file contents, tokens, IP addresses or email addresses. With a 7-day retention,
-  submitted text
-  is gone about a day after submission. This is a development stack with one user; before anyone
+  submitted text is gone about 7 days after submission. This is a development stack with one user; before anyone
   else uses it, recording should be reviewed (and `RecordActivity` defaults `off` for any stage
   but `dev`).
 
