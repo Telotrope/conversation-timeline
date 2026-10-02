@@ -116,3 +116,24 @@ fn the_hosted_address_is_written_identically_everywhere() {
     assert_eq!(TEMPLATE.matches(HOSTED_URL).count(), 5);
     assert!(block("PageUrl").contains(&format!("Value: {HOSTED_URL}")));
 }
+
+#[test]
+fn a_custom_domain_uses_the_certificate_it_is_given_and_makes_none() {
+    // The hosting plan's C14: one certificate, made by hand, for every
+    // redeploy and stack.
+    assert!(!TEMPLATE.contains("AWS::CertificateManager::Certificate"));
+    assert!(block("PageDistribution").contains("AcmCertificateArn: !Ref PageCertificateArn\n"));
+    assert!(block("PageCertificateArn").contains(
+        r"AllowedPattern: '^$|^arn:aws:acm:us-east-1:[0-9]{12}:certificate/[0-9a-f-]+$'"
+    ));
+    // Neither setting without the other.
+    let domain_rule = block("PageDomainNeedsHostingAndCertificate");
+    assert!(domain_rule.contains("RuleCondition: !Not [!Equals [!Ref PageDomain, \"\"]]"));
+    assert!(domain_rule.contains("Assert: !Not [!Equals [!Ref PageCertificateArn, \"\"]]"));
+    assert!(domain_rule.contains("Assert: !Equals [!Ref HostPage, \"on\"]"));
+    let certificate_rule = block("PageCertificateNeedsDomain");
+    assert!(
+        certificate_rule.contains("RuleCondition: !Not [!Equals [!Ref PageCertificateArn, \"\"]]")
+    );
+    assert!(certificate_rule.contains("Assert: !Not [!Equals [!Ref PageDomain, \"\"]]"));
+}
