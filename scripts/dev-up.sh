@@ -5,6 +5,9 @@
 #
 #   scripts/dev-up.sh backend   # timeline-api on $PORT (default 3000)
 #   scripts/dev-up.sh static    # timeline.html on $STATIC_PORT (default 8000)
+#   scripts/dev-up.sh all       # both: the page in the background, then the
+#                               # backend in this terminal (local deployment,
+#                               # docs/plans/2026-10-02-deployment-operating-guide.md §4)
 #
 # The restart-only-if-stale behavior is the point, not an optimization:
 # timeline-api keeps every upload and confirmed flag in memory only, so
@@ -34,7 +37,7 @@ BINARY="${REPO_ROOT}/backend/target/debug/timeline-api"
 export PATH="${HOME}/.cargo/bin:${HOME}/.local/opt/zig:${PATH}"
 
 usage() {
-  echo "usage: $(basename "$0") {backend|static}" >&2
+  echo "usage: $(basename "$0") {backend|static|all}" >&2
   exit 2
 }
 
@@ -102,8 +105,28 @@ start_static() {
   exec python3 -m http.server "$STATIC_PORT"
 }
 
+# The page server goes to the background (left running, like `static` run
+# alone; its output in .dev-state/static.<port>.log), then this terminal
+# becomes the backend, so Ctrl+C here stops the backend only.
+start_all() {
+  mkdir -p "$STATE_DIR"
+  nohup "${BASH_SOURCE[0]}" static > "${STATE_DIR}/static.${STATIC_PORT}.log" 2>&1 &
+  local deadline=$((SECONDS + 30))
+  until curl -sf -o /dev/null "http://127.0.0.1:${STATIC_PORT}/timeline.html"; do
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      echo "error: the page server didn't start on port ${STATIC_PORT}; see ${STATE_DIR}/static.${STATIC_PORT}.log" >&2
+      exit 1
+    fi
+    sleep 0.3
+  done
+  echo "Page: http://localhost:${STATIC_PORT}/timeline.html"
+  echo "  (through VS Code's forwarding: https://<your machine>/proxy/${STATIC_PORT}/timeline.html)"
+  start_backend
+}
+
 case "${1:-}" in
   backend) start_backend ;;
   static)  start_static ;;
+  all)     start_all ;;
   *)       usage ;;
 esac
