@@ -352,7 +352,7 @@ All uptime figures are SLA promises or provider claims. **Open:** an external up
 ### C11 [RESOLVED]: Whether a publicly loadable page is acceptable
 Original concern: anyone can load the page before launch. **Resolution:** you said it's fine;
 the public page is how people reach the product. Data stays behind the sign-in. Removed from
-the open questions ([line 275](2026-10-02-page-hosting.md#L275)).
+the open questions ([line 277](2026-10-02-page-hosting.md#L277)).
 
 ### C12 [RESOLVED]: Opening the site at `/` would break sign-in
 Original concern: the distribution served `timeline.html` at `/`, but the page asks Cognito to
