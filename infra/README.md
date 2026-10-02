@@ -51,12 +51,13 @@ aws sts get-caller-identity   # should print your 12-digit account number
 ```
 cd backend
 PATH="$HOME/.local/opt/zig:$PATH" cargo lambda build --release --arm64 -p timeline-api
-ls target/lambda/timeline-api/bootstrap target/lambda/process_upload/bootstrap
+ls target/lambda/timeline-api/bootstrap target/lambda/process_upload/bootstrap target/lambda/record_failed_upload/bootstrap
 cd ..
 scripts/check-template.sh          # expect: "... is a valid SAM Template"
 ```
 
-The build makes both Lambdas: the API, and the function S3 starts when an upload lands.
+The build makes all three Lambdas: the API, the function S3 starts when an upload lands, and the
+function that marks an upload failed once processing has failed every attempt.
 
 ## 5. Deploy
 
