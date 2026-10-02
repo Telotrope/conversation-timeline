@@ -1,6 +1,6 @@
 # Split timeline.html's script into modules
 
-**Status:** revision 3, awaiting review.
+**Status:** done 2026-09-30 (revision 4). Coverage after the split is in commit `dedf74c`.
 - Revision 2 recorded that the page is served only over HTTP and that nothing needs to preserve
   single-file hosting.
 - Revision 3 adopts your folder layout: `ui/` holds the actions that span views, above
