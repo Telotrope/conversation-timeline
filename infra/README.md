@@ -70,6 +70,7 @@ The scripts below assume the stack is called `timeline-<stage>`, so keep that na
 questions:
 
 - **Region**: the one you chose. **Stage**: `dev`. **LogS3Events**: `off` (step 9 explains it).
+  **FailProcessing**: `off` (step 10 explains it).
 - **FrontendUrl**: the full address your browser opens `timeline.html` at, without `?deploy=...`.
   If the browser runs on the same machine as the page's server: `http://localhost:8000/timeline.html`
   (the default). If it reaches that machine through a forwarding proxy, use the address in its
@@ -162,7 +163,26 @@ really sent (the plan's C24 and §E9). The processing function logs notification
    name, user ID and AWS's internal IDs with placeholders; you review the cleaned file before it
    replaces the test sample.
 
-## 10. Costs, and tearing it down
+## 10. Watch an upload fail on purpose (a test of the error handling)
+
+AWS runs the processing function up to 3 times for one upload; if all 3 fail, a second function
+marks the upload failed, and the page should say so (plan
+`docs/plans/2026-10-02-upload-processing-failures.md` §2–3). Real failures are rare, so the
+`FailProcessing` setting makes every attempt fail on purpose, before reading your file.
+
+1. Switch it on, repeating every other setting (the reason is in step 9):
+   ```
+   cd infra
+   sam deploy --parameter-overrides Stage=dev FrontendUrl=<your FrontendUrl> LogS3Events=off FailProcessing=on
+   ```
+2. Upload a file through the page and watch the line under the bar. Expected, over about 4
+   minutes: "Waiting for the server to start", then "Processing on the server", then
+   "The server hit an error (failing on purpose (FailProcessing is on)) on attempt 1 of 3…",
+   then the same for attempt 2 and 3, then an error on the page:
+   "the server couldn't process the file after 3 attempts: …". Note anything different.
+3. Switch it off again: the same command with `FailProcessing=off`.
+
+## 11. Costs, and tearing it down
 
 While idle, this should cost very little: the Secrets Manager secret is billed monthly (about
 $0.40 at the time of writing; not re-checked), and everything else is billed per use. Your budget
