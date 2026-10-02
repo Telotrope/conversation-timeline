@@ -12,12 +12,19 @@
 // process id is the one listening on the port, which test-server.spec.js
 // checks, and stopping it can't leave a child behind.
 
+const fs = require('fs');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const { BACKEND_PORT, API_BASE } = require('./test-endpoints');
 
 const BACKEND_DIR = path.resolve(__dirname, '..', 'backend');
 const BINARY = path.join(BACKEND_DIR, 'target', 'debug', 'timeline-api');
+
+// The server's standard output, kept in a file for the run, so a test can
+// read what the server logged (activity.spec.js reads the page's activity
+// records from it). In test-results/, which Playwright empties before this
+// setup runs and git ignores.
+const OUTPUT_LOG = path.join(__dirname, 'test-results', 'backend-stdout.log');
 
 // cargo and zig aren't on the default PATH on this machine; see
 // backend/README.md's prerequisites.
@@ -66,13 +73,15 @@ module.exports = async function startBackend() {
 
   let output = '';
   let exited = null;
+  fs.mkdirSync(path.dirname(OUTPUT_LOG), { recursive: true });
+  const stdoutLog = fs.createWriteStream(OUTPUT_LOG);
   const server = spawn(BINARY, [], {
     cwd: BACKEND_DIR,
     env: { ...process.env, PORT: String(BACKEND_PORT) },
     // Its own process group, so teardown can signal everything it started.
     detached: true,
   });
-  server.stdout.on('data', (d) => { output += d.toString(); });
+  server.stdout.on('data', (d) => { output += d.toString(); stdoutLog.write(d); });
   server.stderr.on('data', (d) => { output += d.toString(); });
   server.on('exit', (code, signal) => { exited = { code, signal }; });
 
@@ -92,6 +101,7 @@ module.exports = async function startBackend() {
   // Workers inherit environment variables set here; test-server.spec.js
   // uses this to check the listener is the server this run started.
   process.env.E2E_BACKEND_PID = String(server.pid);
+  process.env.E2E_BACKEND_STDOUT = OUTPUT_LOG;
 
   return async function stopBackend() {
     try {
