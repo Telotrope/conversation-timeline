@@ -13,7 +13,8 @@ asks for (migration plan C24). It stays the library's because a real one carries
 ## `example-s3-event.json`
 
 An S3 "object created" notification **captured from this project's dev stack on 2026-10-02**
-(`infra/README.md` step 9; migration plan C24), then cleaned and reviewed by the user. Replaced
+(then step 9 of `infra/README.md`, now "Capturing a real S3 notification" in `infra/OPERATING.md`;
+migration plan C24), then cleaned and reviewed by the user. Replaced
 with placeholders: account number (`123456789012`), bucket name and ARN, stack ID, bucket-owner ID,
 role ID in `userIdentity`, both AWS request IDs, `configurationId`, the user and upload IDs in the
 key, and the eTag (now the checksum of an empty file). Kept as AWS sent it: field order, region,

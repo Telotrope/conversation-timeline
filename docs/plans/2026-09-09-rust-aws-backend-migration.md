@@ -1257,7 +1257,8 @@ pointed at the deployed API; see C30), the `Users` table, payment (V4), Bedrock 
 run on AWS. Chosen by you on 2026-10-01 over logging every notification: the log stays off except
 while a sample is being captured. All suites pass: 339 Rust. `aws_settings.rs` and
 `s3_trigger.rs` stay at 100% line coverage; `scripts/check-template.sh` passes; both Lambdas build
-for ARM. The capture step is [infra/README.md](../../infra/README.md)'s step 9.
+for ARM. The capture step is "Capturing a real S3 notification for the tests" in
+[infra/OPERATING.md](../../infra/OPERATING.md) (until 2026-10-02, step 9 of infra/README.md).
 
 Differences from the design below:
 - **The log-read-process step is a library function**, `s3_trigger::handle_raw_s3_event`, taking
@@ -2121,11 +2122,12 @@ Original concern: Lambda retries a failed S3 event, so `process_upload` can run 
 one upload. **Resolution:** every write it makes replaces rather than adds, and E2 adds a test that
 processing an event twice leaves the same stored data as once ([§E2 handler, line 1074](2026-09-09-rust-aws-backend-migration.md#L1074)).
 
-### C30 [OPEN]: The page is still served from this machine
-After V2e the API, storage and logins run on AWS, but `timeline.html` is served locally and pointed
-at the API. Nobody else can use it. **Mitigation in plan:** none needed for testing. **Open:** a
-separate plan for hosting the page (an S3 bucket behind CloudFront, AWS's content delivery service,
-is the usual choice; not researched). Trigger: wanting anyone else to use the app.
+### C30 [RESOLVED, cross-plan]: The page is still served from this machine
+Original concern: after V2e the API, storage and logins run on AWS, but `timeline.html` is served
+locally and pointed at the API. Nobody else can use it. **Resolution:** the page is hosted on S3
+behind CloudFront by [2026-10-02-page-hosting.md](2026-10-02-page-hosting.md), deployed on
+2026-10-02 with its deployment checks passed except H5 and H7
+([analysis](../analysis/2026-10-02-page-hosting-deployment.md)).
 
 ### C31 [RESOLVED]: The processing Lambda would need Cognito settings it never uses
 Original concern: `AwsSettings` refuses to load without the Cognito pool and client, so the

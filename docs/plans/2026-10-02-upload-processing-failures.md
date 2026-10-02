@@ -248,7 +248,8 @@ attempt 3 of 3… — 3m 31s"), frozen and no longer true.
 ## 2b. A switch to make processing fail on purpose (built 2026-10-02, at the user's request)
 
 **Status:** built and tested locally (commits `a9d09b1`, `c154618`); not yet run on AWS. The
-walkthrough's step 10 ([infra/README.md](../../infra/README.md)) is the live test. Differences
+section "Watching an upload fail on purpose" in [infra/OPERATING.md](../../infra/OPERATING.md) (until 2026-10-02, step 10 of
+infra/README.md) is the live test. Differences
 from the design below: the on/off parsing is one helper shared with `LogS3Events`; the setting
 reaches the code through new `handle_s3_event_with` / `handle_raw_s3_event_with`, with the old
 names kept as wrappers so committed tests are unchanged. Found while writing step 10: after the

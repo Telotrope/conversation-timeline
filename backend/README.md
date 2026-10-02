@@ -251,7 +251,8 @@ Rust isn't free, adding a few seconds to the test binaries that need one.
 Everything V2 needs is built (migration plan §V2e): the API and upload-processing Lambdas, the
 upload-status route, Cognito sign-in in the page, CORS, and the template for all of it. None of it
 has run on AWS. The first deployment's checks are listed in the plan's §V2e, "What only the first
-deployment can check" (D1–D7 and D9), and walked through in [infra/README.md](../infra/README.md).
+deployment can check" (D1–D7 and D9), and walked through in [infra/OPERATING.md](../infra/OPERATING.md)
+("Checks after a big backend change").
 
 Not built: hosting `timeline.html` on AWS (the page is served from your machine and pointed at
 the deployed API; plan C30), re-downloading Cognito's keys when they rotate (C22).
