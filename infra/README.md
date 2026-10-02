@@ -178,8 +178,10 @@ marks the upload failed, and the page should say so (plan
 2. Upload a file through the page and watch the line under the bar. Expected, over about 4
    minutes: "Waiting for the server to start", then "Processing on the server", then
    "The server hit an error (failing on purpose (FailProcessing is on)) on attempt 1 of 3…",
-   then the same for attempt 2 and 3, then an error on the page:
-   "the server couldn't process the file after 3 attempts: …". Note anything different.
+   then the same for attempt 2 and 3, then an error on the page. Today it reads, with the phrase
+   doubled (a known wording problem): "the server couldn't process the file: the server couldn't
+   process the file after 3 attempts: 1 record(s) failed: processing "raw/…" failed: failing on
+   purpose (FailProcessing is on)". Note anything different.
 3. Switch it off again: the same command with `FailProcessing=off`.
 
 ## 11. Costs, and tearing it down
