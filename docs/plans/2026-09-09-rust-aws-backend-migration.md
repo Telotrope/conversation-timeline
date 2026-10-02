@@ -7,7 +7,7 @@ even stated directly in the tool's own UI copy). That architecture has hit three
 
 1. **The existing "Classify with AI" feature is structurally broken outside a live Claude
    artifact.** It calls `https://api.anthropic.com/v1/messages` directly from browser JS
-   ([timeline.html:65465-65520](../../timeline.html#L65465)) — this only works because the Claude-artifact
+   ([timeline.html:65465-65520 in the first commit, since deleted](https://github.com/Telotrope/conversation-timeline/blob/4f3269c/timeline.html#L65465-L65520)) — this only works because the Claude-artifact
    host proxies/authorizes the call; a downloaded copy of the file gets a hard CORS rejection with
    no client-side workaround, documented as a known limitation at
    [timeline-project-decisions.md:388-393](../../timeline-project-decisions.md#L388).
@@ -52,7 +52,7 @@ zero, which is what actually maps to a one-time $5 charge; Fargate/EC2 would bil
 capacity between sessions. Parsing/dedup of a 60MB export is a single-pass, in-memory operation
 well inside Lambda's limits. The one risk is a *full Bedrock classification run* exceeding
 Lambda's 15-minute ceiling (existing code batches 30 messages/call,
-[timeline.html:65435](../../timeline.html#L65435); ~2,200 messages ≈ 74 batches). **Mitigation**:
+[timeline.html:65435 in the first commit, since deleted](https://github.com/Telotrope/conversation-timeline/blob/4f3269c/timeline.html#L65435); ~2,200 messages ≈ 74 batches). **Mitigation**:
 checkpoint after every batch (mirrors the existing "save every 5 batches" resilience pattern,
 [timeline-project-decisions.md:357-363](../../timeline-project-decisions.md#L357)) and drive remaining
 batches via one SQS message per batch-offset, so the Lambda re-invokes itself per batch instead of
@@ -79,7 +79,7 @@ is one giant S3 object, every checkbox click becomes a read-modify-write of the 
 | Per-message flags (`_claude_timeline_auto` / `_claude_timeline_user`) | DynamoDB `MessageFlags`, PK `user_id#conversation_id`, SK `message_id` (keeps the existing `${conversationIndex}|${created_at}` composite key, [timeline-project-decisions.md:89-96](../../timeline-project-decisions.md#L89)) | ~2,200 small items/user | Cheap point reads/writes for per-row edits; auto/user modeled as genuinely separate attributes (see §4.1). |
 | Conversation/upload metadata | DynamoDB `Conversations`, PK `user_id`, SK `upload_id#conversation_index` | Small items | Powers Conversations tab/Calendar without touching the S3 blob. |
 | User/account/payment state | DynamoDB `Users`, PK `user_id` | Small items | Stripe customer ID, `paid_passes_remaining` counter (see §7.2). |
-| Session/block boundaries (`buildBlocks`/`attachFlags`, [timeline.html:65229-65296](../../timeline.html#L65229)) | **Not persisted** | N/A | Deterministic, cheap to recompute from message timestamps already in DynamoDB; avoids a cache-invalidation problem every time a flag changes. |
+| Session/block boundaries (`buildBlocks`/`attachFlags`, [frontend/core/blocks.js:38-67](../../frontend/core/blocks.js#L38-L67) and [frontend/core/flags.js:35-62](../../frontend/core/flags.js#L35-L62)) | **Not persisted** | N/A | Deterministic, cheap to recompute from message timestamps already in DynamoDB; avoids a cache-invalidation problem every time a flag changes. |
 
 ### 1.4 Auth: Amazon Cognito User Pools
 Confirmed. JWT authorizer on the API Gateway HTTP API; no custom password/session/token code to
@@ -96,7 +96,7 @@ below across V2–V5.
    (`pending`), returns an S3 presigned PUT URL.
 2. Client `PUT`s the raw export directly to S3 (never through Lambda/API Gateway).
 3. An S3 `ObjectCreated` event triggers a processing Lambda: `unwrap_uploaded_json` +
-   `dedup_chat_messages` (ports of [timeline.html:64953-64990](../../timeline.html#L64953)) run here,
+   `dedup_chat_messages` (ports of [frontend/core/export-format.js:26-94](../../frontend/core/export-format.js#L26-L94) and [timeline.html:64906-64940 in the first commit, since deleted](https://github.com/Telotrope/conversation-timeline/blob/4f3269c/timeline.html#L64906-L64940)) run here,
    writing per-message rows to `MessageFlags` and metadata to `Conversations`.
 4. Client polls `GET /uploads/{id}` until `status: ready`.
 
@@ -138,22 +138,22 @@ access enabled — needs your sign-off before V3 starts** (see C6 below).
 
 ### V1 — Rust core logic, no AWS yet (pure port + parity proof)
 **Adds**: `backend/timeline-core` library crate, pure functions, no I/O:
-- `dedup_chat_messages` — port of [timeline.html:64906-64940](../../timeline.html#L64906).
-- `unwrap_uploaded_json` — port of [timeline.html:64953-64961](../../timeline.html#L64953) (format-v2
+- `dedup_chat_messages` — port of [timeline.html:64906-64940 in the first commit, since deleted](https://github.com/Telotrope/conversation-timeline/blob/4f3269c/timeline.html#L64906-L64940).
+- `unwrap_uploaded_json` — port of [frontend/core/export-format.js:26-34](../../frontend/core/export-format.js#L26-L34) (format-v2
   wrapper detection).
-- `build_blocks` — port of [timeline.html:65229-65264](../../timeline.html#L65229), **UTC in, UTC out**;
+- `build_blocks` — port of [frontend/core/blocks.js:38-67](../../frontend/core/blocks.js#L38-L67), **UTC in, UTC out**;
   day-bucketing deliberately excluded (see §4.3).
 - ALL-CAPS dictionary check — port of the §5.1 logic in
   [timeline-project-decisions.md:222-233](../../timeline-project-decisions.md#L222).
 - Criticism keyword regex — port of the wide-net phrase list,
   [timeline-project-decisions.md:242-243](../../timeline-project-decisions.md#L242).
 - Anger detection — **re-implemented against VADER** instead of AFINN
-  ([timeline.html:64860](../../timeline.html#L64860) is the AFINN table being replaced), keeping the
+  ([timeline.html:64860 in the first commit, since deleted](https://github.com/Telotrope/conversation-timeline/blob/4f3269c/timeline.html#L64860) is the AFINN table being replaced), keeping the
   existing anger-specific phrase list and exclamation-mark-burst logic
   ([timeline-project-decisions.md:246-249](../../timeline-project-decisions.md#L246)), with thresholds
   recalibrated against the same hand-curated baseline the AFINN version was tuned against.
 - `effective_flag` four-state matrix — port of
-  [timeline.html:65193-65209](../../timeline.html#L65193), for server-side Analytics aggregates.
+  [frontend/core/flags.js:12-25](../../frontend/core/flags.js#L12-L25), for server-side Analytics aggregates.
 
 **Stays client-side**: all rendering (SVG charts, markdown-lite renderer, tab UI). No network
 calls exist yet — this version is a tested library, not a deployed service.
@@ -191,8 +191,8 @@ calls exist yet — this version is a tested library, not a deployed service.
 `GET`/`PATCH /messages/{id}/flags` (two-field auto/user write path, structurally enforced — §4.1),
 `GET /export`. Cognito gates all routes. `timeline.html` is refactored to `fetch()` these
 endpoints instead of parsing a local file
-([timeline.html:64963 onward](../../timeline.html#L64963) call sites removed); `window.storage`
-auto-save/recovery ([timeline.html:65298-65365](../../timeline.html#L65298)) is retired — it was only
+([frontend/core/export-format.js:36 onward](../../frontend/core/export-format.js#L36) call sites removed); `window.storage`
+auto-save/recovery ([timeline.html:65298-65365 in the first commit, since deleted](https://github.com/Telotrope/conversation-timeline/blob/4f3269c/timeline.html#L65298-L65365)) is retired — it was only
 ever a fallback for the artifact-hosting context.
 
 **AWS resources**: S3 bucket (raw + export prefixes, SSE), DynamoDB `Users`/`Conversations`/
@@ -293,17 +293,17 @@ backend, and retiring the already-inert `window.storage` calls.
 
 **Why no rewrite of the parsing/rendering code is needed**: `GET /export` already returns exactly
 the `{"conversations": [...]}` wrapped shape `parseUploadedConversations`
-([timeline.html:64963](../../timeline.html#L64963)) already knows how to consume — flags embedded as
+([frontend/core/export-format.js:36](../../frontend/core/export-format.js#L36)) already knows how to consume — flags embedded as
 `_claude_timeline_auto`/`_claude_timeline_user`, exactly the fields it already reads. So the only
 thing that changes is *how the raw text reaches `parseUploadedConversations`*, not what happens to
 it afterward. `CONVERSATIONS`/`MESSAGES`/`HUMAN_MESSAGES`/`BLOCKS` and every rendering function
 stay untouched.
 
-**New `handleLoadClick()` flow** ([timeline.html:65047](../../timeline.html#L65047) onward):
+**New `handleLoadClick()` flow** ([frontend/ui/load-flow.js:141](../../frontend/ui/load-flow.js#L141) onward):
 1. Read the chosen file's raw bytes client-side (same as today — needed to `PUT` them).
 2. If no auth token is cached yet, call `POST /_dev/login` with a display name typed into one new
    text input (`id="devLoginSub"`, placed next to the existing file picker at
-   [timeline.html:747-748](../../timeline.html#L747-L748)) to get one. Dev-only, matching the rest of
+   [timeline.html:709-710](../../timeline.html#L709-L710)) to get one. Dev-only, matching the rest of
    this section.
 3. `POST /uploads` (`Authorization: Bearer <token>`) → `{upload_id, upload_url}`.
 4. `PUT` the raw bytes to `upload_url`.
@@ -320,9 +320,9 @@ stay untouched.
 
 **Also retired in this increment** (moved out of "deferred" after review — see below): the three
 `window.storage`-backed load-time recovery calls in `handleLoadClick()`
-([timeline.html:65086](../../timeline.html#L65086) and
-[timeline.html:65102](../../timeline.html#L65102)) and one save call in `setRowOverrides()`
-([timeline.html:65392](../../timeline.html#L65392)):
+([timeline.html:65086 in the first commit, since deleted](https://github.com/Telotrope/conversation-timeline/blob/4f3269c/timeline.html#L65086) and
+[timeline.html:65102 in the first commit, since deleted](https://github.com/Telotrope/conversation-timeline/blob/4f3269c/timeline.html#L65102)) and one save call in `setRowOverrides()`
+([timeline.html:65392 in the first commit, since deleted](https://github.com/Telotrope/conversation-timeline/blob/4f3269c/timeline.html#L65392)):
 - `loadAutoClassificationsFromStorage()` and the recovery-merge block that follows it — removed
   outright, not just left uncalled. Merging cached LLM-classification results from an unrelated
   previous run on top of freshly-fetched backend data is exactly the kind of thing that could
@@ -366,7 +366,7 @@ since overrides already don't persist outside the artifact context" — that's t
 reason to skip real, readily-achievable functionality, since without it the "testable website"
 never actually completes its core workflow (review a message, confirm a flag, have it stick for
 the session). The actual complexity is low:
-- `setRowOverrides(id, changedType, changedValue)` ([timeline.html:65382](../../timeline.html#L65382))
+- `setRowOverrides(id, changedType, changedValue)` ([frontend/ui/flag-edits.js:28-39](../../frontend/ui/flag-edits.js#L28-L39))
   already computes the full three-flag `values` object and updates local `OVERRIDES`/re-renders
   optimistically, exactly as today.
 - The real `(conversation_id, message_id)` UUIDs the backend needs are already available in
@@ -377,7 +377,7 @@ the session). The actual complexity is low:
   ${API_BASE}/conversations/{conversation_id}/messages/{message_id}/flags` with a
   `FlagOverrides`-shaped body (only the changed field set, others omitted — matching what
   `UserFlagWriter::set_user_flags` already expects). `saveOverrides()`'s call
-  ([timeline.html:65392](../../timeline.html#L65392)) is replaced by this, not left calling
+  ([timeline.html:65392 in the first commit, since deleted](https://github.com/Telotrope/conversation-timeline/blob/4f3269c/timeline.html#L65392)) is replaced by this, not left calling
   `window.storage`.
 - On a failed `PATCH`: surface it via `setSaveStatus(...)` (e.g. "Could not save — check your
   connection and try again"), matching the existing status-message pattern. The optimistic local
@@ -1615,7 +1615,7 @@ Modeled as genuinely separate DynamoDB attributes (or sort-key-suffixed items,
 `MSG#{id}#AUTO` / `MSG#{id}#USER`), written by two different, narrowly-IAM-scoped code paths — the
 classification Lambda (heuristic in V1/V2, Bedrock in V3) can only ever touch `AUTO`; the
 user-override `PATCH` route can only ever touch `USER`. This turns "auto must never overwrite
-user" from a convention (as it is today, [timeline.html:64992-65005](../../timeline.html#L64992)) into
+user" from a convention (as it is today, [frontend/core/export-format.js:56-66](../../frontend/core/export-format.js#L56-L66)) into
 something a unit test can assert structurally. `effectiveFlag()`'s four-state matrix
 ([timeline-project-decisions.md:264-276](../../timeline-project-decisions.md#L264)) stays a
 **client-side** pure function computed from the two already-fetched fields — the `SHOW_AUTO`/
@@ -1631,13 +1631,13 @@ Runs exactly once, server-side, at upload time, mirroring the existing format-v2
 re-implements this.
 
 ### 4.3 Local-timezone session bucketing
-`buildBlocks()` ([timeline.html:65229-65264](../../timeline.html#L65229)) fuses two things with
+`buildBlocks()` ([frontend/core/blocks.js:38-67](../../frontend/core/blocks.js#L38-L67)) fuses two things with
 different timezone sensitivity — split them:
 1. **Gap-based session splitting** (≥15 min since previous message) is timezone-agnostic — a delta
    between two instants. **Moves to the Rust backend** as `timeline_core::build_blocks`, UTC in,
    UTC session-boundary timestamps out.
 2. **Which calendar day a session renders under** (`localDateKey()`,
-   [timeline.html:65222-65227](../../timeline.html#L65222)) is timezone-sensitive, and is exactly the
+   [frontend/core/blocks.js:11-16](../../frontend/core/blocks.js#L11-L16)) is timezone-sensitive, and is exactly the
    logic whose earlier server-side-in-UTC implementation caused a real bug ("Calendar bars ran
    past the edge of their day,"
    [timeline-project-decisions.md:371](../../timeline-project-decisions.md#L371)). **Stays client-side**:
@@ -1660,7 +1660,7 @@ verbatim in the Rust port, plus the V5 adversarial test named above.
 
 ## 5. License Notes (data assets, not just crates)
 
-- **The ~64,000-word English dictionary** ([timeline.html:930-64830](../../timeline.html#L930), sourced
+- **The ~64,000-word English dictionary** ([timeline.html:930-64830 in the first commit, since deleted](https://github.com/Telotrope/conversation-timeline/blob/4f3269c/timeline.html#L930-L64830), sourced
   from Debian's `wamerican`/SCOWL): SCOWL's grant permits use/copy/modify/distribute/sell "for any
   purpose without fee" — fine for a paid product, no action needed.
 - **AFINN → VADER swap**: resolved per the decisions above (§ "Decisions already confirmed").
@@ -1789,8 +1789,8 @@ backend/
 - `frontend/` — the presentation-only remainder of `timeline.html`. Once the dictionary/AFINN-or-
   VADER data and all business logic move server-side, the shipped client file shrinks from 730KB
   down to roughly the markup + rendering logic currently at
-  [timeline.html:1-918](../../timeline.html#L1) and
-  [timeline.html:65677 onward](../../timeline.html#L65677) (charts, markdown-lite renderer, tab
+  [timeline.html:1-849](../../timeline.html#L1-L849) and
+  [frontend/ui/](../../frontend/ui/) (charts, markdown-lite renderer, tab
   switching, cross-navigation).
 - `infra/` — `template.yaml` (AWS SAM).
 - `timeline-project-decisions.md` stays at the repo root as the canonical constraint log; this
@@ -1819,7 +1819,7 @@ pass rather than unlimited reruns (the existing "refresh detection" feature,
 designed way a user could otherwise re-trigger the expensive part for free).
 
 **Uncertainty flags**: token-count assumptions are estimated from the existing batch design (30
-messages/call, ~300-token prior-reply context, [timeline.html:65435](../../timeline.html#L65435)), not
+messages/call, ~300-token prior-reply context, [timeline.html:65435 in the first commit, since deleted](https://github.com/Telotrope/conversation-timeline/blob/4f3269c/timeline.html#L65435)), not
 measured against a real sample yet — the V3 verified-sample fixture will replace this estimate
 with a real number (see C6).
 
@@ -1885,7 +1885,7 @@ integration tests.
 
 ### C8 [OPEN, likely resolved pending confirmation]: The decisions doc's dedup statistic doesn't match the real uploaded export
 Running the exact `dedupChatMessages` algorithm
-([timeline.html:64906-64940](../../timeline.html#L64906)), ported faithfully to Python and verified
+([timeline.html:64906-64940 in the first commit, since deleted](https://github.com/Telotrope/conversation-timeline/blob/4f3269c/timeline.html#L64906-L64940)), ported faithfully to Python and verified
 against its own logic, against the full uploaded `conversations.json` gave **4,457 raw messages,
 4,451 after dedup, 6 dropped across 3 of 117 conversations** — not the **31 of 4,482** stated at
 [timeline-project-decisions.md:66-70](../../timeline-project-decisions.md#L66). Real, measured mismatch,
@@ -2283,10 +2283,10 @@ recomputable value stored as if it weren't) that was riding along with it.
 
 ## Critical Files
 
-- [timeline.html](../../timeline.html) — porting source. Key ranges:
-  [64906-64990](../../timeline.html#L64906) (dedup + flag load), [65193-65296](../../timeline.html#L65193)
-  (`effectiveFlag`/`buildBlocks`/`attachFlags`), [65417-65531](../../timeline.html#L65417)
-  (`classifyBatchWithAI`/`classifyBatchWithRetry`).
+- [timeline.html in the first commit](https://github.com/Telotrope/conversation-timeline/blob/4f3269c/timeline.html) — porting source. Key ranges, with where each is now:
+  [64906-64990](https://github.com/Telotrope/conversation-timeline/blob/4f3269c/timeline.html#L64906-L64990) (dedup + flag load; dedup since deleted, flag load now [frontend/core/export-format.js:26-94](../../frontend/core/export-format.js#L26-L94)), [65193-65296](https://github.com/Telotrope/conversation-timeline/blob/4f3269c/timeline.html#L65193-L65296)
+  (`effectiveFlag`/`buildBlocks`/`attachFlags`, now [frontend/core/flags.js:12-62](../../frontend/core/flags.js#L12-L62) and [frontend/core/blocks.js:11-67](../../frontend/core/blocks.js#L11-L67)), [65417-65531](https://github.com/Telotrope/conversation-timeline/blob/4f3269c/timeline.html#L65417-L65531)
+  (`classifyBatchWithAI`/`classifyBatchWithRetry`, since deleted).
 - [timeline-project-decisions.md](../../timeline-project-decisions.md) — full constraint set; §2.3
   (dedup), §3 (sessions), §5.3 (four-state matrix), §10 (bug root causes) are most load-bearing.
 - [CLAUDE.md](../../CLAUDE.md) — testing rigor, exception-handling, trust-boundary sanitization, and
