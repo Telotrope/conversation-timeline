@@ -2118,6 +2118,17 @@ already loaded with `?deploy=dev` through it, which suggests query strings pass,
 the same request. **Mitigation in plan:** none needed if it works; if not, the page shows no
 login and the address bar shows what arrived. **Open:** trigger is D3 after the redeploy.
 
+### C41 [OPEN]: Cognito's sign-up emails land in spam
+Observed by the user on the first deployed sign-up (2026-10-02): the confirmation-code email went
+to the spam folder. The template leaves Cognito on its default sender, which (from memory, not
+checked) sends from the shared address `no-reply@verificationemail.com` and is limited to about
+50 emails a day per account. Friction for every new user, and a hard cap. **Mitigation in plan:**
+none yet; the user can check spam. **Open:** send through Amazon SES from an address on a domain
+the user controls (e.g. `no-reply@telotrope.ai`): DNS records proving the domain (SPF, DKIM,
+DMARC), a request to move SES out of its sandbox (reviewed by AWS by hand), and the user pool's
+`EmailConfiguration` set to `DEVELOPER` with the SES identity. Needs its own plan section and the
+user's DNS access. Trigger: before anyone other than the user signs up.
+
 ### C11 [RESOLVED]: `UploadStatus`'s `Pending`/`Processing` are persisted but never read
 Confirmed by `grep`, not assumed: no route reads `UploadRecord.status`, and `process_upload`
 didn't branch on it either. Written by `create_pending`/`mark_processing`, read by nothing.
