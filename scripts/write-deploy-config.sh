@@ -21,8 +21,16 @@ out="${DEPLOY_CONFIG_DIR:-$repo/frontend/deploy-configs}/$stage.json"
 outputs="$(aws cloudformation describe-stacks --stack-name "timeline-$stage" \
   --query 'Stacks[0].Outputs' --output json)"
 
+# The page's code version, stamped on every activity record so what the page
+# showed can be read from its code (docs/plans/2026-10-02-activity-
+# instrumentation.md §4). "-dirty" marks uncommitted changes.
+if ! page_version="$(git -C "$repo" describe --always --dirty 2>&1)"; then
+  echo "could not read the page's version from git ($page_version); records will say \"unknown\"" >&2
+  page_version="unknown"
+fi
+
 mkdir -p "$(dirname "$out")"
-OUTPUTS="$outputs" python3 - "$out" <<'PY'
+OUTPUTS="$outputs" PAGE_VERSION="$page_version" python3 - "$out" <<'PY'
 import json, os, sys
 outputs = {o["OutputKey"]: o["OutputValue"] for o in json.loads(os.environ["OUTPUTS"])}
 missing = [k for k in ("ApiUrl", "CognitoDomain", "UserPoolClientId") if k not in outputs]
@@ -36,6 +44,7 @@ config = {
     # 2026-10-02-activity-instrumentation.md §4). A stack deployed before
     # the RecordActivity output existed records nothing.
     "recordActivity": outputs.get("RecordActivity") == "on",
+    "pageVersion": os.environ["PAGE_VERSION"],
 }
 with open(sys.argv[1], "w") as f:
     json.dump(config, f, indent=2)

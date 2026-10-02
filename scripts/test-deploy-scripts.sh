@@ -100,6 +100,11 @@ PY
 python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["recordActivity"] is True' "$work/configs/dev.json" \
   && pass "records activity when the stack's RecordActivity output is on" \
   || fail "recordActivity with the output on: $(cat "$work/configs/dev.json")"
+expected_version="$(git -C "$REPO_ROOT" describe --always --dirty)"
+python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["pageVersion"] == sys.argv[2]' \
+  "$work/configs/dev.json" "$expected_version" \
+  && pass "writes the page's version from git" \
+  || fail "pageVersion: $(cat "$work/configs/dev.json"), expected $expected_version"
 
 echo '[{"OutputKey": "ApiUrl", "OutputValue": "https://x.example"}]' > "$work/answer-cloudformation"
 if "$REPO_ROOT/scripts/write-deploy-config.sh" old > "$work/out.txt" 2>&1; then
