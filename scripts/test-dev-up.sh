@@ -242,6 +242,28 @@ else
 fi
 
 echo
+echo "=== Case 6: 'all' starts the page and the backend together ==="
+all_output="${REPO_ROOT}/.dev-state/test-all.out"
+"${REPO_ROOT}/scripts/dev-up.sh" all > "$all_output" 2>&1 &
+if wait_for_backend "$PORT"; then
+  pass "the backend answers on ${PORT}"
+else
+  fail "no backend after 'all': $(cat "$all_output")"
+fi
+if curl -sf -o /dev/null "http://127.0.0.1:${STATIC_PORT}/timeline.html"; then
+  pass "the page is served on ${STATIC_PORT}"
+else
+  fail "no page on ${STATIC_PORT} after 'all'"
+fi
+if grep -q "Page: http://localhost:${STATIC_PORT}/timeline.html" "$all_output"; then
+  pass "prints the page's address"
+else
+  fail "no page address printed: $(cat "$all_output")"
+fi
+rm -f "$all_output"
+"${REPO_ROOT}/scripts/dev-down.sh" all >/dev/null 2>&1
+
+echo
 if [ "$failures" -eq 0 ]; then
   echo "All checks passed."
 else

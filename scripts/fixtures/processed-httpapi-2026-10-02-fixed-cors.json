@@ -1,0 +1,302 @@
+{
+ "Resources": {
+  "HttpApi": {
+   "Type": "AWS::ApiGatewayV2::Api",
+   "Metadata": {
+    "SamResourceId": "HttpApi"
+   },
+   "Properties": {
+    "Body": {
+     "info": {
+      "version": "1.0",
+      "title": {
+       "Ref": "AWS::StackName"
+      }
+     },
+     "paths": {
+      "/{proxy+}": {
+       "post": {
+        "x-amazon-apigateway-integration": {
+         "httpMethod": "POST",
+         "type": "aws_proxy",
+         "uri": {
+          "Fn::Sub": "arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ApiFunction.Arn}/invocations"
+         },
+         "payloadFormatVersion": "2.0"
+        },
+        "security": [
+         {
+          "CognitoAuthorizer": []
+         }
+        ],
+        "parameters": [
+         {
+          "required": true,
+          "name": "proxy+",
+          "in": "path"
+         }
+        ],
+        "responses": {}
+       },
+       "get": {
+        "x-amazon-apigateway-integration": {
+         "httpMethod": "POST",
+         "type": "aws_proxy",
+         "uri": {
+          "Fn::Sub": "arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ApiFunction.Arn}/invocations"
+         },
+         "payloadFormatVersion": "2.0"
+        },
+        "security": [
+         {
+          "CognitoAuthorizer": []
+         }
+        ],
+        "parameters": [
+         {
+          "required": true,
+          "name": "proxy+",
+          "in": "path"
+         }
+        ],
+        "responses": {}
+       },
+       "patch": {
+        "x-amazon-apigateway-integration": {
+         "httpMethod": "POST",
+         "type": "aws_proxy",
+         "uri": {
+          "Fn::Sub": "arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ApiFunction.Arn}/invocations"
+         },
+         "payloadFormatVersion": "2.0"
+        },
+        "security": [
+         {
+          "CognitoAuthorizer": []
+         }
+        ],
+        "parameters": [
+         {
+          "required": true,
+          "name": "proxy+",
+          "in": "path"
+         }
+        ],
+        "responses": {}
+       }
+      },
+      "/activity": {
+       "post": {
+        "x-amazon-apigateway-integration": {
+         "httpMethod": "POST",
+         "type": "aws_proxy",
+         "uri": {
+          "Fn::Sub": "arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ActivityFunction.Arn}/invocations"
+         },
+         "payloadFormatVersion": "2.0"
+        },
+        "security": [
+         {
+          "CognitoAuthorizer": []
+         }
+        ],
+        "responses": {}
+       }
+      }
+     },
+     "x-amazon-apigateway-cors": {
+      "Fn::If": [
+       "HostingPage",
+       {
+        "Fn::If": [
+         "AllowsLocalPage",
+         {
+          "allowMethods": [
+           "GET",
+           "POST",
+           "PATCH"
+          ],
+          "allowHeaders": [
+           "authorization",
+           "content-type",
+           "x-timeline-session"
+          ],
+          "allowOrigins": [
+           {
+            "Fn::Sub": [
+             "https://${Host}",
+             {
+              "Host": {
+               "Fn::If": [
+                "HasPageDomain",
+                "howangryami.telotrope.ai",
+                {
+                 "Fn::GetAtt": [
+                  "PageDistribution",
+                  "DomainName"
+                 ]
+                }
+               ]
+              }
+             }
+            ]
+           },
+           {
+            "Fn::Join": [
+             "",
+             [
+              {
+               "Fn::Select": [
+                0,
+                {
+                 "Fn::Split": [
+                  "/",
+                  "https://dev.tail13dce8.ts.net/proxy/8000/timeline.html"
+                 ]
+                }
+               ]
+              },
+              "//",
+              {
+               "Fn::Select": [
+                2,
+                {
+                 "Fn::Split": [
+                  "/",
+                  "https://dev.tail13dce8.ts.net/proxy/8000/timeline.html"
+                 ]
+                }
+               ]
+              }
+             ]
+            ]
+           }
+          ],
+          "maxAge": 600,
+          "exposeHeaders": [
+           "apigw-requestid"
+          ]
+         },
+         {
+          "allowMethods": [
+           "GET",
+           "POST",
+           "PATCH"
+          ],
+          "allowHeaders": [
+           "authorization",
+           "content-type",
+           "x-timeline-session"
+          ],
+          "allowOrigins": [
+           {
+            "Fn::Sub": [
+             "https://${Host}",
+             {
+              "Host": {
+               "Fn::If": [
+                "HasPageDomain",
+                "howangryami.telotrope.ai",
+                {
+                 "Fn::GetAtt": [
+                  "PageDistribution",
+                  "DomainName"
+                 ]
+                }
+               ]
+              }
+             }
+            ]
+           }
+          ],
+          "maxAge": 600,
+          "exposeHeaders": [
+           "apigw-requestid"
+          ]
+         }
+        ]
+       },
+       {
+        "allowMethods": [
+         "GET",
+         "POST",
+         "PATCH"
+        ],
+        "allowHeaders": [
+         "authorization",
+         "content-type",
+         "x-timeline-session"
+        ],
+        "allowOrigins": [
+         {
+          "Fn::Join": [
+           "",
+           [
+            {
+             "Fn::Select": [
+              0,
+              {
+               "Fn::Split": [
+                "/",
+                "https://dev.tail13dce8.ts.net/proxy/8000/timeline.html"
+               ]
+              }
+             ]
+            },
+            "//",
+            {
+             "Fn::Select": [
+              2,
+              {
+               "Fn::Split": [
+                "/",
+                "https://dev.tail13dce8.ts.net/proxy/8000/timeline.html"
+               ]
+              }
+             ]
+            }
+           ]
+          ]
+         }
+        ],
+        "maxAge": 600,
+        "exposeHeaders": [
+         "apigw-requestid"
+        ]
+       }
+      ]
+     },
+     "tags": [
+      {
+       "name": "httpapi:createdBy",
+       "x-amazon-apigateway-tag-value": "SAM"
+      }
+     ],
+     "openapi": "3.0.1",
+     "components": {
+      "securitySchemes": {
+       "CognitoAuthorizer": {
+        "type": "oauth2",
+        "x-amazon-apigateway-authorizer": {
+         "jwtConfiguration": {
+          "audience": [
+           {
+            "Ref": "UserPoolClient"
+           }
+          ],
+          "issuer": {
+           "Fn::Sub": "https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}"
+          }
+         },
+         "identitySource": "$request.header.Authorization",
+         "type": "jwt"
+        }
+       }
+      }
+     }
+    },
+    "FailOnWarnings": true
+   }
+  }
+ }
+}
