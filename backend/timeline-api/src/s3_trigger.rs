@@ -94,7 +94,7 @@ impl std::error::Error for TriggerError {}
 
 /// S3 event keys are encoded the way web forms encode values: `+` for a
 /// space and `%XX` for other special characters.
-fn decode_key(raw: &str) -> Result<String, String> {
+pub(crate) fn decode_key(raw: &str) -> Result<String, String> {
     let spaced = raw.replace('+', " ");
     percent_decode_str(&spaced)
         .decode_utf8()

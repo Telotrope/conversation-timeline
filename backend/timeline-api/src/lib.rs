@@ -11,6 +11,7 @@ pub mod aws_state;
 pub mod dev_only;
 pub mod dev_state;
 pub mod error;
+pub mod failed_upload;
 pub mod flag_handles;
 pub mod processing;
 pub mod routes;
