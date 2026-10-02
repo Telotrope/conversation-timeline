@@ -45,7 +45,7 @@ test('the listeners are on the document and window, in the capture phase', () =>
 test('a click is recorded with its element', () => {
   const h = install();
   h.doc.fire('click', { target: el('button', { id: 'loadBtn', text: 'Load' }) });
-  assert.deepEqual(h.records, [{ kind: 'click', target: { tag: 'button', id: 'loadBtn', label: 'Load' } }]);
+  assert.deepEqual(h.records, [{ kind: 'click', target: { tag: 'button', id: 'loadBtn' } }]);
 });
 
 test("a checkbox's change is recorded; a text box's change is not", () => {

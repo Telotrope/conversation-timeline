@@ -61,8 +61,8 @@ test('records are stamped with the time and the tab; a request keeps its own sta
   await h.settle();
   assert.equal(h.posts.length, 1);
   assert.deepEqual(h.posts[0].body.events, [
-    { kind: 'click', target: { tag: 'button' }, t: 1_000_000, tab: 'review' },
-    { kind: 'request', t: 5, method: 'GET', route: '/export', tab: 'review' },
+    { kind: 'click', target: { tag: 'button' }, t: 1_000_000, tab: 'review', page_version: 'unknown' },
+    { kind: 'request', t: 5, method: 'GET', route: '/export', tab: 'review', page_version: 'unknown' },
   ]);
   assert.equal(h.posts[0].token, 'tok');
   assert.equal(h.posts[0].keepalive, false);
@@ -309,4 +309,20 @@ test('the request tracker counts requests in flight and never goes below zero', 
   tracker.finish();
   assert.equal(tracker.inFlight(), 0);
   assert.equal(tracker.lastFinishedAt(), 9);
+});
+
+test("every record is sent with the page's version, including those from before the decision", async () => {
+  const h = harness();
+  h.click();
+  h.recorder.decide(true, '1a2b3c4-dirty');
+  h.click();
+  await h.settle();
+  assert.deepEqual(h.posts[0].body.events.map((e) => e.page_version), ['1a2b3c4-dirty', '1a2b3c4-dirty']);
+});
+
+test('a record is stamped in place, not copied', () => {
+  const h = on({ token: null });
+  const event = { kind: 'click', target: { tag: 'button' } };
+  h.recorder.record(event);
+  assert.deepEqual(event, { kind: 'click', target: { tag: 'button' }, t: 1_000_000, tab: 'review' });
 });

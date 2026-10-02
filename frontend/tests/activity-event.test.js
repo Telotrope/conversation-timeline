@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  LABEL_CAP, S3_EXPORT_ROUTE, S3_UPLOAD_ROUTE, SHOWN_PLACES, SHOWN_TEXT_CAP,
+  TEXT_CAP, S3_EXPORT_ROUTE, S3_UPLOAD_ROUTE, SHOWN_PLACES,
   changeEvent, cleanText, clickEvent, describeElement, isTextBox, requestEvent, routeTemplate,
   shownEvent, submitEvent, viewEvent,
 } from '../core/activity-event.js';
@@ -25,25 +25,28 @@ function reviewRow(){
   return { caps, approve, textSpan, row };
 }
 
-test('an element is described by its id and its label', () => {
+test('an element is described by its id, never its wording', () => {
   const button = el('button', { id: 'loadBtn', text: '  Load\n ' });
-  assert.deepEqual(describeElement(button), { tag: 'button', id: 'loadBtn', label: 'Load' });
+  assert.deepEqual(describeElement(button), { tag: 'button', id: 'loadBtn' });
 });
 
-test('a click on a span inside a button describes the button', () => {
+test('a click on a span inside a tab button describes the button by its tab', () => {
   const inner = el('span', { text: 'Review' });
   el('nav', {}, el('button', { attrs: { 'data-tab': 'review' } }, inner));
-  assert.deepEqual(clickEvent(inner), { kind: 'click', target: { tag: 'button', label: 'Review' } });
+  assert.deepEqual(clickEvent(inner), { kind: 'click', target: { tag: 'button', tab: 'review' } });
 });
 
-test("a checkbox is labelled by its label's text, an aria-label wins over text", () => {
+test("no label's text, aria-label or button text; name and data-analysis are kept", () => {
   const box = el('input', { id: 'autoDetectCheckbox', type: 'checkbox', checked: false });
   el('label', { text: 'Scan for flags ' }, box);
-  assert.deepEqual(describeElement(box), { tag: 'input', id: 'autoDetectCheckbox', label: 'Scan for flags' });
-  const loose = el('input', { type: 'checkbox' });
-  assert.deepEqual(describeElement(loose), { tag: 'input' });
+  assert.deepEqual(describeElement(box), { tag: 'input', id: 'autoDetectCheckbox' });
   const named = el('button', { text: 'x', attrs: { 'aria-label': 'Close' } });
-  assert.deepEqual(describeElement(named), { tag: 'button', label: 'Close' });
+  assert.deepEqual(describeElement(named), { tag: 'button' });
+  const radio = el('input', { type: 'radio', attrs: { name: 'granularity' } });
+  assert.deepEqual(describeElement(radio), { tag: 'input', name: 'granularity' });
+  const analysis = el('button', { className: 'analytics-item', text: 'Friction', attrs: { 'data-analysis': 'friction' } });
+  assert.deepEqual(describeElement(analysis), { tag: 'button', analysis: 'friction' });
+  assert.doesNotMatch(JSON.stringify([box, named, analysis].map(describeElement)), /Scan|Close|Friction/);
 });
 
 test('plain elements get no label: they could hold any text', () => {
@@ -95,12 +98,14 @@ test('a button with an id inside a banner keeps its id but not its text', () => 
   assert.deepEqual(describeElement(btn), { tag: 'button', id: 'viewEntireConvBtn', column: 'btn-secondary' });
 });
 
-test('labels are capped and stripped of control and invisible characters', () => {
-  const long = el('button', { text: 'A'.repeat(200) });
-  assert.equal(describeElement(long).label.length, LABEL_CAP);
-  const sneaky = el('button', { text: 'Sa​ve‮\u0000 now\tplease­' });
-  assert.equal(describeElement(sneaky).label, 'Save now please');
-  assert.equal(cleanText('😀'.repeat(100)).length, LABEL_CAP * 2); // 80 emoji, never half of one
+test('attributes are capped and stripped of control and invisible characters', () => {
+  const long = el('button', { id: 'A'.repeat(200) });
+  assert.equal(describeElement(long).id.length, TEXT_CAP);
+  const sneaky = el('button', { id: 'Sa\u200Bve\u202E\u0000 now\tplease\u00AD' });
+  assert.equal(describeElement(sneaky).id, 'Save now please');
+  assert.equal(cleanText('😀'.repeat(100)).length, TEXT_CAP * 2); // 80 emoji, never half of one
+  assert.equal(cleanText(' two  spaces '), 'two spaces');
+  assert.equal(cleanText('plain words'), 'plain words');
   assert.equal(cleanText(null), '');
   assert.equal(cleanText(42), '');
   assert.equal(cleanText('abcdef', 3), 'abc');
@@ -146,14 +151,13 @@ test('which elements are text boxes', () => {
 test('a submit carries the text box and its capped text', () => {
   const box = el('input', { id: 'convSearch', type: 'search' });
   assert.deepEqual(submitEvent(box, ' falcon​ '), { kind: 'submit', target: { tag: 'input', id: 'convSearch' }, text: 'falcon' });
-  assert.equal(submitEvent(box, 'x'.repeat(500)).text.length, LABEL_CAP);
+  assert.equal(submitEvent(box, 'x'.repeat(500)).text.length, TEXT_CAP);
 });
 
 test('view and shown events', () => {
   assert.deepEqual(viewEvent('review', 'router'), { kind: 'view', view: 'review', via: 'router' });
-  assert.deepEqual(shownEvent('saveStatus', 'Saved.', 0), { kind: 'shown', where: 'saveStatus', text: 'Saved.', is_error: false });
-  assert.equal(shownEvent('error', 'e'.repeat(500), true).text.length, SHOWN_TEXT_CAP);
-  assert.deepEqual([...SHOWN_PLACES], ['loadStatus', 'saveStatus', 'loadProgress', 'restoredNotice', 'signIn', 'error']);
+  assert.deepEqual(shownEvent('saveStatus', 'save.saved', 0), { kind: 'shown', where: 'saveStatus', message: 'save.saved', is_error: false });
+  assert.deepEqual([...SHOWN_PLACES], ['loadStatus', 'saveStatus', 'loadProgress', 'restoredNotice', 'signIn']);
 });
 
 test('routes replace every UUID with {id} and drop the query', () => {
@@ -171,11 +175,27 @@ test('request events: answered, unanswered, with facts', () => {
     t: 1000, method: 'POST', route: '/detect', status: 200, ms: 3210.6, bytes: 120, requestId: 'abc=', facts: { offset: 0, limit: 5 },
   }), { kind: 'request', t: 1000, method: 'POST', route: '/detect', status: 200, ms: 3211, request_id: 'abc=', bytes: 120, offset: 0, limit: 5 });
   assert.deepEqual(requestEvent({
-    t: 5, method: 'PUT', route: S3_UPLOAD_ROUTE, status: null, ms: -1, requestId: null, error: 'Failed to fetch',
-  }), { kind: 'request', t: 5, method: 'PUT', route: S3_UPLOAD_ROUTE, status: null, ms: 0, request_id: null, error: 'Failed to fetch' });
+    t: 5, method: 'PUT', route: S3_UPLOAD_ROUTE, status: null, ms: -1, requestId: null, errorKind: 'network',
+  }), { kind: 'request', t: 5, method: 'PUT', route: S3_UPLOAD_ROUTE, status: null, ms: 0, request_id: null, error_kind: 'network' });
+  assert.equal(requestEvent({ t: 5, method: 'GET', route: '/x', status: null, ms: 1, errorKind: 'oops: secret' }).error_kind, 'other');
 });
 
 test('a password box is never a text box, so Enter in it records nothing', () => {
   assert.equal(isTextBox(el('input', { type: 'password' })), false);
   assert.equal(isTextBox(el('input', { type: 'PASSWORD' })), false);
+});
+
+test('a shown event keeps only numbers and a known error kind from its values', () => {
+  assert.deepEqual(
+    shownEvent('loadStatus', 'load.failed', true, { status: 503, error_kind: 'server_error', detail: 'secret server text' }),
+    { kind: 'shown', where: 'loadStatus', message: 'load.failed', is_error: true, status: 503, error_kind: 'server_error' });
+  assert.deepEqual(
+    shownEvent('loadProgress', 'wait.retrying', false, { attempt: 2, max_attempts: 3, count: NaN, error_kind: 'made up' }),
+    { kind: 'shown', where: 'loadProgress', message: 'wait.retrying', is_error: false, attempt: 2, max_attempts: 3 });
+});
+
+test('a message cell whose class has a leading space still names its column', () => {
+  const span = el('span', { text: 'x' });
+  el('div', { id: 'reviewTable' }, el('tr', { attrs: { 'data-msg-id': '1|t' } }, el('td', { className: ' msg-text when' }, span)));
+  assert.deepEqual(describeElement(span), { tag: 'tr', message_id: '1|t', column: 'msg-text' });
 });
