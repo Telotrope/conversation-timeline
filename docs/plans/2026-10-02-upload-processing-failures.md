@@ -1,6 +1,8 @@
 # Upload processing: failures that reach the page, and a wait you can see
 
-**Status:** proposed 2026-10-02, not approved.
+**Status:** approved 2026-10-02, with the order changed by the user: the error handling (§1a,
+§2, §3) is built and deployed first, **without** §1's fix, so it can be tested live against the
+real intermittent failure; then §1, §4, and optionally §6. See §5.
 
 ## Why
 
@@ -107,6 +109,15 @@ capture the request the SDK sends, using `aws-smithy-runtime`'s `capture_request
 `UpdateItem` asks for `ALL_NEW` and that the `None` path's `GetItem` asks for `ConsistentRead`. The
 existing DynamoDB Local tests keep checking the results are right.
 
+## 1a. Errors name the row they were working on
+
+`"item not found"` named no row, which left the cause unprovable (C2). `process_upload` wraps
+each store error from its review and summary loops in a new `ProcessingError` variant naming what
+it was doing, e.g. `saving review 37 of 538 (conversation <id>, message <id>): item not found`
+and `saving conversation summary 5 of 118 (conversation <id>): …`. Existing variants are
+unchanged, so the committed tests that match them are untouched. **Tests:** a failing flag writer
+and a failing summary store each produce the new message with the right numbers and ids.
+
 ## 2. Every processing failure ends as "failed" on the page
 
 - **What the page needs to hear, and when:** a file that can't be processed after the last retry
@@ -137,17 +148,23 @@ permissions.
 
 ## 3. A wait you can see
 
-- **The server records each attempt.** At the start of every attempt `process_upload` adds one to
-  an `attempts` count on the upload's row and records the time (one `UpdateItem` with `ADD`, so a
-  retry can't lose a count). When an attempt fails with a storage error it also records that
-  error's message before returning it for AWS to retry. This adds a persisted "in progress" state,
+- **The server records each attempt.** At the start of every attempt, the S3-trigger path
+  (`s3_trigger.rs`, the AWS-only caller; the local server processes in one go and needs none of
+  this) adds one to an `attempts` count and records the time, on a separate `PROGRESS#<upload id>`
+  row of the conversations table (one `UpdateItem` with `ADD`, so a retry can't lose a count; a
+  separate row so the outcome row and its committed tests are untouched, and the `CONV#` listing
+  never sees it). When an attempt fails with a storage error it also records that error's message
+  there before returning it for AWS to retry; if that recording itself fails, it's logged and the
+  original error is still returned. New `UploadOutcomeStore` methods: `record_attempt`,
+  `record_attempt_error`, `get_progress`, in both adapters. This adds a persisted "in progress" state,
   which the port's documentation
   ([uploads.rs:1-10](../../backend/timeline-core/src/ports/uploads.rs#L1-L10)) says doesn't
   exist "because nothing currently reads one"; now the page reads it, so the documentation
   changes with it.
 - **`GET /uploads/{id}` says more while processing:** `{"status":"processing","attempt":2,
   "max_attempts":3,"last_error":"item not found"}`; before the first attempt starts (the file is
-  still landing, or AWS hasn't started the function), `{"status":"waiting"}`. `max_attempts`
+  still landing, or AWS hasn't started the function), plain `{"status":"processing"}` as today, so
+  the committed route tests keep passing; the page reads "no attempt yet" as waiting. `max_attempts`
   comes from the same setting as the template's retry count, passed to the API function as an
   environment variable, parsed once at start-up.
 - **The page shows** a moving bar (a CSS animation, per the project's frontend rules) and, under
@@ -159,7 +176,9 @@ permissions.
   - The clock counts from when the file finished sending.
 - **The 10-minute limit's message tells the truth:** "No answer from the server after 10 minutes.
   Its last status was: <the line above>. Reload later to check again." It no longer claims the
-  server is still processing.
+  server is still processing. **Held back until the user approves changing the committed test**
+  that pins the old message ([upload-wait.test.js:47-50](../../frontend/tests/upload-wait.test.js#L47-L50));
+  see C7.
 
 **Tests:** `process_upload` with the in-memory stores: the count goes up once per attempt, a
 storage error is recorded as the last error, and `Ready`/`Failed` replace both. The status route
@@ -186,14 +205,42 @@ Items found broken are fixed under this plan if the fix is small and the same sh
 anything larger is listed in the analysis with its own proposed fix, and comes back to the user
 before it's built.
 
+## 2b. A switch to make processing fail on purpose (proposed; not built until the user approves)
+
+Live-testing §2 needs all three attempts to fail; with the user's export one attempt fails about
+24% of the time, so all three would be rare. Proposed: a template parameter `FailProcessing`,
+`off` (default) or `on`, in the style of `LogS3Events`, setting `TIMELINE_FAIL_PROCESSING` on the
+processing function only. When `on`, each attempt records its attempt, then fails with a storage
+error `"failing on purpose (FailProcessing is on)"` before reading the file. Parsed once at
+start-up into an enum; anything else stops start-up. Without it, a live test is still possible by
+deleting the uploaded object from S3 in the ~20 seconds before processing reads it (each attempt
+then fails with "object not found"), which is fiddly.
+
 ## 5. Rollout
 
-1. Build §1–3 and the audit; all suites pass; `scripts/check-template.sh` passes.
-2. The user redeploys (`sam deploy`; the new function is created, nothing is replaced) and uploads
-   the same export again.
-3. **Measured, not assumed:** the processing log shows one attempt and no `item not found`;
-   whether the page's lines appeared as described. One clean run does not prove §1's cause was
-   right (C2).
+**Phase A (error handling, no fix):**
+1. Build §1a, §2, §3 (and §2b if approved); all suites pass; `scripts/check-template.sh` passes.
+2. The user rebuilds and redeploys (`sam deploy`; the new function is created, nothing is
+   replaced) and uploads the export, possibly several times. Expected, about one upload in four:
+   the page shows "trying again" with the named row; every upload ends ready or failed, never
+   silent. With §2b on: three attempts, then "failed" with the reason, within about 4 minutes.
+
+**Phase B (the fix):**
+3. Build §1 and the audit (§4).
+4. Redeploy and upload again, several times. **Measured, not assumed:** every upload takes one
+   attempt and no log line says `not found`. A few clean runs are evidence, not proof (C2).
+
+**Phase C (optional):** §6, decided after D5 measures where processing time goes.
+
+## 6. Concurrent writes (optional; decided after deployment check D5)
+
+Processing writes 538 reviews and 118 summaries one at a time, each waiting for the previous
+reply. Keeping about 16 requests in flight at once (the same requests, so update-in-place,
+retry-safety and the error naming in §1a are unchanged) would take the reviews from roughly 1.9 s
+to 0.15 s and the summaries from 0.4 s to 0.03 s, estimated from the §0b medians, not measured.
+DynamoDB's `BatchWriteItem` is not used for reviews: it can only replace whole rows, which would
+erase a row's automatic flags. Worth doing only if D5 shows processing time matters; the
+detection pass may matter more.
 
 ## Self-critique log
 
@@ -230,6 +277,12 @@ communication tests use verified samples. **Mitigation in plan:** marked as unve
 fixtures folder's README, like the S3 notification sample before C24. **Open:** trigger is the
 first real failure after deployment; or the user can force one (upload a file larger than the
 function's memory allows) to capture it on purpose.
+
+### C7 [OPEN]: The truthful 10-minute message needs a committed test changed
+[upload-wait.test.js:47-50](../../frontend/tests/upload-wait.test.js#L47-L50) asserts the old,
+false message. Project rules forbid changing a committed test without approval. **Mitigation in
+plan:** Phase A keeps the old message; the line shown above the bar already gives the true last
+status. **Open:** trigger is the user's answer when Phase A is reported.
 
 ### C6 [RESOLVED]: The page's bar never moved
 `setLoadProgressIndeterminate` fills the bar to 100% and stops, which reads as finished or stuck.
