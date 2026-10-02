@@ -73,10 +73,21 @@ checked first; if it suits, use it rather than configuring `tracing-subscriber` 
 3. **Counts of our own calls to AWS.** For each request, how many calls to each S3 and DynamoDB
    operation (e.g. `dynamodb.PutItem: 112, dynamodb.Query: 3`) and how many failed. The AWS SDK
    reports each operation through `tracing`; a small `tracing` layer counts them per request.
-   **To verify first:** the span names and fields the SDK version in use emits. If they don't
-   name the operation reliably, fall back to counting in our storage adapters
+   **Verified 2026-10-02** (C5): the SDK's operation spans (`DynamoDB.PutItem`) and per-attempt
+   spans (`try_attempt`, numbered from 1) name calls and retries reliably; a test against
+   DynamoDB Local and a server answering 500 counted both. **Retries and failures are separate
+   counts** (the user's direction, 2026-10-02): `aws_retries` counts attempts after the first;
+   `aws_failures` counts calls that still failed once the SDK stopped retrying, by operation
+   (`{"DynamoDB.PutItem": 1}`). The SDK has no reliable "gave up" signal of its own (its
+   "halting" debug message also fires on attempts that are then retried), so each place our
+   storage adapters receive an SDK error
    ([timeline-storage/src/dynamo/](../../backend/timeline-storage/src/dynamo/),
-   [s3.rs](../../backend/timeline-storage/src/s3.rs)), and say so.
+   [s3.rs](../../backend/timeline-storage/src/s3.rs)) reports it as a `tracing` event naming the
+   operation, which the counter adds to the current record. The error's text goes in the
+   request's line as `aws_errors` (first 3, capped at 200 characters each).
+   **Request lines come from a small middleware of our own** (`request_log.rs`), not
+   `tower-http`'s `TraceLayer`: the per-route facts and the call counts are a structured record
+   per request, which `TraceLayer`'s span fields don't carry cleanly.
 4. **One line per processing run** in
    [s3_trigger.rs](../../backend/timeline-api/src/s3_trigger.rs): upload ID, attempt number,
    size, conversations and messages stored, time per stage, outcome, AWS call counts. The failure
@@ -89,11 +100,16 @@ checked first; if it suits, use it rather than configuring `tracing-subscriber` 
 
 **New modules:**
 - [frontend/core/activity-event.js](../../frontend/core/) (pure, no browser access): builds an
-  event from what happened. Describes an element by its `id`, its `data-*` attributes
-  (`data-id`, the message ID on review rows), its tag, and its label (button text, a checkbox's
-  label, a tab's name), capped at 80 characters with control and invisible characters removed.
-  **Never** text from table cells, message bodies, file contents or tokens: an element inside the
-  review table or the timeline is described by its message ID and column only.
+  event from what happened. Describes an element by its tag and stable attributes only: `id`,
+  `name`, and the `data-*` attributes the page uses (`data-id`, the message ID on review rows;
+  `data-tab`; `data-analysis`). **No wording from the page** (the user's direction, 2026-10-02):
+  not button text, labels, messages, table cells, message bodies, file contents or tokens. What an
+  element said is found from the page's code at the recorded **page version** (below). Inside the
+  review table or the timeline, an element is described by message ID and column only.
+- **Page version:** every event carries `page_version`, the code's commit (`git describe --always
+  --dirty`, so uncommitted changes show as `-dirty`), written into the deploy config as
+  `pageVersion` by [write-deploy-config.sh](../../scripts/write-deploy-config.sh). Local
+  development, with no deploy config, records `local`.
 - [frontend/infra/activity-recorder.js](../../frontend/infra/): keeps events in memory and sends
   them to `POST /activity` only at quiet moments (below, "When events are sent").
 
@@ -122,10 +138,16 @@ new kind of event appears, so the recorder can't silently fall behind the page.
   nothing else about the keyboard.
 - `view`: tab changes (`hashchange` and the router,
   [frontend/ui/router.js](../../frontend/ui/router.js)).
-- `shown`: every message the page shows, by recording inside the setters in
+- `shown`: every message the page shows, from the setters in
   [status-indicators.js](../../frontend/ui/widgets/status-indicators.js) (`setLoadStatus`,
-  `setSaveStatus`, the load-progress labels, `failLoadProgress`, `showRestoredNotice`), whether
-  the sign-in label says signed in or out (not the email address it shows), and the error area. These are fixed wordings plus server error text, capped.
+  `setSaveStatus`, the load-progress labels, `failLoadProgress`, `showRestoredNotice`), the
+  sign-in state and the error area. **Recorded as a fixed message identifier** (`where` plus
+  `message`, e.g. `saveStatus` / `save.saved`), never the wording; each caller of a setter names
+  the message. Live values in a message are recorded as numbers (`count` for "Loaded N of your
+  confirmed flags", `attempt` and `max_attempts` for a retry). **Errors are recorded by kind, not
+  text:** the HTTP status (`status`) and, where the page has one, the error's kind
+  (`error_kind`, e.g. `stale_page`, `not_logged_in`, `network`); never the server's or the
+  browser's error message, which can repeat parts of the request.
 - `request`: each request the page makes, through one new `apiFetch` in
   [api-client.js](../../frontend/infra/api-client.js) that also adds the `Authorization` and
   session headers. The seven call sites in [load-flow.js](../../frontend/ui/load-flow.js) and
@@ -165,7 +187,10 @@ in the next batch that gets through. Recording never blocks or breaks the page.
 ([frontend/deploy-configs/](../../frontend/deploy-configs/)) gains `recordActivity: true|false`,
 written by [scripts/write-deploy-config.sh](../../scripts/write-deploy-config.sh) from a new
 stack setting `RecordActivity` (default `on` for `dev`). With it off, nothing is recorded or sent.
-Local development (no deploy config) records to the browser console only.
+Local development (no deploy config) records and sends to the **local backend** (`timeline-api`
+running locally, which stands in for AWS), which writes the records to its own output: §8's
+browser test reads them there (approved by the user, 2026-10-02; this section first said "the
+browser console only", contradicting §8).
 
 ## §5 The `POST /activity` route, in its own function
 
@@ -271,9 +296,11 @@ dependency. The deployment analysis documents cite its output from now on.
 ## §9 Privacy
 
 - **Privacy:** records hold user IDs, message and conversation IDs, flag values, file sizes,
-  button labels, the page's own messages, and **text-box contents the user submitted with Enter**
-  (capped at 80 characters), which may contain words from their conversations. No message text, file names,
-  file contents, tokens, IP addresses or email addresses. With a 1-day retention, submitted text
+  element ids and attributes, message identifiers, the page version, and **text-box contents the
+  user submitted with Enter** (capped at 80 characters; never a password box), which may contain
+  words from their conversations. No page wording, message text, server or browser error text,
+  file names, file contents, tokens, IP addresses or email addresses. With a 7-day retention,
+  submitted text
   is gone about a day after submission. This is a development stack with one user; before anyone
   else uses it, recording should be reviewed (and `RecordActivity` defaults `off` for any stage
   but `dev`).
@@ -358,12 +385,19 @@ report it and stop, rather than tune it quietly.
 
 - **Approved by the user, 2026-10-02**, with the response-time limits as written: at most 1 ms
   added to each action on the page, and server timings no more than 5% slower than today's.
+- **Revisions approved by the user, 2026-10-02 (after the first build):** final AWS failures
+  counted separately from retries (§3); no page wording in records, message identifiers and a
+  page version instead (§4); local development sends to the local backend (§4).
+- **Per-click time over 1 ms, intermittently** (one click in about half the runs, 1.5–1.6 ms;
+  [analysis](../analysis/2026-10-02-recording-click-time.md)): coincides with the browser's
+  memory clean-up. The user directed (2026-10-02): reduce what the recorder allocates per click,
+  then re-measure with the test unchanged.
 
 ## Self-critique log
 
 ### C1 [RESOLVED]: S3 uploads and downloads would be invisible
 Original concern: A and B see only the API; the upload and export download go straight to S3.
-**Resolution:** the page records its own S3 requests ([§4 (line 129)](#L129)); S3's own logging
+**Resolution:** the page records its own S3 requests ([§4 (line 151)](#L151)); S3's own logging
 was considered and not chosen ([§1 (line 40)](#L40)).
 
 ### C2 [RESOLVED]: refused requests never reach our code
@@ -375,12 +409,12 @@ line, so D2 and D4 would stay unprovable. **Resolution:** API Gateway's access l
 Original concern: describing clicked elements by their text would copy message text from the
 review table into CloudWatch. **Resolution:** elements inside the review table and the timeline are
 described by message ID and column only, and a browser test checks that no synthetic message text
-reaches the log ([§4 (line 91)](#L91), [§8 (line 256)](#L256)).
+reaches the log ([§4 (line 102)](#L102), [§8 (line 281)](#L281)).
 
 ### C4 [RESOLVED]: the existing log groups can't be given a retention by a template
 Original concern: Lambda created them on first run; a template that declares groups with the same
 names fails because they already exist. **Resolution:** new, template-owned groups through
-`LoggingConfig` ([§6 (line 199)](#L199)); the old groups are left in place.
+`LoggingConfig` ([§6 (line 224)](#L224)); the old groups are left in place.
 
 ### C5 [OPEN]: counting the SDK's calls depends on its tracing output
 The per-request AWS call counts rely on span names the AWS SDK emits, not yet read. **Mitigation in
@@ -398,25 +432,25 @@ and run unchanged. **Open:** none expected; revisit if any browser test needs ch
 
 ### C8 [RESOLVED]: the sign-in label would put the email address in the logs
 Original concern: §4 recorded the sign-in label, "Signed in as <email>", contradicting §9's "no
-email addresses". **Resolution:** only signed in or out is recorded ([§4 (line 128)](#L128)).
+email addresses". **Resolution:** only signed in or out is recorded ([§4 (line 141)](#L141)).
 
 ### C9 [RESOLVED]: recording every keystroke would dominate the cost
 Original concern: the two search boxes respond to every keystroke; recording each would multiply
 the page's events. First resolution: record once typing paused for 1 second. **User pushback
 (2026-10-02):** a pause is not an action; record a text box only when submitted (Enter, or a
-form's submit). **Resolution:** done ([§4 (line 115)](#L115)), with a test; typing adds nothing to
-the cost table ([§10 (line 305)](#L305)).
+form's submit). **Resolution:** done ([§4 (line 131)](#L131)), with a test; typing adds nothing to
+the cost table ([§10 (line 330)](#L330)).
 
 ### C10 [OPEN]: the account's limit of 10 Lambda copies at once
 Background reports share that limit with the user's own requests. **Mitigation in plan:** reports
 are short, at most one a minute, only at quiet moments, and in their own function; a refused batch is kept and retried; the
-acceptance check looks for any 429 ([§10 (line 345)](#L345)). **Open:** if any 429 appears in that
+acceptance check looks for any 429 ([§10 (line 370)](#L370)). **Open:** if any 429 appears in that
 run, raise the limit with AWS before recording is left on.
 
 ### C11 [RESOLVED]: submitted text may contain words from the user's conversations
 Original concern: recorded search text could carry conversation words into the logs.
 **Resolution:** only text the user submits is recorded, capped at 80 characters, kept about a day
-([§9 (line 274)](#L274)); with today's page, that is only Enter in a search box.
+([§9 (line 299)](#L299)); with today's page, that is only Enter in a search box.
 
 ### C12 [OPEN]: the cost figures are estimates
 Event sizes and counts are guesses until the code exists. **Mitigation in plan:** the end-to-end
@@ -428,8 +462,8 @@ on.
 Original concern (raised by the user's worry about response time): with reports every 5 seconds
 to the API function, a report being handled when a real request arrived would force AWS to start
 a second API copy, 202–455 ms. **Resolution:** reports go to their own function
-([§5 (line 172)](#L172)) and are sent only at quiet moments, at most once a minute
-([§4 (line 138)](#L138)).
+([§5 (line 197)](#L197)) and are sent only at quiet moments, at most once a minute
+([§4 (line 160)](#L160)).
 
 ### C14 [OPEN]: events not yet sent are lost if the browser crashes
 Deferring sends means up to a minute of actions sits in memory; `pagehide` covers closing and
@@ -440,4 +474,19 @@ an analysis ever finds a session's last actions missing.
 ### C15 [RESOLVED]: the page's clock and AWS's may disagree
 Original concern: sorting page events and AWS lines by their own clocks could misorder a click and
 the request it caused. **Resolution:** joined by API Gateway's request ID, which the page reads
-from each response ([§5 (line 186)](#L186)).
+from each response ([§5 (line 211)](#L211)).
+
+### C16 [RESOLVED]: final AWS failures were not counted
+Original concern: only retries were counted; a call that failed after its last retry showed only
+as the request's error status. **Resolution:** `aws_failures` by operation, reported by the
+storage adapters ([§3 (line 78)](#L78)).
+
+### C17 [RESOLVED]: records carried the page's wording
+Original concern (the user's): `shown` records held the page's messages and server error text,
+and clicks held button text. Server errors can repeat parts of the request. **Resolution:**
+message identifiers, element attributes and a page version; errors by kind ([§4 (line 105)](#L105)).
+
+### C18 [OPEN]: recording a click sometimes exceeds 1 ms
+**Mitigation in plan:** less allocation per click, then the unchanged test re-run.
+**Open:** the re-measured rate decides; if any run still exceeds 1 ms, report to the user with
+the numbers ([analysis](../analysis/2026-10-02-recording-click-time.md)).
