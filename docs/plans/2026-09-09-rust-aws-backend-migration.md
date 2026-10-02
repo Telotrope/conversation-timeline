@@ -1431,6 +1431,10 @@ this plan:
 **After the deployment checks (added at the user's request, 2026-10-02):**
 - **Upload processing: the rest of its plan.** [2026-10-02-upload-processing-failures.md](2026-10-02-upload-processing-failures.md):
   phase A done and deployed; §1 fix next (see above); §3b, §4, and the optional §6 after.
+- **A repeat-deployment guide and two helper scripts.**
+  [2026-10-02-deployment-operating-guide.md](2026-10-02-deployment-operating-guide.md): outline
+  only, holds the 2026-10-02 deployment lessons not written anywhere else; to be rewritten into a
+  full plan.
 - **A development-only "delete my earlier data first" checkbox.**
   [2026-10-02-dev-delete-before-load.md](2026-10-02-dev-delete-before-load.md): proposed, not
   approved.
