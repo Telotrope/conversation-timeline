@@ -13,6 +13,10 @@
 //!   returned as an error naming the key, after every other record has been
 //!   attempted. Lambda then retries the whole event. That's safe because
 //!   every write `process_upload` makes replaces rather than adds (plan C29).
+//!   Each attempt is counted first, and a failed attempt's error recorded,
+//!   so the page can show the retry (plan
+//!   `2026-10-02-upload-processing-failures.md` §3). After the last retry,
+//!   the separate `record_failed_upload` function records `Failed` (§2).
 //!
 //! [`handle_raw_s3_event`] is what the Lambda runs: it takes the
 //! notification as plain JSON, logs it when [`EventLogging::On`] (with the
@@ -103,6 +107,17 @@ async fn handle_record(key: Option<&str>, stores: &ProcessingStores) -> Result<(
             key: key.clone(),
             reason: "expected raw/<user>/<upload uuid>.json".to_string(),
         })?;
+    // Counted before processing, so the page can say which attempt this is
+    // (plan `2026-10-02-upload-processing-failures.md` §3). Failing to count
+    // is a storage failure like any other: retried.
+    stores
+        .upload_outcome_store
+        .record_attempt(&user_id, upload_id)
+        .await
+        .map_err(|e| RecordError::Processing {
+            key: key.clone(),
+            error: ProcessingError::Store(e),
+        })?;
     let result = process_upload(
         stores.object_store.as_ref(),
         stores.upload_outcome_store.as_ref(),
@@ -123,7 +138,18 @@ async fn handle_record(key: Option<&str>, stores: &ProcessingStores) -> Result<(
             eprintln!("upload {key:?} is not a usable export (recorded as failed): {e}");
             Ok(())
         }
-        Err(error) => Err(RecordError::Processing { key, error }),
+        Err(error) => {
+            // Shown on the page as the reason for the retry. If even this
+            // write fails, the original error still goes back to Lambda.
+            if let Err(e) = stores
+                .upload_outcome_store
+                .record_attempt_error(&user_id, upload_id, error.to_string())
+                .await
+            {
+                eprintln!("upload {key:?}: couldn't record this attempt's error ({error}): {e}");
+            }
+            Err(RecordError::Processing { key, error })
+        }
     }
 }
 
