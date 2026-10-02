@@ -1,6 +1,6 @@
 # Hosting the page (closing the migration plan's C30)
 
-**Status:** approved 2026-10-02 (pay-as-you-go pricing; §4's documentation moved to the deployment operating guide plan).
+**Status:** approved 2026-10-02 (pay-as-you-go pricing; §4's documentation moved to the deployment operating guide plan). Implemented; revision for C14 (existing certificate) awaiting approval.
 
 ## Why
 
@@ -162,29 +162,31 @@ In [infra/template.yaml](../../infra/template.yaml):
 
 ### §1a. Custom domain at Porkbun
 
-`telotrope.ai`'s DNS is at Porkbun, and it stays there: no Route 53, no $0.50/month. With
-`PageDomain` set, the template adds:
+`telotrope.ai`'s DNS is at Porkbun, and it stays there: no Route 53, no $0.50/month.
 
-- `PageCertificate`: a free public certificate from AWS Certificate Manager for `PageDomain`,
-  validated by DNS. CloudFront accepts certificates only from `us-east-1`, which is the region
-  the dev stack already uses ([infra/samconfig.toml](../../infra/samconfig.toml) is git-ignored;
-  I read it on this machine), so the certificate can live in the same template. A stack in any
-  other region would need it created separately; the template refuses that combination with a
-  rule rather than failing midway.
-- `Aliases: [PageDomain]` and the certificate on `PageDistribution`.
+**Revised 2026-10-02 at your direction (C14):** the certificate is made once, by hand, outside the
+stack, and the stack is given its address. You already made one for `howangryami.telotrope.ai`
+in Certificate Manager, us-east-1, validated through Porkbun. The template no longer creates a
+certificate.
 
-A deploy with a new `PageDomain` pauses until the certificate is validated. The steps, to be written
-up by the deployment operating guide plan (§4):
+- New parameter `PageCertificateArn` (default empty): the certificate's ARN (AWS's full
+  identifier, `arn:aws:acm:us-east-1:<account>:certificate/<id>`). `PageDomain` and
+  `PageCertificateArn` must be set together; a template rule refuses one without the other, and
+  refuses a certificate outside `us-east-1`, the only region CloudFront accepts certificates from.
+- `Aliases: [PageDomain]` and `PageCertificateArn` on `PageDistribution`.
 
-1. While the stack is creating the certificate, read the validation record (a `CNAME` name and
-   value) from the CloudFormation events or the Certificate Manager console. I recall that
-   CloudFormation prints it in the event's status message; check H8 confirms.
-2. Add that `CNAME` at Porkbun (*Domain Management → DNS*). The deploy then continues.
+Steps, to be written up by the deployment operating guide plan (§4):
+
+1. Once per domain: request a public certificate for it in Certificate Manager (us-east-1), add
+   the validation `CNAME` it shows at Porkbun (*Domain Management → DNS*), and keep that record:
+   it is also how AWS renews the certificate (I recall renewal needs the certificate in use and the
+   record still present; check H8). Done for `howangryami.telotrope.ai`.
+2. Deploy with `PageDomain` and `PageCertificateArn`.
 3. After the deploy, add a second `CNAME` at Porkbun: `PageDomain`'s subdomain (e.g. `howangryami`)
    → the `PageDnsTarget` output.
 
 Both records are added by hand. Porkbun has an API that could do it, but that means storing a
-Porkbun API key; not worth it for a step done once per stack. The name is a deploy-time
+Porkbun API key; not worth it for steps done once per domain. The name is a deploy-time
 parameter, not written into the template, so choosing it doesn't block the work (open question 1).
 A separately registered domain at Porkbun works the same way: the certificate covers whatever
 `PageDomain` says.
@@ -248,6 +250,10 @@ deployment documentation is written together after this plan is tested on a real
   settings, ignores `?deploy=other`, and errors on an invalid tag value.
 - **Template**: [scripts/check-template.sh](../../scripts/check-template.sh) validates the
   template with `HostPage` off, on, on with `PageDomain`, and on with `AlsoAllowLocalPage`.
+- **Template, certificate (C14)**: a Rust check in
+  [template_frontend_url.rs](../../backend/timeline-api/tests/template_frontend_url.rs)'s style:
+  no `AWS::CertificateManager::Certificate` resource; the distribution's certificate is
+  `!Ref PageCertificateArn`; the rule pairs `PageDomain` with `PageCertificateArn`.
 
 ### Deployment checks (only a real deployment can confirm these)
 
@@ -260,7 +266,7 @@ deployment documentation is written together after this plan is tested on a real
 | H5 | After a second publish, a reload shows the new version (invalidation, and browsers honoring `no-cache` despite the edge's one-day `MinTTL`; see C7). |
 | H6 | Responses are compressed (`content-encoding: br` or `gzip`) and carry the security headers. |
 | H7 | After a week, Cost Explorer shows CloudFront and the page bucket at $0.00. |
-| H8 | With `PageDomain` set: the validation record appears in the stack's events, the deploy finishes once it's added at Porkbun, and `https://<PageDomain>/` serves the page with a valid certificate. |
+| H8 | With `PageDomain` and `PageCertificateArn` set: `https://<PageDomain>/` serves the page with the given certificate, and Certificate Manager shows it in use and eligible for renewal. |
 | H9 | Sign-in from `https://<host>/` returns to `/`, and the page's files load from below `/` (`/frontend/main.js`, `/vendor/...`). |
 | H10 | A hosted dev stack with `AlsoAllowLocalPage=on` accepts the page from your machine as well as the hosted one. |
 
@@ -363,12 +369,19 @@ uploads it as `index.html`, the distribution serves it at `/`, and only `/` is l
 Someone who types `/index.html` by hand can load the page but not sign in; nothing links there.
 Check H9.
 
-### C13 [OPEN]: The custom-domain deploy waits on a hand-added DNS record
-The first deploy with a `PageDomain` stalls until the validation `CNAME` is added at Porkbun, and
-the record's location in CloudFormation's output is from memory. **Mitigation in plan:** the
-README steps (§1a). Certificate Manager also shows the record. **Open:** how long CloudFormation
-waits before failing, if you're slow to add it. Trigger: check H8 on the first custom-domain
-deploy.
+### C13 [RESOLVED]: The custom-domain deploy waits on a hand-added DNS record
+Original concern: with the template creating the certificate, the first deploy with a
+`PageDomain` stalled until the validation `CNAME` was added at Porkbun. **Resolution:** superseded
+by C14: the certificate is made and validated before any deploy
+([§1a (line 163)](2026-10-02-page-hosting.md#L163)).
+
+### C14 [RESOLVED]: Use the certificate you made, not one per stack
+Original concern: the template requested its own certificate, leaving the one you made in
+Certificate Manager unused. (A stack's certificate would have been made once and kept across
+redeploys, but each new stack would make another.) **Resolution:** at your direction,
+`PageCertificateArn` takes an existing certificate and the template creates none
+([§1a (line 163)](2026-10-02-page-hosting.md#L163)). Renewal depends on the validation record
+staying at Porkbun; check H8.
 
 ## Sources
 
