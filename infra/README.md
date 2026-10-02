@@ -1,18 +1,17 @@
-# Deploying to AWS: first-time walkthrough
+# Deploying to AWS: first-time setup
 
-This deploys the backend ([template.yaml](template.yaml)) to your own AWS account and points the
-page, still served from your machine, at it. It's written for someone who hasn't used AWS
-before. The design is in the migration plan's §V2e
-([docs/plans/2026-09-09-rust-aws-backend-migration.md](../docs/plans/2026-09-09-rust-aws-backend-migration.md)).
+Setting up an AWS account, the tools, a domain's certificate, and the first deployment of each
+stack; and tearing it all down. Everything repeated (redeploying, testing, diagnosing) is in
+[OPERATING.md](OPERATING.md). The design is in
+[docs/plans/2026-10-02-deployment-operating-guide.md](../docs/plans/2026-10-02-deployment-operating-guide.md).
 
 Terms used below:
 
-- **Region**: the AWS data-center location everything is created in, e.g. `us-east-1`.
-- **Stack**: the set of resources AWS creates from the template, created and deleted as one.
+- **Region**: the AWS data-center location everything is created in; here always `us-east-1`.
+- **Stack**: the set of resources AWS creates from the template ([template.yaml](template.yaml)),
+  created and deleted as one. There are two: `timeline-dev` (remote development) and
+  `timeline-public`.
 - **IAM**: AWS's users-and-permissions system.
-
-Nothing here has been run against a real account yet. Where a step's outcome is unknown, it says
-so; the checks in step 8 exist to find out.
 
 ## 1. Make the account safe (once)
 
@@ -31,160 +30,60 @@ so; the checks in step 8 exist to find out.
 - **SAM CLI** (the `sam` command): AWS's "Installing the AWS SAM CLI" page, Linux x86_64. Without
   `sudo`: `./sam-installation/install --install-dir ~/.local/sam --bin-dir ~/.local/bin`.
   (The development session that wrote this installed it the same way into a scratch folder and ran
-  step 4 with it.)
+  the template check with it.)
 - **cargo-lambda and Zig**, for building: see [backend/README.md](../backend/README.md). On this
   machine both are already installed; Zig lives in `~/.local/opt/zig`.
 
 Make sure `~/.local/bin` is on your `PATH`, then check: `aws --version` and `sam --version`.
+(`scripts/deploy.sh` also looks in `~/.local/bin`, `~/.cargo/bin` and `~/.local/opt/zig` itself.)
 
-## 3. Connect the tools to your account
-
-```
-aws configure sso          # your Identity Center start URL and region; name the profile "timeline"
-export AWS_PROFILE=timeline AWS_REGION=us-east-1   # or your region; in every new terminal
-aws sso login
-aws sts get-caller-identity   # should print your 12-digit account number
-```
-
-## 4. Build and check
+## 3. Sign in from the command line
 
 ```
-cd backend
-PATH="$HOME/.local/opt/zig:$PATH" cargo lambda build --release --arm64 -p timeline-api
-ls target/lambda/timeline-api/bootstrap target/lambda/process_upload/bootstrap target/lambda/record_failed_upload/bootstrap
-cd ..
-scripts/check-template.sh          # expect: "... is a valid SAM Template"
+aws login --profile timeline --remote   # opens a browser sign-in; lasts under a day
+export AWS_PROFILE=timeline AWS_REGION=us-east-1
+aws sts get-caller-identity             # should print your 12-digit account number
 ```
 
-The build makes all three Lambdas: the API, the function S3 starts when an upload lands, and the
-function that marks an upload failed once processing has failed every attempt.
+`aws sso login` doesn't work on this machine. The scripts use the `timeline` profile by default
+and tell you to run `aws login` again when the sign-in has expired.
 
-## 5. Deploy
+## 4. A certificate for each domain (once per domain)
 
-```
-cd infra
-sam deploy --guided --stack-name timeline-dev
-```
-
-The scripts below assume the stack is called `timeline-<stage>`, so keep that name. Answers to its
-questions:
-
-- **Region**: the one you chose. **Stage**: `dev`. **LogS3Events**: `off` (step 9 explains it).
-  **FailProcessing**: `off` (step 10 explains it).
-- **FrontendUrl**: the full address your browser opens `timeline.html` at, without `?deploy=...`.
-  If the browser runs on the same machine as the page's server: `http://localhost:8000/timeline.html`
-  (the default). If it reaches that machine through a forwarding proxy, use the address in its
-  address bar, e.g. `https://dev.example.ts.net/proxy/8000/timeline.html` for VS Code's forwarding
-  over Tailscale. Cognito returns you only to exactly this address. Cognito accepts plain `http`
-  only for `localhost`.
-- "Confirm changes before deploy": **y**. It then lists everything it will create and waits.
-- "Allow SAM CLI IAM role creation": **y** (each function needs its own permissions).
-- It may ask whether each function "may not have authorization defined": **y**. The API's routes
-  require a Cognito login through the API's default setting; the question is about the function
-  itself.
-- "Save arguments to configuration file": **y**. It writes `samconfig.toml` here, so later
-  deployments are just `sam deploy`. It holds no secrets.
-
-SAM also creates a bucket of its own (`aws-sam-cli-managed-default-...`) to upload the code
-through. Creating everything takes a few minutes. At the end it prints the stack's outputs:
-`ApiUrl`, `CognitoDomain`, `UserPoolClientId` and others.
-
-If it fails, the message names the resource and the reason. Copy it into our next conversation;
-that's deployment check D1.
-
-## 6. Point the page at the deployment
+Each stack serves its page at its own domain (`dev.howangryami.telotrope.ai`,
+`howangryami.telotrope.ai`), and CloudFront needs a certificate for it:
 
 ```
-scripts/write-deploy-config.sh dev     # writes frontend/deploy-configs/dev.json
-python3 -m http.server 8000            # from the repository's top folder
+scripts/request-certificate.sh dev.howangryami.telotrope.ai
 ```
 
-Open the page at the `FrontendUrl` you gave in step 5, with `?deploy=dev` added (e.g.
-<http://localhost:8000/timeline.html?deploy=dev>). The page remembers the choice; to go back to
-local development, open `timeline.html?deploy=` once.
+It requests the certificate (or reuses one already requested), prints a `CNAME` record to add at
+Porkbun (*Domain Management → DNS*), waits until AWS has seen it, and prints the certificate's
+identifier. Put that in [samconfig.toml](samconfig.toml) as the stack's `PageCertificateArn`.
+**Keep the record at Porkbun:** AWS uses it again to renew the certificate. If the wait runs out
+(40 minutes), run the script again once the record is in.
 
-**If the page's address changes** (a different forwarded port, a renamed machine, another device),
-two things break: Cognito shows an error page with `redirect_mismatch` in its address, and the
-page's requests to the API fail, with a CORS error shown only in the browser's developer console.
-Both come from `FrontendUrl`; redeploy with the new address:
-`sam deploy --parameter-overrides Stage=dev FrontendUrl=<new address> LogS3Events=off`.
-
-Click **Sign in**. Cognito's own page opens. Choose *Sign up*, use your email address, and enter
-the code Cognito emails you. You come back to the page signed in. Then upload your export as
-usual.
-
-## 7. A test login from the command line (dev stage only)
+## 5. Deploy each stack the first time
 
 ```
-scripts/aws-dev-token.sh you@example.com      # asks for the password you signed up with
-TOKEN=$(scripts/aws-dev-token.sh you@example.com)
-API=<ApiUrl from step 5>
-curl -H "Authorization: Bearer $TOKEN" "$API/conversations"
+scripts/deploy.sh dev
+scripts/deploy.sh public      # only from main, committed and pushed; asks before applying
 ```
 
-## 8. The checks only a deployment can do
+The first run of each creates its stack (a few minutes; CloudFront takes longest). At the end it
+prints the page's address and, while the domain doesn't point there yet, the record to add at
+Porkbun: `CNAME` from the domain's name (e.g. `dev.howangryami`) to the stack's CloudFront
+address. [OPERATING.md](OPERATING.md) explains each step `deploy.sh` takes.
 
-These are the plan's checks D1–D7 and D9 (D8 became a separate task: capturing one real S3
-notification for the tests, plan C24). Note what you see (copy the output) and bring it to our next
-conversation; I'll record it in `docs/analysis/`.
+SAM creates a bucket of its own (`aws-sam-cli-managed-default-...`) to upload the code through.
 
-| # | What to check | How |
-|---|---|---|
-| D1 | AWS accepted the template | step 5 finished without errors |
-| D2 | The browser's permission check (CORS) works from your page only | `curl -i -X OPTIONS "$API/conversations" -H "Origin: <your FrontendUrl's scheme and host, e.g. http://localhost:8000>" -H "Access-Control-Request-Method: GET" -H "Access-Control-Request-Headers: authorization"` should answer 204 with an `access-control-allow-origin` header. Repeat with `-H "Origin: http://example.com"`: no such header. Then the page itself works (step 6). |
-| D3 | Real Cognito sign-in works | step 6's sign-in, and step 7's script |
-| D4 | The API refuses bad logins | `curl -i "$API/conversations"` (no token) and with `-H "Authorization: Bearer nonsense"`: both 401 |
-| D5 | A ~60 MB export is processed within the limits | upload your real export with the scan box ticked; then `sam logs --stack-name timeline-dev -n ProcessUploadFunction` and `-n ApiFunction`: each call's `REPORT` line shows `Duration` and `Max Memory Used` |
-| D6 | The flag-handle secret reached the API | in the Review tab, tick a flag: the page says it saved |
-| D7 | The real tables match what the tests assume | the whole page flow works; the tables are visible in the DynamoDB console |
-| D9 | Start-up time, including downloading Cognito's keys | the `REPORT` lines of a function's first call show `Init Duration` |
+## 6. Sign up
 
-`sam logs ... --tail` follows the logs live.
+Open the stack's page and click **Sign in**. Cognito's own page opens. Choose *Sign up*, use your
+email address, and enter the code Cognito emails you. Each stack has its own accounts: signing up
+on one doesn't sign you up on the other.
 
-## 9. Capture one real S3 notification for the tests (once)
-
-The tests use a sample notification written by a library's authors; this replaces it with one AWS
-really sent (the plan's C24 and §E9). The processing function logs notifications only while the
-`LogS3Events` setting is `on`.
-
-1. Switch it on. The command repeats every setting, because naming one on the command line may
-   replace the others saved in `samconfig.toml` (plan C35; not yet checked):
-   ```
-   cd infra
-   sam deploy --parameter-overrides Stage=dev FrontendUrl=<your FrontendUrl> LogS3Events=on
-   ```
-2. Upload one small export through the page.
-3. Copy the line:
-   `sam logs --stack-name timeline-dev -n ProcessUploadFunction --filter "s3 event"`.
-   It starts `s3 event (sourceIPAddress removed):`. No such line means the switch isn't reaching
-   the function (plan C36); bring that back too.
-4. Switch it off again, the same command with `LogS3Events=off`.
-5. Paste the line into our next conversation. Together we replace your account number, bucket
-   name, user ID and AWS's internal IDs with placeholders; you review the cleaned file before it
-   replaces the test sample.
-
-## 10. Watch an upload fail on purpose (a test of the error handling)
-
-AWS runs the processing function up to 3 times for one upload; if all 3 fail, a second function
-marks the upload failed, and the page should say so (plan
-`docs/plans/2026-10-02-upload-processing-failures.md` §2–3). Real failures are rare, so the
-`FailProcessing` setting makes every attempt fail on purpose, before reading your file.
-
-1. Switch it on, repeating every other setting (the reason is in step 9):
-   ```
-   cd infra
-   sam deploy --parameter-overrides Stage=dev FrontendUrl=<your FrontendUrl> LogS3Events=off FailProcessing=on
-   ```
-2. Upload a file through the page and watch the line under the bar. Expected, over about 4
-   minutes: "Waiting for the server to start", then "Processing on the server", then
-   "The server hit an error (failing on purpose (FailProcessing is on)) on attempt 1 of 3…",
-   then the same for attempt 2 and 3, then an error on the page. Today it reads, with the phrase
-   doubled (a known wording problem): "the server couldn't process the file: the server couldn't
-   process the file after 3 attempts: 1 record(s) failed: processing "raw/…" failed: failing on
-   purpose (FailProcessing is on)". Note anything different.
-3. Switch it off again: the same command with `FailProcessing=off`.
-
-## 11. Costs, and tearing it down
+## 7. Costs, and tearing it down
 
 While idle, this should cost very little: the Secrets Manager secret is billed monthly (about
 $0.40 at the time of writing; not re-checked), and everything else is billed per use. Your budget
@@ -193,13 +92,15 @@ from step 1 will warn you if that's wrong.
 To delete everything:
 
 ```
-aws s3 rm "s3://timeline-uploads-dev-$(aws sts get-caller-identity --query Account --output text)" --recursive
-sam delete --stack-name timeline-dev
+stage=dev    # or public
+aws s3 rm "s3://timeline-uploads-$stage-$(aws sts get-caller-identity --query Account --output text)" --recursive
+aws s3 rm "s3://$(aws cloudformation describe-stacks --stack-name timeline-$stage --query "Stacks[0].Outputs[?OutputKey=='PageBucketName'].OutputValue" --output text)" --recursive
+sam delete --stack-name timeline-$stage
 ```
 
-The bucket must be emptied first; deleting a stack with a non-empty bucket fails. Deleting removes
+The buckets must be emptied first; deleting a stack with a non-empty bucket fails. Deleting removes
 your uploaded data and flags for good.
 
 AWS's documentation says a deleted secret is kept for a recovery period, during which its name
 can't be reused. If you plan to deploy again soon, delete it for good after `sam delete`:
-`aws secretsmanager delete-secret --secret-id timeline-flag-handle-key-dev --force-delete-without-recovery`.
+`aws secretsmanager delete-secret --secret-id timeline-flag-handle-key-$stage --force-delete-without-recovery`.
