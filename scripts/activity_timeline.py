@@ -326,6 +326,13 @@ def join_and_filter(entries, session):
     return kept, lacking
 
 
+def filter_upload(entries, upload):
+    """Only one upload's entries: the API requests and processing lines naming
+    it, and the gateway lines joined to those requests (used by
+    scripts/diagnose-upload.sh; deployment guide plan §5)."""
+    return [e for e in entries if e.upload_id == upload]
+
+
 def render(entry):
     clock = datetime.datetime.fromtimestamp(entry.time_ms / 1000, datetime.timezone.utc)
     details = entry.details + (f"  [gateway: {entry.gateway}]" if entry.gateway else "")
@@ -339,6 +346,7 @@ def main(argv):
     parser.add_argument("stage")
     parser.add_argument("--since", default="30m", help="how far back: e.g. 30m, 2h, 1d (default 30m)")
     parser.add_argument("--session", help="only this page session's entries")
+    parser.add_argument("--upload", help="only this upload's requests and processing lines")
     args = parser.parse_args(argv)
     try:
         if not re.fullmatch(r"[A-Za-z0-9-]+", args.stage):
@@ -359,6 +367,8 @@ def main(argv):
         print(f"activity-timeline: aws failed: {terminal_safe(str(err))}", file=sys.stderr)
         return 1
     entries, lacking = join_and_filter(entries, args.session)
+    if args.upload:
+        entries = filter_upload(entries, args.upload)
     entries.sort(key=lambda e: (e.time_ms, SOURCE_ORDER.get(e.source, 1)))
     day = None
     for entry in entries:
