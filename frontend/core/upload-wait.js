@@ -20,12 +20,15 @@ export const GIVE_UP_AFTER_MS = 10 * 60 * 1000;
 //   if the request fails, and that error is passed on unchanged.
 // sleep: async (ms) => resolves after ms.
 // now: () => the current time in milliseconds.
+// onAnswer (optional): (answer) => called with every answer, so the page
+//   can show the attempt and last error while it waits.
 // Resolves when processing is done; rejects with the server's reason if it
 // failed, or after GIVE_UP_AFTER_MS.
-export async function waitForProcessing({ fetchStatus, sleep, now }){
+export async function waitForProcessing({ fetchStatus, sleep, now, onAnswer = () => {} }){
   const started = now();
   for(;;){
     const answer = await fetchStatus();
+    onAnswer(answer);
     if(answer.status === 'ready') return;
     if(answer.status === 'failed'){
       throw new Error(`the server couldn't process the file: ${answer.reason}`);
@@ -39,4 +42,31 @@ export async function waitForProcessing({ fetchStatus, sleep, now }){
     }
     await sleep(elapsed < FAST_PERIOD_MS ? FAST_INTERVAL_MS : SLOW_INTERVAL_MS);
   }
+}
+
+// "1:34" for 94 000 ms: minutes and zero-padded seconds.
+export function formatElapsed(ms){
+  const total = Math.floor(ms / 1000);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
+// The line shown under the bar while the server works on an upload (plan
+// 2026-10-02-upload-processing-failures.md §3). `answer` is the latest
+// "processing" answer from GET /uploads/{id}: on AWS it may carry the
+// attempt number, the number of attempts AWS makes, and the last attempt's
+// error; before the first attempt, and always locally, it carries none.
+export function describeWait(answer, elapsedMs){
+  const clock = formatElapsed(elapsedMs);
+  const { attempt, max_attempts: max, last_error: error } = answer;
+  if(error && attempt && attempt > 1){
+    return `The server hit an error (${error}) and is trying again automatically: attempt ${attempt} of ${max}. `
+      + `AWS waits 1–2 minutes between attempts. — ${clock}`;
+  }
+  if(error && attempt){
+    return `The server hit an error (${error}) on attempt ${attempt} of ${max} and will try again automatically `
+      + `in 1–2 minutes. — ${clock}`;
+  }
+  if(error) return `The server hit an error (${error}). — ${clock}`;
+  if(attempt) return `Processing on the server — ${clock}`;
+  return `Waiting for the server to start — ${clock}`;
 }

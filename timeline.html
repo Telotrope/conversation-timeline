@@ -513,8 +513,25 @@
     width:0%;
     transition:width 0.08s linear;
   }
+  /* A wait whose length can't be measured: stripes that keep moving, so it
+     never reads as a bar frozen at 100% (plan
+     2026-10-02-upload-processing-failures.md §3). */
+  .progress-fill.is-working{
+    background:repeating-linear-gradient(-45deg,
+      var(--accent) 0 10px, var(--accent-soft) 10px 20px);
+    background-size:28.28px 28.28px;
+    animation:progressStripes 0.9s linear infinite;
+  }
+  @keyframes progressStripes{
+    from{ background-position:0 0; }
+    to{ background-position:28.28px 0; }
+  }
+  @media (prefers-reduced-motion: reduce){
+    .progress-fill.is-working{ animation:none; }
+  }
   .progress-fill.is-error{
     background:#B0392F;
+    animation:none;
   }
   .progress-label{
     font-size:0.8rem;

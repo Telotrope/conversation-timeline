@@ -10,13 +10,13 @@ import { attachFlags } from '../core/flags.js';
 import { formatBytes } from '../core/format.js';
 import { state } from '../core/state.js';
 import { API_BASE, clearAuthToken, describeFailure, ensureAuthToken, fetchUploadStatus, putWithProgress, readBodyWithProgress, serverUrl, signedInLabel, usesRealLogin } from '../infra/api-client.js';
-import { waitForProcessing } from '../core/upload-wait.js';
+import { describeWait, waitForProcessing } from '../core/upload-wait.js';
 import { applyLocationHash } from './router.js';
 import { renderCalendar } from './views/calendar.js';
 import { renderConvList } from './views/conversations.js';
 import { renderSubtitle } from './views/header.js';
 import { renderReviewTable } from './views/review.js';
-import { failLoadProgress, hideLoadProgress, makeRateEstimator, setLoadProgressIndeterminate, setLoadStatus, setSaveStatus, showLoadProgress, showRestoredNotice } from './widgets/status-indicators.js';
+import { failLoadProgress, hideLoadProgress, makeRateEstimator, setLoadProgressIndeterminate, setLoadProgressLabel, setLoadProgressMeasured, setLoadStatus, setSaveStatus, showLoadProgress, showRestoredNotice } from './widgets/status-indicators.js';
 
 // Applies an already-downloaded export, plus the flag handles from the same
 // GET /export reply: parses it, replaces the page's state, and shows the
@@ -168,6 +168,7 @@ export async function handleLoadClick(){
     const uploadFill = document.getElementById('loadProgressFill');
     const uploadLabel = document.getElementById('loadProgressLabel');
     const uploadEta = makeRateEstimator(3000);
+    setLoadProgressMeasured();
     const putRes = await putWithProgress(serverUrl(upload_url), rawText, (loaded, total) => {
       const pct = Math.round((loaded / total) * 100);
       uploadFill.style.width = pct + '%';
@@ -184,13 +185,31 @@ export async function handleLoadClick(){
     // looks stuck. On AWS that happens separately, after the file lands in
     // S3, so the page asks until it's done; locally the first answer is
     // already "ready". See core/upload-wait.js.
+    //
+    // On AWS each answer may say which attempt is running and why the last
+    // one failed; the line under the bar shows that with a clock that ticks
+    // every second, so a retry doesn't look like a hang (plan
+    // 2026-10-02-upload-processing-failures.md §3).
     setLoadStatus('Processing on the server…');
     setLoadProgressIndeterminate('Processing on the server…');
-    await waitForProcessing({
-      fetchStatus: () => fetchUploadStatus(token, upload_id),
-      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-      now: () => Date.now(),
-    });
+    const waitStarted = Date.now();
+    let lastAnswer = null;
+    const showWait = () => {
+      if(lastAnswer) setLoadProgressLabel(describeWait(lastAnswer, Date.now() - waitStarted));
+    };
+    const clock = setInterval(showWait, 1000);
+    try{
+      await waitForProcessing({
+        fetchStatus: () => fetchUploadStatus(token, upload_id),
+        sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+        now: () => Date.now(),
+        onAnswer: (answer) => {
+          if(answer.status === 'processing'){ lastAnswer = answer; showWait(); }
+        },
+      });
+    } finally {
+      clearInterval(clock);
+    }
 
     // Only if asked. Detection reads every message you sent, and nothing
     // here has measured how long that takes, so it is never implied by the
@@ -210,6 +229,7 @@ export async function handleLoadClick(){
     const downloadRes = await fetch(serverUrl(export_url));
     if(!downloadRes.ok) throw new Error(await describeFailure('downloading the processed export', downloadRes));
     const downloadEta = makeRateEstimator(3000);
+    setLoadProgressMeasured();
     const text = await readBodyWithProgress(downloadRes, (loaded, total) => {
       if(total){
         const pct = Math.round((loaded / total) * 100);

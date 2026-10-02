@@ -19,7 +19,7 @@ export function showLoadProgress(){
   const wrap = document.getElementById('loadProgress');
   const fill = document.getElementById('loadProgressFill');
   wrap.style.display = 'block';
-  fill.classList.remove('is-error');
+  fill.classList.remove('is-error', 'is-working');
   fill.style.width = '0%';
   document.getElementById('loadProgressLabel').textContent = '';
 }
@@ -31,16 +31,35 @@ export function hideLoadProgress(){
 export function failLoadProgress(){
   const wrap = document.getElementById('loadProgress');
   if(wrap.style.display === 'none') return;
-  document.getElementById('loadProgressFill').classList.add('is-error');
+  const fill = document.getElementById('loadProgressFill');
+  fill.classList.remove('is-working');
+  fill.classList.add('is-error');
 }
 
 // A phase whose duration can't be observed: full-width track, no number.
 // Used for the stretch after the request body is fully sent but before the
 // server answers -- the local-dev PUT handler does its processing there, and
 // a bar frozen at 100% would read as hung.
+//
+// The bar moves (CSS stripes, `.progress-fill.is-working`) so the wait
+// reads as work in progress, not a bar frozen at 100% (plan
+// 2026-10-02-upload-processing-failures.md §3). A measured transfer calls
+// setLoadProgressMeasured first, which stops the stripes.
 export function setLoadProgressIndeterminate(label){
   document.getElementById('loadProgress').style.display = 'block';
-  document.getElementById('loadProgressFill').style.width = '100%';
+  const fill = document.getElementById('loadProgressFill');
+  fill.classList.add('is-working');
+  fill.style.width = '100%';
+  document.getElementById('loadProgressLabel').textContent = label;
+}
+
+// Before a transfer whose progress is measured: a plain bar again.
+export function setLoadProgressMeasured(){
+  document.getElementById('loadProgressFill').classList.remove('is-working');
+}
+
+// Replaces the label only, keeping the bar as it is.
+export function setLoadProgressLabel(label){
   document.getElementById('loadProgressLabel').textContent = label;
 }
 
