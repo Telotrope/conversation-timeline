@@ -2079,8 +2079,8 @@ to an event's format; and how the S3 notification is captured (C33).
 of account number, bucket name, user and upload IDs, role ID, AWS request IDs and the file's eTag,
 and reviewed and approved by the user before it replaced
 `backend/timeline-api/tests/fixtures/aws-samples/example-s3-event.json`. The address the logger had
-already removed is set to `192.0.2.1` (a documentation-only range) so the redaction test has one to
-remove; it is the only value AWS did not send. AWS sent `eventVersion` 2.6 and an `awsGeneratedTags`
+already removed is set to `127.0.0.1`, the library sample's address, so the redaction test has one
+to remove and its check for that address stays meaningful; it is the only value AWS did not send. AWS sent `eventVersion` 2.6 and an `awsGeneratedTags`
 block, which the library sample lacked; the upload processed to completion on the page, and the
 backend tests pass with the new sample. `example-destination-failure.json`'s `requestPayload` now
 carries the same sample (that file's other fields are still from AWS's documentation; see C5 of
