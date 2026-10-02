@@ -6,9 +6,11 @@
 # integration, not one function per route), API Gateway, and a Cognito user
 # pool.
 #
-# Two Lambdas share one build (`cargo lambda build --release --arm64 -p
-# timeline-api`): the API, and the upload-processing function S3 starts
-# when a raw upload lands (migration plan §V2e).
+# Three Lambdas share one build (`cargo lambda build --release --arm64 -p
+# timeline-api`): the API, the upload-processing function S3 starts when a
+# raw upload lands (migration plan §V2e), and the function that marks an
+# upload failed once processing has failed every attempt (plan
+# 2026-10-02-upload-processing-failures.md §2).
 #
 # This template has never been deployed. The plan's §V2e lists what only a
 # first deployment can check; `scripts/check-template.sh` runs
@@ -281,6 +283,20 @@ Resources:
             TableName: !Ref ConversationsTable
         - DynamoDBCrudPolicy:
             TableName: !Ref MessageFlagsTable
+        - LambdaInvokePolicy:
+            FunctionName: !Ref RecordFailedUploadFunction
+      # The first attempt plus 2 retries: 3 in all, the number the page
+      # shows (MAX_PROCESSING_ATTEMPTS in s3_trigger.rs;
+      # tests/template_processing_retries.rs checks they agree). When the
+      # last one fails, for any reason, AWS hands the failure to
+      # RecordFailedUploadFunction, which marks the upload failed (plan
+      # 2026-10-02-upload-processing-failures.md §2).
+      EventInvokeConfig:
+        MaximumRetryAttempts: 2
+        DestinationConfig:
+          OnFailure:
+            Type: Lambda
+            Destination: !GetAtt RecordFailedUploadFunction.Arn
       Events:
         RawUploadCreated:
           Type: S3
@@ -296,6 +312,23 @@ Resources:
                     Value: raw/
                   - Name: suffix
                     Value: .json
+
+  # Marks an upload failed once the processing function has failed every
+  # attempt (its EventInvokeConfig above). Writes only the conversations
+  # table. Built by the same `cargo lambda build -p timeline-api`.
+  RecordFailedUploadFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "timeline-record-failed-upload-${Stage}"
+      CodeUri: ../backend/target/lambda/record_failed_upload/
+      Handler: bootstrap
+      MemorySize: 128
+      Environment:
+        Variables:
+          TIMELINE_CONVERSATIONS_TABLE: !Ref ConversationsTable
+      Policies:
+        - DynamoDBWritePolicy:
+            TableName: !Ref ConversationsTable
 
   HttpApi:
     Type: AWS::Serverless::HttpApi

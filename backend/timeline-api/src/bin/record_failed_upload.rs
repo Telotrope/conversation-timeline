@@ -5,23 +5,22 @@
 //! the handler is `timeline_api::failed_upload::handle_failed_invocation`,
 //! tested in `tests/failed_upload.rs`.
 //!
-//! Reads the same settings as the processing function and uses only the
-//! conversations table. A missing setting stops start-up naming it.
+//! Reads only `TIMELINE_CONVERSATIONS_TABLE`, the one table it writes. A
+//! missing setting stops start-up naming it.
 
 use lambda_runtime::{service_fn, LambdaEvent};
 use serde_json::Value;
-use timeline_api::aws_settings::StorageSettings;
 use timeline_api::failed_upload::handle_failed_invocation;
 use timeline_storage::dynamo::conversations_table::DynamoConversationsTable;
 
 #[tokio::main]
 async fn main() -> Result<(), lambda_runtime::Error> {
-    let settings = StorageSettings::from_lookup(|name| std::env::var(name).ok())
-        .unwrap_or_else(|e| panic!("cannot start: {e}"));
+    let table = std::env::var("TIMELINE_CONVERSATIONS_TABLE")
+        .unwrap_or_else(|e| panic!("cannot start: TIMELINE_CONVERSATIONS_TABLE: {e}"));
     let sdk_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let store = DynamoConversationsTable::new(
         aws_sdk_dynamodb::Client::new(&sdk_config),
-        settings.conversations_table.as_str(),
+        table,
     );
     let store = &store;
     lambda_runtime::run(service_fn(move |event: LambdaEvent<Value>| async move {
