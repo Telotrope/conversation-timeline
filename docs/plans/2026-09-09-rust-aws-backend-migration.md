@@ -1395,7 +1395,7 @@ document in `docs/analysis/`.
 | D5 | Uploading the ~60 MB synthetic export: processed within the memory and time set in E2; then a full detection pass, each page answered within API Gateway's 30-second limit | page upload with detection on; `sam logs` shows peak memory and duration for each function |
 | D6 | The flag-handle secret reaches the API (C19) | a flag save from the page succeeds |
 | D7 | The real tables' keys match the tests' assumption (C16) | the page's whole flow, and the DynamoDB console |
-| D9 | Start-up time, including downloading Cognito's keys (C23) | `sam logs`: the `Init Duration` line |
+| D9 | Start-up time, including downloading Cognito's keys (C23); passes if each function's `Init Duration` is under 1 s (limit set by the user, 2026-10-02) | `sam logs`: the `Init Duration` line |
 
 D8 was removed on 2026-10-01; it is now C24's follow-up. The other numbers are kept so earlier
 references stay valid.
