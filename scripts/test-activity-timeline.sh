@@ -64,7 +64,7 @@ JSON
 cat > "$work/answer_timeline_dev_api.json" <<'JSON'
 {"events": [
   {"logStreamName": "s", "timestamp": 1790000003200, "eventId": "3",
-   "message": "{\"kind\":\"api_request\",\"request_id\":\"reqA\",\"method\":\"POST\",\"route\":\"/detect\",\"status\":200,\"ms\":3210,\"user\":\"sub-1\",\"session\":\"11111111-1111-4111-8111-111111111111\",\"facts\":{\"offset\":0,\"limit\":32,\"conversations_processed\":32,\"messages_detected\":7},\"aws_calls\":{\"DynamoDB.PutItem\":410},\"aws_retries\":0}\n"},
+   "message": "{\"kind\":\"api_request\",\"request_id\":\"reqA\",\"method\":\"POST\",\"route\":\"/detect\",\"status\":200,\"ms\":3210,\"user\":\"sub-1\",\"session\":\"11111111-1111-4111-8111-111111111111\",\"facts\":{\"offset\":0,\"limit\":32,\"conversations_processed\":32,\"messages_detected\":7},\"aws_calls\":{\"DynamoDB.PutItem\":410},\"aws_retries\":2,\"aws_failures\":{\"DynamoDB.PutItem\":1},\"aws_errors\":[\"DynamoDB.PutItem: throttled\"]}\n"},
   {"logStreamName": "s", "timestamp": 1790000001000, "eventId": "4",
    "message": "{\"kind\":\"api_request\",\"request_id\":\"reqU\",\"method\":\"POST\",\"route\":\"/uploads\",\"status\":200,\"ms\":41,\"user\":\"sub-1\",\"session\":\"11111111-1111-4111-8111-111111111111\",\"facts\":{\"upload_id\":\"aaaaaaaa-0000-4000-8000-000000000001\"},\"aws_calls\":{\"DynamoDB.PutItem\":1},\"aws_retries\":0}"},
   {"logStreamName": "s", "timestamp": 1790000000100, "eventId": "5",
@@ -82,11 +82,13 @@ JSON
 cat > "$work/answer_timeline_dev_activity.json" <<'JSON'
 {"events": [
   {"logStreamName": "s", "timestamp": 1790000020000, "eventId": "10",
-   "message": "{\"kind\":\"page_event\",\"request_id\":\"reqP\",\"user\":\"sub-1\",\"session\":\"11111111-1111-4111-8111-111111111111\",\"event\":{\"kind\":\"click\",\"t\":1790000000000,\"tab\":\"load\",\"target\":{\"tag\":\"button\",\"id\":\"loadBtn\",\"label\":\"Load\"}}}"},
+   "message": "{\"kind\":\"page_event\",\"request_id\":\"reqP\",\"user\":\"sub-1\",\"session\":\"11111111-1111-4111-8111-111111111111\",\"event\":{\"kind\":\"click\",\"t\":1790000000000,\"tab\":\"load\",\"target\":{\"tag\":\"button\",\"id\":\"loadBtn\"}}}"},
+  {"logStreamName": "s", "timestamp": 1790000020000, "eventId": "10b",
+   "message": "{\"kind\":\"page_event\",\"request_id\":\"reqP\",\"user\":\"sub-1\",\"session\":\"11111111-1111-4111-8111-111111111111\",\"event\":{\"kind\":\"shown\",\"t\":1790000000050,\"tab\":\"review\",\"where\":\"saveStatus\",\"message\":\"save.stale_page\",\"is_error\":true,\"status\":403,\"error_kind\":\"stale_page\",\"page_version\":\"a1b2c3d\"}}"},
   {"logStreamName": "s", "timestamp": 1790000020001, "eventId": "11",
    "message": "{\"kind\":\"page_event\",\"request_id\":\"reqP\",\"user\":\"sub-1\",\"session\":\"11111111-1111-4111-8111-111111111111\",\"event\":{\"kind\":\"request\",\"t\":1790000009000,\"tab\":\"review\",\"method\":\"POST\",\"route\":\"/detect\",\"status\":200,\"ms\":3350,\"request_id\":\"reqA\",\"offset\":0,\"limit\":32}}"},
   {"logStreamName": "s", "timestamp": 1790000020002, "eventId": "12",
-   "message": "{\"kind\":\"page_event\",\"request_id\":\"reqQ\",\"user\":\"sub-2\",\"session\":\"22222222-2222-4222-8222-222222222222\",\"event\":{\"kind\":\"shown\",\"t\":1790000000200,\"tab\":\"\",\"where\":\"error\",\"text\":\"evil‮txt.exe\",\"is_error\":true}}"}
+   "message": "{\"kind\":\"page_event\",\"request_id\":\"reqQ\",\"user\":\"sub-2\",\"session\":\"22222222-2222-4222-8222-222222222222\",\"event\":{\"kind\":\"submit\",\"t\":1790000000200,\"tab\":\"\",\"target\":{\"tag\":\"input\",\"id\":\"convSearch\"},\"text\":\"evil‮txt.exe\"}}"}
 ], "NextToken": "tok1"}
 JSON
 cat > "$work/answer_timeline_dev_activity-tok1.json" <<'JSON'
@@ -131,7 +133,7 @@ detect="$(grep -F "api     request   POST /detect" "$work/out.txt" || true)"
 grep -qF "gateway request   GET /conversations -> 401 4 ms, sign-in refused: Unauthorized" "$work/out.txt" \
   && pass "prints a refused request that never reached our code" || fail "no refused-request line"
 
-click="$(line_of "$work/out.txt" 'page    click     button#loadBtn "Load"')"
+click="$(line_of "$work/out.txt" 'page    click     button#loadBtn')"
 refused="$(line_of "$work/out.txt" "GET /conversations -> 401")"
 uploads="$(line_of "$work/out.txt" "POST /uploads upload_id aaaaaaaa")"
 run="$(line_of "$work/out.txt" "process run       upload aaaaaaaa")"
@@ -160,8 +162,14 @@ if LC_ALL=C grep -q $'[\x01-\x08\x0b-\x1f\x7f]' "$work/out.txt" || grep -qF $'�
 else
   pass "strips control and invisible characters"
 fi
-grep -qF "storage error: [31mthrottled again" "$work/out.txt" && grep -qF '"eviltxt.exe" (error)' "$work/out.txt" \
+grep -qF "storage error: [31mthrottled again" "$work/out.txt" && grep -qF 'input#convSearch text "eviltxt.exe"' "$work/out.txt" \
   && pass "keeps the text around the stripped characters" || fail "lost text around stripped characters"
+grep -qF "page    shown     saveStatus: save.stale_page (error) status 403, error_kind stale_page  [page a1b2c3d]" "$work/out.txt" \
+  && pass "prints a shown message by its identifier, values and page version" \
+  || fail "shown line: $(grep shown "$work/out.txt")"
+grep -qF "retries 2, FAILED DynamoDB.PutItem 1 (DynamoDB.PutItem: throttled)" "$work/out.txt" \
+  && pass "prints retries and final AWS failures apart" \
+  || fail "failures: $(grep 'POST /detect' "$work/out.txt")"
 grep -qF -- "--starting-token tok1" "$work/argv.log" && [ "$view" -gt 0 ] \
   && pass "follows the pagination token and prints the next page's events" \
   || fail "did not follow the pagination token: $(cat "$work/argv.log")"
@@ -175,7 +183,7 @@ echo "activity-timeline.sh --session"
 if "$REPO_ROOT/scripts/activity-timeline.sh" dev --session 11111111-1111-4111-8111-111111111111 \
    > "$work/out.txt" 2> "$work/err.txt"; then
   before=$failures
-  for want in 'button#loadBtn "Load"' "POST /detect offset 0" "upload aaaaaaaa" "[gateway: POST /detect"; do
+  for want in 'button#loadBtn' "POST /detect offset 0" "upload aaaaaaaa" "[gateway: POST /detect"; do
     grep -qF -- "$want" "$work/out.txt" || fail "session filter lost: $want"
   done
   for unwanted in "bbbbbbbb" "evil" "GET /conversations" "report" "not json"; do

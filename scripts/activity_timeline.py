@@ -141,9 +141,14 @@ def describe_target(target):
         text += f" message {target['message_id']}"
     if target.get("column"):
         text += f" column {target['column']}"
-    if target.get("label"):
-        text += f' "{target["label"]}"'
+    for key in ("name", "tab", "analysis"):
+        if target.get(key):
+            text += f" {key} {target[key]}"
     return text
+
+
+# The live values a `shown` record may carry (page-messages.js's `record`).
+SHOWN_VALUES = ("count", "attempt", "max_attempts", "status", "error_kind")
 
 
 def describe_page_event(event):
@@ -159,14 +164,20 @@ def describe_page_event(event):
         text += f" -> {status if status is not None else 'no answer'} {duration(event.get('ms'))}"
         if "bytes" in event:
             text += f" {size(event['bytes'])}"
-        if event.get("error"):
-            text += f" error: {event['error']}"
+        if event.get("error_kind"):
+            text += f" error: {event['error_kind']}"
         return text
     if kind == "view":
         return f"{event.get('view', '?')} (via {event.get('via', '?')})"
     if kind == "shown":
+        # The page records which message it showed, not the wording; the
+        # wording is in frontend/ui/widgets/page-messages.js at page_version.
         flag = " (error)" if event.get("is_error") else ""
-        return f'{event.get("where", "?")}: "{event.get("text", "")}"{flag}'
+        values = {k: event[k] for k in SHOWN_VALUES if k in event}
+        text = f'{event.get("where", "?")}: {event.get("message", "?")}{flag}'
+        if values:
+            text += f" {pairs(values)}"
+        return text + f"  [page {event.get('page_version', '?')}]"
     text = describe_target(event.get("target"))
     if kind == "change":
         if "file_size" in event or "file_ext" in event:
@@ -193,6 +204,10 @@ def from_json(record, ts):
             text += f", {pairs(record['aws_calls'])}"
         if record.get("aws_retries"):
             text += f", retries {record['aws_retries']}"
+        if record.get("aws_failures"):
+            text += f", FAILED {pairs(record['aws_failures'])}"
+        if record.get("aws_errors"):
+            text += f" ({'; '.join(record['aws_errors'])})"
         text += f" (session {short(record.get('session'))}, user {short(record.get('user'))})"
         upload = facts.get("upload_id") if isinstance(facts, dict) else None
         return Entry(ts, "api", "request", text, record.get("request_id"), record.get("session"), upload)
@@ -215,6 +230,10 @@ def from_json(record, ts):
             text += f", {pairs(record['aws_calls'])}"
         if record.get("aws_retries"):
             text += f", retries {record['aws_retries']}"
+        if record.get("aws_failures"):
+            text += f", FAILED {pairs(record['aws_failures'])}"
+        if record.get("aws_errors"):
+            text += f" ({'; '.join(record['aws_errors'])})"
         return Entry(ts, "process", "run", text, upload_id=record.get("upload_id"))
     if kind == "upload_marked_failed":
         text = (f"upload {short(record.get('upload_id'))} marked failed: {record.get('reason', '?')}"
