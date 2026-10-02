@@ -271,7 +271,8 @@ dependency. The deployment analysis documents cite its output from now on.
   while a page request is in flight or within 3 seconds after; at most one send a minute; an early
   send at 500 events; a send on `pagehide`; no send from an idle page.
 - **Browser, cost per action:** times the recording listener over 1,000 clicks on the review
-  table; fails if any one takes 1 ms or more. Reports the median.
+  table; fails if any one takes 4 ms or more (the user's limit, revised 2026-10-02; first 1 ms).
+  Reports the median.
 - **Frontend unit:** the handler inventory (§4): scans the frontend source for `addEventListener`
   and `on…=` handlers and fails if any listens for a kind of event the recorder doesn't record;
   typing in a text box records nothing, Enter in it records one `submit` with its text, and Enter
@@ -352,7 +353,7 @@ items by far.
 **Response time** (expected; measured after building, see the acceptance check below):
 - *The page, per action:* the recording listener runs just before the page's own handler, so its
   time adds directly to every click. It only reads a few attributes and adds one object to a list.
-  Expected well under a millisecond; **measured** by a browser test (§8), with a limit of 1 ms.
+  Expected well under a millisecond; **measured** by a browser test (§8), with a limit of 4 ms (revised from 1 ms; see Decisions).
 - *The page, sending:* never while one of the page's own requests is in flight or within 3
   seconds of one, at most once a minute (§4). A send is a small background request that doesn't
   occupy the page's JavaScript while it travels.
@@ -387,6 +388,8 @@ report it and stop, rather than tune it quietly.
 - **Revisions approved by the user, 2026-10-02 (after the first build):** final AWS failures
   counted separately from retries (§3); no page wording in records, message identifiers and a
   page version instead (§4); local development sends to the local backend (§4).
+- **Per-click limit revised to 4 ms** (the user, 2026-10-02): 1 ms is below what anyone can
+  notice; 4 ms is a quarter of one screen redraw. Background below.
 - **Per-click time over 1 ms, intermittently** (one click in about half the runs, 1.5–1.6 ms;
   [analysis](../analysis/2026-10-02-recording-click-time.md)): coincides with the browser's
   memory clean-up. The user directed (2026-10-02): reduce what the recorder allocates per click,
@@ -485,7 +488,12 @@ Original concern (the user's): `shown` records held the page's messages and serv
 and clicks held button text. Server errors can repeat parts of the request. **Resolution:**
 message identifiers, element attributes and a page version; errors by kind ([§4 (line 105)](#L105)).
 
-### C18 [OPEN]: recording a click sometimes exceeds 1 ms
-**Mitigation in plan:** less allocation per click, then the unchanged test re-run.
-**Open:** the re-measured rate decides; if any run still exceeds 1 ms, report to the user with
-the numbers ([analysis](../analysis/2026-10-02-recording-click-time.md)).
+### C18 [RESOLVED]: recording a click sometimes exceeds 1 ms
+Original concern: one click in about half the runs took 1.5–1.6 ms, coinciding with a memory
+clean-up ([analysis](../analysis/2026-10-02-recording-click-time.md)). Cutting the recorder's
+allocation (about 244 to about 160 bytes per click) removed that pause in 15 of 15 runs; the first
+click still reached 1.0–1.2 ms in 3 of 15. **User's resolution (2026-10-02):** 1 ms is far below
+what anyone can notice (about 100 ms feels instant; a screen redraw is about 16 ms), so the limit
+is now **4 ms**, a quarter of one redraw, kept as a guard against a real slowdown
+([§8 (line 274)](#L274)).
+
