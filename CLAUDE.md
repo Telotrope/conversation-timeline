@@ -77,9 +77,6 @@ I always try to avoid shame by following my workflow and rules correctly.
 ## Plain language
 Define technical terms in plain language the first time they appear, or avoid the jargon entirely. Watch for: "shadow DOM", "non-goals", "hydration", "mount point", "semantic landmarks", "false-positive/negative", "intent-keyword filter", "first-class", "blast radius", "orthogonal". When the term is unavoidable, explain it in a parenthetical: "shadow DOM (a sealed area where a site hides a widget's internal HTML from outside scripts)". Avoid consultant-speak. Don't lean on code-internal names like `_count_structural_widgets`, "A1+A2", "Round 11 item D3" as if they're shared vocabulary — describe what the thing does, then optionally link the identifier. Re-read every reply for jargon before sending. Don't promise formatting that isn't there ("annotated with green/yellow/red") unless the document actually has those markers.
 
-## No shorthand references back to earlier items
-Never refer to something from earlier in the conversation or a plan by a label alone ("§2b", "C7", "the switch", "option (a)", "phase B"). Say in a full sentence what it is and what deciding it would do, and add a markdown link with a line number to where it's written down, so the reader can check it without scrolling back.
-
 ## Spell out names; don't acronymize
 In conversation summaries, analysis docs, plan docs, and table column labels, use the full name (`developer.mozilla.org`, `cheesewich.com`) rather than acronyms (`MDN`, `CW`). Acronyms force the reader to mentally re-expand each one. They are OK only as identifiers in shell scripts where they're already expanded right above (`JIDS="jid:LBL …"` style).
 
