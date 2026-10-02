@@ -201,6 +201,11 @@ truthfully / reported falsely / not reported / waits without limit.
 - **Every write followed by a read** in `timeline-storage/src/dynamo/` (§1's bug class).
 - **Every progress message**, for whether it can show while nothing is happening.
 
+**When it runs:** once, in phase B (§5), across the whole codebase; it has not been run yet. From
+2026-10-02 the same questions are also asked of every code addition, before its tests are
+written (CLAUDE.md's "post-addition check"), so new code is checked as it's added rather than
+only by this one-time audit.
+
 Items found broken are fixed under this plan if the fix is small and the same shape as §1–3;
 anything larger is listed in the analysis with its own proposed fix, and comes back to the user
 before it's built.
