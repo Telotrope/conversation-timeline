@@ -1,7 +1,7 @@
 # Deferred problems
 
-**Status:** open. No fix is designed yet. Each problem gets its own plan, or a section here,
-before any code changes.
+**Status:** open. No fix is designed yet, except item 5's proposal (not approved). Each problem
+gets its own plan, or a section here, before any code changes.
 
 These came from the "Known defects" section of
 [2026-09-28-frontend-quality-of-life.md](completed/2026-09-28-frontend-quality-of-life.md), moved
@@ -62,3 +62,39 @@ phases.
 
    *State on 2026-10-02:* waiting on the migration plan's V3. The TODO is at
    [review.js:164](../../frontend/ui/views/review.js#L164).
+
+5. **One status text is shared by three unrelated messages, and sits beside the download button.**
+   Added 2026-10-02 at the user's request, found during deployment check D6. The Review tab has a
+   single text spot, `saveStatus` ([timeline.html:815](../../timeline.html#L815)), in the bar with
+   the "Download annotated conversations.json" button. Three things write to it, each replacing
+   the last:
+   - after loading, "Loaded N of your confirmed flags from the server."
+     ([load-flow.js:50](../../frontend/ui/load-flow.js#L50));
+   - after the download, "Downloaded conversations-with-flags.json …" or "No conversation data
+     loaded to annotate." ([annotated-export.js:17](../../frontend/ui/annotated-export.js#L17),
+     [line 61](../../frontend/ui/annotated-export.js#L61));
+   - after every checkbox or Approve, the save's outcome, "Saved." or an error
+     ([flag-edits.js:37](../../frontend/ui/flag-edits.js#L37)).
+
+   So one Approve erases the load summary, and "Saved." reads as if it were about the download.
+   It also doesn't say *which* row was saved. Separately, the row's "Reviewed" label changes before
+   the server answers ([flag-edits.js:36-37](../../frontend/ui/flag-edits.js#L36-L37)), so a row
+   can say "Reviewed" while its save failed, with the failure shown only in that distant text.
+
+   **Proposed fix (not approved):**
+   - *A save's outcome goes on its own row.* The row's status, from `reviewStatus`
+     ([review.js:136](../../frontend/ui/views/review.js#L136)), reads "Saving…" while the request
+     is out, "Reviewed" once the server answers, and "Not saved: <reason>" (the existing
+     `saveMessage` wording) if it fails. The local change is kept either way, as today, so a failed
+     row stays visibly unsaved until it is clicked again. This needs a per-row save state
+     (`state.saveStates[id]`) beside `state.overrides`.
+   - *The load summary moves next to the review count* (`reviewCount`,
+     [timeline.html:811](../../timeline.html#L811)), where nothing else writes.
+   - *The download's message stays beside the download button*, which is then the only thing
+     writing there; `setSaveStatus` is renamed to say so (e.g. `setDownloadStatus`).
+   - *Reuse check:* `reviewStatus` and `saveMessage` already exist and are extended, not
+     duplicated; no new widget.
+   - *Tests (browser, against the existing local backend):* approve a row → it shows "Saving…"
+     then "Reviewed", and the load summary is still shown; a save the server refuses (a stale
+     handle, 403) → that row shows "Not saved: …" and other rows are unchanged; downloading →
+     the message appears beside the button only.
