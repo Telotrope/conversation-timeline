@@ -3,36 +3,36 @@
 **Status:** done 2026-10-01. Differences from the plan below: the server binary is built and then
 run directly instead of through `cargo run`, so the process the run starts is the server itself
 (its process ID is the listener, and stopping it can't leave a child running); and the identity
-check is its own file, [test-server.spec.js](../../e2e/test-server.spec.js). Step 4 results:
+check is its own file, [test-server.spec.js](../../../e2e/test-server.spec.js). Step 4 results:
 with the old server answering on port 3000 for the whole run, all 60 tests passed; with a decoy on
 3123, the run stopped after 2 seconds with the "port 3123 is in use" message; after each run,
 nothing was left listening on 3123.
 
 ## What went wrong
 
-On 2026-10-01, during the V2c work, two runs of the browser tests (in [e2e/](../../e2e/)) failed:
+On 2026-10-01, during the V2c work, two runs of the browser tests (in [e2e/](../../../e2e/)) failed:
 every test that saves a flag showed "Could not save — couldn't find this message's server-side
 id." The same page code and the same server program then passed twice. The page shows that
 message when it has no flag handle for the message
-([api-client.js](../../frontend/infra/api-client.js), `patchFlagsToBackend`).
+([api-client.js](../../../frontend/infra/api-client.js), `patchFlagsToBackend`).
 
 ## Theories, and how each was tested
 
 | # | Theory | Test | Result |
 |---|---|---|---|
 | 1 | The tests talked to an **old server** already listening on port 3000, built before flag handles existed, so `/export` sent no handles | Build the server at commit `3b82e18` (just before handles), run it on port 3000, run two save tests | **Reproduced exactly**: both failed with the same message |
-| 2 | The upload test leaves its server running afterwards (it stops `cargo run`, not the server `cargo run` started, at [upload-flow.spec.js:84](../../e2e/upload-flow.spec.js#L84)), and a later run reuses it | Run only `upload-flow.spec.js`, then check port 3000 | **Ruled out** for that file run alone: nothing left listening |
+| 2 | The upload test leaves its server running afterwards (it stops `cargo run`, not the server `cargo run` started, at [upload-flow.spec.js:84](../../../e2e/upload-flow.spec.js#L84)), and a later run reuses it | Run only `upload-flow.spec.js`, then check port 3000 | **Ruled out** for that file run alone: nothing left listening |
 | 3 | The page code was stale (browser cache) | Not tested: each test gets a fresh browser context, and theory 1 already reproduces the exact symptom | Not needed |
 
 **Why an old server gets used.** Both spec files treat "something answers on port 3000" as "the
 server is ready":
-- [views.spec.js:111-123](../../e2e/views.spec.js#L111-L123) deliberately reuses any server
+- [views.spec.js:111-123](../../../e2e/views.spec.js#L111-L123) deliberately reuses any server
   already listening.
-- [upload-flow.spec.js:60-81](../../e2e/upload-flow.spec.js#L60-L81) starts `cargo run`, then waits
+- [upload-flow.spec.js:60-81](../../../e2e/upload-flow.spec.js#L60-L81) starts `cargo run`, then waits
   for port 3000 to answer. If another server holds the port, the new one fails to start, the wait
   succeeds anyway, and every test runs against the other server.
 
-Port 3000 is also where the dev launcher ([scripts/dev-up.sh](../../scripts/dev-up.sh)) runs your
+Port 3000 is also where the dev launcher ([scripts/dev-up.sh](../../../scripts/dev-up.sh)) runs your
 backend. Its state file shows it started one at 2026-09-30 21:56 UTC, before flag handles
 existed. Your static dev server from that session (port 8000) is still running.
 
@@ -63,7 +63,7 @@ handles can pass. Step 5 below re-runs everything.
      run.
 
    Port 3123 follows the same idea as the static server's 8123 versus your dev server's 8000
-   ([playwright.config.js](../../e2e/playwright.config.js)). Your dev backend on 3000 can never
+   ([playwright.config.js](../../../e2e/playwright.config.js)). Your dev backend on 3000 can never
    be mistaken for the test server.
 2. **The page is pointed at port 3123** with its existing `api_base` query parameter: the test
    page address becomes `timeline.html?api_base=http://127.0.0.1:3123`. The test
@@ -91,7 +91,7 @@ plan is the approval those changes need.
      "port 3123 is in use" message.
    - After a normal run, nothing may be listening on 3123.
 5. Run every suite (Rust, frontend unit, browser) and commit.
-6. Update [e2e/README.md](../../e2e/README.md): the port, and that the run never reuses a server.
+6. Update [e2e/README.md](../../../e2e/README.md): the port, and that the run never reuses a server.
 
 ## Self-critique log
 

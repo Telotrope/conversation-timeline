@@ -1490,7 +1490,7 @@ after D1–D7 and D9 are run on a real deployment and recorded.
 
 ### V3 — Bedrock-based classification
 **Reference implementation.** The browser-side "Classify with AI" code is deleted from the
-working tree by [2026-09-30-split-timeline-script.md](2026-09-30-split-timeline-script.md), because it
+working tree by [2026-09-30-split-timeline-script.md](completed/2026-09-30-split-timeline-script.md), because it
 cannot work from a page served over HTTP. The links in this section are pinned to commit
 `64996c5`, the last commit to change `timeline.html` before that deletion. They show the code
 exactly as it last ran:

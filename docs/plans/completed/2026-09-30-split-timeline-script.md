@@ -12,7 +12,7 @@
 
 ## Goal
 
-[timeline.html](../../timeline.html) has one `<script>` block, lines 909–3107 (about 2,200 lines),
+[timeline.html](../../../timeline.html) has one `<script>` block, lines 909–3107 (about 2,200 lines),
 holding 85 top-level functions plus shared state and event wiring. Split it into small files
 with one concern each, grouped by layer the way the Rust backend is split into
 `timeline-core` (domain), `timeline-storage` (adapters) and `timeline-api` (wiring).
@@ -30,11 +30,11 @@ Out of scope:
   classification feature (§3f).
 - Any behavior change.
 - Replacing the URL-hash navigation with `history.pushState`. The comment at
-  [timeline.html:2298](../../timeline.html#L2298) justifies hashes by `file://` use, which no longer
+  [timeline.html:2298](../../../timeline.html#L2298) justifies hashes by `file://` use, which no longer
   applies. Switching would change behavior, so that is a separate decision. The comment moves
   with the code and is updated to say the reason no longer holds.
 - Building the Bedrock-based replacement for "Classify with AI". That is V3 of
-  [2026-09-09-rust-aws-backend-migration.md](2026-09-09-rust-aws-backend-migration.md#L530).
+  [2026-09-09-rust-aws-backend-migration.md](../2026-09-09-rust-aws-backend-migration.md#L530).
 
 ## 1. Layers
 
@@ -76,27 +76,27 @@ Who may import whom:
 The `core/` rule mirrors the backend rule that domain code never imports infrastructure. It also
 means every `core/` module can be unit-tested in Node without a browser.
 
-New directory: `frontend/` at the repo root. [timeline.html](../../timeline.html) stays where it is so
-the [README.md](../../README.md), [.vscode/tasks.json](../../.vscode/tasks.json) and
-[scripts/test-dev-up.sh](../../scripts/test-dev-up.sh) references keep working.
+New directory: `frontend/` at the repo root. [timeline.html](../../../timeline.html) stays where it is so
+the [README.md](../../../README.md), [.vscode/tasks.json](../../../.vscode/tasks.json) and
+[scripts/test-dev-up.sh](../../../scripts/test-dev-up.sh) references keep working.
 
 ## 2. Inventory
 
 Each file gets a purpose statement and its contents. Line numbers are current positions in
-[timeline.html](../../timeline.html), and sizes are approximate. I wrote the purposes from the
+[timeline.html](../../../timeline.html), and sizes are approximate. I wrote the purposes from the
 comments above each function and from the call sites I read; C8 records where that falls short
 of reading every body.
 
 ### core/ — pure data logic
 
-**`core/export-format.js`** (~90 lines, from [939–1025](../../timeline.html#L939))
+**`core/export-format.js`** (~90 lines, from [939–1025](../../../timeline.html#L939))
 - **Purpose:** turns the export text the backend sends into the page's in-memory data. That
   data is a list of conversations, every message, just the messages you wrote, and any flags
   already embedded in the file.
 - **Contents:** `FORMAT_VERSION`, `extractMessageText`, `unwrapUploadedJSON`,
   `parseUploadedConversations`.
 
-**`core/state.js`** (~55 lines, from [1449–1468](../../timeline.html#L1449) and [1495](../../timeline.html#L1495))
+**`core/state.js`** (~55 lines, from [1449–1468](../../../timeline.html#L1449) and [1495](../../../timeline.html#L1495))
 - **Purpose:** the single holder of everything the page currently knows. Every other module
   reads and writes the shared data here rather than keeping its own copy.
 - **Contents:**
@@ -106,28 +106,28 @@ of reading every body.
   - The three show-automatic, show-mine and show-replies switches.
   - `GAP_THRESHOLD_SEC`.
   - The two "where you are" values, which today sit beside their views: the open conversation
-    (`currentConv`, [line 2109](../../timeline.html#L2109)) and the shown analysis (`currentAnalysis`,
-    [line 2709](../../timeline.html#L2709)). §4, loop 2 explains why they move here.
+    (`currentConv`, [line 2109](../../../timeline.html#L2109)) and the shown analysis (`currentAnalysis`,
+    [line 2709](../../../timeline.html#L2709)). §4, loop 2 explains why they move here.
 
-**`core/flags.js`** (~70 lines, from [1470–1503](../../timeline.html#L1470), [1553–1578](../../timeline.html#L1553) and [2659](../../timeline.html#L2659))
+**`core/flags.js`** (~70 lines, from [1470–1503](../../../timeline.html#L1470), [1553–1578](../../../timeline.html#L1553) and [2659](../../../timeline.html#L2659))
 - **Purpose:** decides whether a message counts as flagged. The answer combines the
   backend's automatic flags, your corrections and the show switches. The same answer then
   gets attached to each session block, so every view shows the same counts.
 - **Contents:** `hasUserValue`, `effectiveFlag`, `isOverridden`, `isFlagged`, `attachFlags`.
 
-**`core/blocks.js`** (~50 lines, from [1504–1552](../../timeline.html#L1504))
+**`core/blocks.js`** (~50 lines, from [1504–1552](../../../timeline.html#L1504))
 - **Purpose:** groups messages into sessions. A session is a run of messages in one
   conversation on one local calendar day, split wherever 15 minutes or more pass with no
   activity. The calendar draws these as bars, and several analyses count them.
 - **Contents:** `localDateKey`, `buildBlocks`.
 
-**`core/format.js`** (~45 lines, from [1134–1154](../../timeline.html#L1134) and [1955–1975](../../timeline.html#L1955))
+**`core/format.js`** (~45 lines, from [1134–1154](../../../timeline.html#L1134) and [1955–1975](../../../timeline.html#L1955))
 - **Purpose:** turns numbers and timestamps into short readable text: file sizes, time
   remaining, durations, clock times, and day and month headings.
 - **Contents:** `formatBytes`, `formatEta`, `fmtDuration`, `fmtClock`, `fmtDayHeading`,
   `fmtMonthHeading`.
 
-**`core/analyses.js`** (~170 lines, from the compute half of each section in [2751–2994](../../timeline.html#L2751) and [2663–2676](../../timeline.html#L2663))
+**`core/analyses.js`** (~170 lines, from the compute half of each section in [2751–2994](../../../timeline.html#L2751) and [2663–2676](../../../timeline.html#L2663))
 - **Purpose:** computes the numbers behind the five analyses on the Analytics tab. They are:
   - a ranking of conversations or sessions by share of flagged messages
   - flag rate by week or month
@@ -141,7 +141,7 @@ of reading every body.
 
 ### infra/ — network and storage, no DOM
 
-**`infra/api-client.js`** (~140 lines, from [1045–1099](../../timeline.html#L1045), [1174–1216](../../timeline.html#L1174) and [1617–1647](../../timeline.html#L1617))
+**`infra/api-client.js`** (~140 lines, from [1045–1099](../../../timeline.html#L1045), [1174–1216](../../../timeline.html#L1174) and [1617–1647](../../../timeline.html#L1617))
 - **Purpose:** everything that talks to the timeline backend. It works out the backend's
   address, gets a development login token, uploads with progress and downloads with progress.
   It saves your flag corrections and turns failed responses into readable messages.
@@ -150,13 +150,13 @@ of reading every body.
 
 ### ui/render/ — turns data into HTML or SVG
 
-**`ui/render/markup.js`** (~90 lines, from [2196–2281](../../timeline.html#L2196))
+**`ui/render/markup.js`** (~90 lines, from [2196–2281](../../../timeline.html#L2196))
 - **Purpose:** makes text safe to put into the page, and renders message text written in
   Markdown (headings, bold, lists, code) as HTML. It escapes the text first so a message
   cannot inject its own HTML.
 - **Contents:** `escapeHtml`, `renderMarkdownLite`.
 
-**`ui/render/charts.js`** (~110 lines, from [2995–3105](../../timeline.html#L2995))
+**`ui/render/charts.js`** (~110 lines, from [2995–3105](../../../timeline.html#L2995))
 - **Purpose:** draws the bar, line and scatter charts the Analytics tab uses, as SVG inside a
   given element.
 - **Contents:** `renderBarChartSVG`, `renderLineChartSVG`, `renderScatterChartSVG`.
@@ -167,7 +167,7 @@ With the confirmation dialog deleted (§3f), this folder holds one file. It keep
 because it is still a widget, and a future one, such as the cost confirmation V3 or V4 may need,
 has an obvious home.
 
-**`ui/widgets/status-indicators.js`** (~100 lines, from [1026–1044](../../timeline.html#L1026), [1100–1133](../../timeline.html#L1100), [1155–1173](../../timeline.html#L1155), [1290–1302](../../timeline.html#L1290) and [1648–1657](../../timeline.html#L1648))
+**`ui/widgets/status-indicators.js`** (~100 lines, from [1026–1044](../../../timeline.html#L1026), [1100–1133](../../../timeline.html#L1100), [1155–1173](../../../timeline.html#L1155), [1290–1302](../../../timeline.html#L1290) and [1648–1657](../../../timeline.html#L1648))
 - **Purpose:** the page's progress and status lines. It covers:
   - the load screen's message and progress bar, with its time-remaining estimate
   - the notice that a previous session was restored
@@ -177,12 +177,12 @@ has an obvious home.
 
 ### ui/navigation/ — keeps track of which view is showing
 
-**`ui/navigation/tabs.js`** (~10 lines, from [2283–2290](../../timeline.html#L2283))
+**`ui/navigation/tabs.js`** (~10 lines, from [2283–2290](../../../timeline.html#L2283))
 - **Purpose:** switches between the Calendar, Conversations, "Review & flags" and Analytics
   tabs. It highlights the chosen tab button, shows that tab's view and hides the others.
 - **Contents:** `switchTab`.
 
-**`ui/navigation/location.js`** (~45 lines, from [2292–2326](../../timeline.html#L2292))
+**`ui/navigation/location.js`** (~45 lines, from [2292–2326](../../../timeline.html#L2292))
 - **Purpose:** records where you are in the web address, such as `#conversations/3`, whenever
   you change tabs, open a conversation or pick an analysis. The browser's Back button then
   returns to the previous view instead of leaving the page, and a reload reopens the same view.
@@ -192,23 +192,23 @@ has an obvious home.
 
 ### ui/views/ — one file per area of the page
 
-**`ui/views/header.js`** (~10 lines, from [1976–1983](../../timeline.html#L1976))
+**`ui/views/header.js`** (~10 lines, from [1976–1983](../../../timeline.html#L1976))
 - **Purpose:** fills in the line under the page title, for example "412 conversations, 18,300
   messages, 2025-01-04 to 2026-09-20."
 - **Contents:** `renderSubtitle`.
 
-**`ui/views/calendar.js`** (~100 lines, from [1952–1953](../../timeline.html#L1952) and [1984–2079](../../timeline.html#L1984))
+**`ui/views/calendar.js`** (~100 lines, from [1952–1953](../../../timeline.html#L1952) and [1984–2079](../../../timeline.html#L1984))
 - **Purpose:** draws the Calendar tab. It shows one row per day, with a colored bar for each
   session and markers for flagged messages. Clicking a day, a session or a marker opens the
   matching messages in the review tab.
 - **Contents:** `PALETTE`, `colorFor`, `renderCalendar`.
 
-**`ui/views/conversations.js`** (~115 lines, from [2080–2195](../../timeline.html#L2080))
+**`ui/views/conversations.js`** (~115 lines, from [2080–2195](../../../timeline.html#L2080))
 - **Purpose:** draws the Conversations tab. It has a searchable list of conversations and the
   transcript of the one you open, with links from its flags into the review tab.
 - **Contents:** `renderConvList`, `selectConversation`.
 
-**`ui/views/review.js`** (~285 lines, from [2356–2629](../../timeline.html#L2356))
+**`ui/views/review.js`** (~285 lines, from [2356–2629](../../../timeline.html#L2356))
 - **Purpose:** draws the "Review & flags" tab, where you check and correct flags. It has:
   - a paged, searchable, filterable table of your messages with a checkbox per flag
   - the banner that explains the current filter, with previous-day, next-day and clear
@@ -221,7 +221,7 @@ has an obvious home.
   - `checkboxCell`, `renderReviewFilterBanner`, `renderReplyRow`, `renderReviewTable`
   - `setFlagEditHandlers` (§4, loop 1)
 
-**`ui/views/analytics.js`** (~180 lines, from [2680–2749](../../timeline.html#L2680) and the render half of each section in [2786–2994](../../timeline.html#L2786))
+**`ui/views/analytics.js`** (~180 lines, from [2680–2749](../../../timeline.html#L2680) and the render half of each section in [2786–2994](../../../timeline.html#L2786))
 - **Purpose:** draws the Analytics tab. It runs the chosen analysis from `core/analyses.js` in
   small chunks so the progress bar moves and the page stays responsive. It then draws the
   result with its chart, and results link through to the review tab.
@@ -232,7 +232,7 @@ has an obvious home.
 
 ### ui/ — actions that span several views
 
-**`ui/load-flow.js`** (~210 lines, from [1217–1289](../../timeline.html#L1217) and [1303–1434](../../timeline.html#L1303))
+**`ui/load-flow.js`** (~210 lines, from [1217–1289](../../../timeline.html#L1217) and [1303–1434](../../../timeline.html#L1303))
 - **Purpose:** getting data onto the screen. The steps are:
   1. Upload the file you pick.
   2. Optionally run the backend's flag detection, page by page with progress.
@@ -243,32 +243,32 @@ has an obvious home.
   view named in the web address.
 - **Contents:** `applyExportText`, `tryRestoreSession`, `runDetectionPass`, `handleLoadClick`.
 
-**`ui/refresh-views.js`** (~15 lines, from [1667–1672](../../timeline.html#L1667) and [2638–2642](../../timeline.html#L2638))
+**`ui/refresh-views.js`** (~15 lines, from [1667–1672](../../../timeline.html#L1667) and [2638–2642](../../../timeline.html#L2638))
 - **Purpose:** after any change to flags, recomputes them and redraws the calendar,
   conversation list, open conversation and review table. Today that sequence is copied in
   three places; after the deletion in §3f, two remain.
 - **Contents:** `refreshAllViews`.
 
-**`ui/flag-edits.js`** (~45 lines, from [1658–1684](../../timeline.html#L1658) and [2635–2643](../../timeline.html#L2635))
+**`ui/flag-edits.js`** (~45 lines, from [1658–1684](../../../timeline.html#L1658) and [2635–2643](../../../timeline.html#L2635))
 - **Purpose:** handles your flag changes. Ticking a checkbox or pressing Approve records all
   three flags on that message as yours and saves them to the backend. Flipping the
   show-automatic or show-mine switches changes what every view counts. Either way, every view
   gets redrawn.
 - **Contents:** `setRowOverrides`, `approveRow`, `onVisibilityToggleChanged`.
 
-**`ui/annotated-export.js`** (~55 lines, from [1679–1684](../../timeline.html#L1679) and [1902–1951](../../timeline.html#L1902))
+**`ui/annotated-export.js`** (~55 lines, from [1679–1684](../../../timeline.html#L1679) and [1902–1951](../../../timeline.html#L1902))
 - **Purpose:** the download button. It saves the conversations with both the automatic flags
   and your corrections written into each message, in a file this page can load again.
 - **Contents:** `exportAnnotatedConversations`.
 
-**`ui/router.js`** (~30 lines, from [2327–2348](../../timeline.html#L2327))
+**`ui/router.js`** (~30 lines, from [2327–2348](../../../timeline.html#L2327))
 - **Purpose:** the reverse of `ui/navigation/location.js`. When the page loads or you press
   Back, it reads the web address and opens the tab, conversation or analysis it names.
 - **Contents:** `applyLocationHash`.
 
 ### Top level
 
-**`main.js`** (~60 lines, from [1435–1447](../../timeline.html#L1435), [2349–2354](../../timeline.html#L2349), [2630–2653](../../timeline.html#L2630), [2746–2749](../../timeline.html#L2746) and [3106](../../timeline.html#L3106))
+**`main.js`** (~60 lines, from [1435–1447](../../../timeline.html#L1435), [2349–2354](../../../timeline.html#L2349), [2630–2653](../../../timeline.html#L2630), [2746–2749](../../../timeline.html#L2746) and [3106](../../../timeline.html#L3106))
 - **Purpose:** the page's starting point. It connects every button, box and switch in the
   markup to the code that handles it, and hands the flag-edit handlers to the review table
   (§4, loop 1). Then it tries to restore your last session.
@@ -281,16 +281,16 @@ soft target.
 ## 3. Edits the split forces
 
 **3a. Shared state becomes one object.** A module cannot reassign a variable it imported. But
-[applyExportText (line 1221)](../../timeline.html#L1221) reassigns `CONVERSATIONS`, `MESSAGES`,
+[applyExportText (line 1221)](../../../timeline.html#L1221) reassigns `CONVERSATIONS`, `MESSAGES`,
 `BLOCKS` and four others. So `core/state.js` exports one `state` object, and every reference
 changes from `CONVERSATIONS` to `state.conversations`. This is the largest mechanical edit and
 touches every module that reads the data.
 
 **3b. Infra functions stop touching the page.**
-- `ensureAuthToken` reads the login box directly ([line 1063](../../timeline.html#L1063)). It
+- `ensureAuthToken` reads the login box directly ([line 1063](../../../timeline.html#L1063)). It
   will take the login name as a parameter, and `ui/load-flow.js` reads the box.
 - `patchFlagsToBackend` calls `setSaveStatus` four times
-  ([lines 1626–1644](../../timeline.html#L1626)). It will return the message instead, and
+  ([lines 1626–1644](../../../timeline.html#L1626)). It will return the message instead, and
   `ui/flag-edits.js` shows it.
 
 **3c. Cross-file names are imported and exported.** Every function another file calls gets
@@ -299,11 +299,11 @@ touches every module that reads the data.
 **3d. Analyses compute without drawing.** Today each `compute…Analysis` function does three
 things:
 - It runs its loop through `computeWithProgress`, which uses the browser-only
-  `requestAnimationFrame` ([line 2692](../../timeline.html#L2692)).
+  `requestAnimationFrame` ([line 2692](../../../timeline.html#L2692)).
 - It calls its own `render…Result` as its last line, for example
-  [line 2783](../../timeline.html#L2783).
+  [line 2783](../../../timeline.html#L2783).
 - `runAnalysis` starts it and never renders anything itself
-  ([lines 2726–2745](../../timeline.html#L2726)).
+  ([lines 2726–2745](../../../timeline.html#L2726)).
 
 As written, the compute functions cannot live in `core/`. Two small edits per function fix
 that:
@@ -318,32 +318,32 @@ that:
 The page draws the same thing at the same point, after the computation finishes.
 
 **3e. The unused `analysisCache` is dropped.** It is declared at
-[line 2710](../../timeline.html#L2710), and nothing in the file reads or writes it.
+[line 2710](../../../timeline.html#L2710), and nothing in the file reads or writes it.
 
 **3f. "Classify with AI" is deleted.** It calls `api.anthropic.com` directly from the browser
-([timeline.html:1745](../../timeline.html#L1745)), which cannot succeed from a page served over HTTP.
+([timeline.html:1745](../../../timeline.html#L1745)), which cannot succeed from a page served over HTTP.
 The migration plan's V3 moves classification to Rust on Bedrock. Its
-[reference-implementation list (line 531)](2026-09-09-rust-aws-backend-migration.md#L531) links to
+[reference-implementation list (line 531)](../2026-09-09-rust-aws-backend-migration.md#L531) links to
 this code at commit `64996c5`, so the prompt and error handling remain available for the port.
 Deleted, as one commit on the single-file page before anything moves (step D1 in §6):
 
 | What | Where now |
 |---|---|
-| The classification section: model id, batch size, prompt building, the API call, retry, the batch loop | [timeline.html:1685–1901](../../timeline.html#L1685) |
-| The `window.storage` checkpoint | [timeline.html:1580–1616](../../timeline.html#L1580) |
-| The confirmation dialog, `showConfirm`, whose only caller is the batch loop ([line 1816](../../timeline.html#L1816)) | [timeline.html:912–938](../../timeline.html#L912) |
-| The button's event listener | [timeline.html:2633](../../timeline.html#L2633) |
-| The button, its explanation and its progress bar | [timeline.html:833–849](../../timeline.html#L833) |
-| The dialog's markup | [timeline.html:898–907](../../timeline.html#L898) |
-| The CSS used only by those: `.llm-classify-*` and `.modal-*` | [timeline.html:554–577](../../timeline.html#L554), [408–441](../../timeline.html#L408) |
+| The classification section: model id, batch size, prompt building, the API call, retry, the batch loop | [timeline.html:1685–1901](../../../timeline.html#L1685) |
+| The `window.storage` checkpoint | [timeline.html:1580–1616](../../../timeline.html#L1580) |
+| The confirmation dialog, `showConfirm`, whose only caller is the batch loop ([line 1816](../../../timeline.html#L1816)) | [timeline.html:912–938](../../../timeline.html#L912) |
+| The button's event listener | [timeline.html:2633](../../../timeline.html#L2633) |
+| The button, its explanation and its progress bar | [timeline.html:833–849](../../../timeline.html#L833) |
+| The dialog's markup | [timeline.html:898–907](../../../timeline.html#L898) |
+| The CSS used only by those: `.llm-classify-*` and `.modal-*` | [timeline.html:554–577](../../../timeline.html#L554), [408–441](../../../timeline.html#L408) |
 
 Two neighbors stay, because they sit inside the deleted ranges' edges but belong to other code:
-- `patchFlagsToBackend`'s comment, at [lines 1617–1623](../../timeline.html#L1617).
-- `exportAnnotatedConversations`'s comment, at [lines 1679–1684](../../timeline.html#L1679). It is
+- `patchFlagsToBackend`'s comment, at [lines 1617–1623](../../../timeline.html#L1617).
+- `exportAnnotatedConversations`'s comment, at [lines 1679–1684](../../../timeline.html#L1679). It is
   separated from its function by the classification section today.
 
-The `.is-error` progress-bar style ([line 547](../../timeline.html#L547)) also stays, because the load
-progress bar uses it ([line 1121](../../timeline.html#L1121)).
+The `.is-error` progress-bar style ([line 547](../../../timeline.html#L547)) also stays, because the load
+progress bar uses it ([line 1121](../../../timeline.html#L1121)).
 
 ## 4. How the loops between files are resolved
 
@@ -361,10 +361,10 @@ click.
 
 Today:
 - The review table's checkboxes and Approve buttons call `setRowOverrides` and `approveRow`
-  ([lines 2595–2603](../../timeline.html#L2595)).
+  ([lines 2595–2603](../../../timeline.html#L2595)).
 - `setRowOverrides` redraws the calendar, the conversation list, the open conversation and the
-  review table ([lines 1667–1672](../../timeline.html#L1667)).
-- `selectConversation` calls `jumpToReview` ([lines 2165–2192](../../timeline.html#L2165)).
+  review table ([lines 1667–1672](../../../timeline.html#L1667)).
+- `selectConversation` calls `jumpToReview` ([lines 2165–2192](../../../timeline.html#L2165)).
 
 Cut naively, `ui/views/review.js` imports `ui/flag-edits.js`. That file imports
 `ui/views/review.js` and `ui/views/conversations.js`, which in turn imports
@@ -405,19 +405,19 @@ An event named by a string can have any number of listeners anywhere, found only
 for the string.
 
 The same redraw sequence is copied in `setRowOverrides` and `onVisibilityToggleChanged`
-([lines 2638–2642](../../timeline.html#L2638)); a third copy goes with `classifyWithAI` (§3f). It
+([lines 2638–2642](../../../timeline.html#L2638)); a third copy goes with `classifyWithAI` (§3f). It
 becomes one function, `refreshAllViews`, in `ui/refresh-views.js`, and both call it. `applyExportText`'s redraw
-([lines 1244–1247](../../timeline.html#L1244)) is different: it also redraws the subtitle and
+([lines 1244–1247](../../../timeline.html#L1244)) is different: it also redraws the subtitle and
 does not reopen a conversation. It stays as it is.
 
 ### Loop 2: views → address writer → views
 
 Today:
 - `selectConversation` and `runAnalysis` call `rememberLocation`
-  ([line 2112](../../timeline.html#L2112), [line 2729](../../timeline.html#L2729)) to record where you
+  ([line 2112](../../../timeline.html#L2112), [line 2729](../../../timeline.html#L2729)) to record where you
   are in the web address.
 - `rememberLocation` calls `currentLocationHash`, which reads `currentConv` and
-  `currentAnalysis` ([lines 2311–2319](../../timeline.html#L2311)). Those variables are declared
+  `currentAnalysis` ([lines 2311–2319](../../../timeline.html#L2311)). Those variables are declared
   beside `selectConversation` and `runAnalysis`.
 
 Cut naively, `ui/views/conversations.js` imports `ui/navigation/location.js` for
@@ -431,7 +431,7 @@ Fix: the two "where you are" values move into `core/state.js`, as
 
 ### Loop 3: address reader → views → address reader
 
-Today, `applyLocationHash` ([lines 2327–2348](../../timeline.html#L2327)) calls `switchTab`,
+Today, `applyLocationHash` ([lines 2327–2348](../../../timeline.html#L2327)) calls `switchTab`,
 `selectConversation` and `runAnalysis`. It also sets the `APPLYING_HASH` guard that
 `rememberLocation` checks, so that opening a view from the address does not immediately write
 the address back.
@@ -460,9 +460,9 @@ row reads "this file imports these":
 
 | File | Imports (beyond `core/` and `infra/`) |
 |---|---|
-| `main.js` | every file directly in `ui/`, `ui/views/review.js` (to call `setFlagEditHandlers`), `ui/navigation/tabs.js` and `ui/navigation/location.js` (the tab buttons switch tabs and record the address, [timeline.html:2351](../../timeline.html#L2351)), and each view for its listeners |
+| `main.js` | every file directly in `ui/`, `ui/views/review.js` (to call `setFlagEditHandlers`), `ui/navigation/tabs.js` and `ui/navigation/location.js` (the tab buttons switch tabs and record the address, [timeline.html:2351](../../../timeline.html#L2351)), and each view for its listeners |
 | `ui/router.js` | `ui/navigation/tabs.js`, `ui/navigation/location.js`, `ui/views/conversations.js`, `ui/views/analytics.js` |
-| `ui/load-flow.js` | `ui/router.js` (a restored session reopens the view named in the address, [timeline.html:1280](../../timeline.html#L1280)), `ui/widgets/status-indicators.js`, `ui/views/header.js`, `ui/views/calendar.js`, `ui/views/conversations.js`, `ui/views/review.js` |
+| `ui/load-flow.js` | `ui/router.js` (a restored session reopens the view named in the address, [timeline.html:1280](../../../timeline.html#L1280)), `ui/widgets/status-indicators.js`, `ui/views/header.js`, `ui/views/calendar.js`, `ui/views/conversations.js`, `ui/views/review.js` |
 | `ui/flag-edits.js` | `ui/refresh-views.js`, `ui/widgets/status-indicators.js` |
 | `ui/annotated-export.js` | `ui/widgets/status-indicators.js` |
 | `ui/refresh-views.js` | `ui/views/calendar.js`, `ui/views/conversations.js`, `ui/views/review.js` |
@@ -488,8 +488,8 @@ reachable over HTTP. Three kinds of evidence support it:
 
 Terms:
 - **End-to-end test**: a Playwright test that drives the real page in a real Chrome against the
-  real backend. The existing ones are in [e2e/views.spec.js](../../e2e/views.spec.js) and
-  [e2e/upload-flow.spec.js](../../e2e/upload-flow.spec.js).
+  real backend. The existing ones are in [e2e/views.spec.js](../../../e2e/views.spec.js) and
+  [e2e/upload-flow.spec.js](../../../e2e/upload-flow.spec.js).
 - **Characterization test**: a test written to record what the code does today, whether or not
   that behavior is ideal, so that any change in it fails the test.
 - **Coverage**: which lines of the script actually ran during a test run.
@@ -497,11 +497,11 @@ Terms:
 ### Before any code moves (on today's single-file page)
 
 **V1. Serve the page over HTTP in the tests.** Both specs open the page from disk today
-([e2e/views.spec.js:18](../../e2e/views.spec.js#L18), [e2e/upload-flow.spec.js:13](../../e2e/upload-flow.spec.js#L13)).
+([e2e/views.spec.js:18](../../../e2e/views.spec.js#L18), [e2e/upload-flow.spec.js:13](../../../e2e/upload-flow.spec.js#L13)).
 - `TIMELINE_HTML` changes to an `http://127.0.0.1:<port>/timeline.html` address.
 - The specs start `python3 -m http.server` from the repo root the same way they already start
   the backend. They wait for the port, then stop the server afterward.
-- [e2e/README.md](../../e2e/README.md) gets updated to match.
+- [e2e/README.md](../../../e2e/README.md) gets updated to match.
 
 This is the test change your answer #1 authorizes. The suite must pass on the unchanged page
 before anything else happens.
@@ -607,7 +607,7 @@ One commit per step, and each step passes V5 and V6 before it is committed:
 ## 7. What this verification will not show
 
 - **Anything against the deployed AWS backend.** The end-to-end tests use the local dev
-  backend and its dev login. Nothing in [infra/template.yaml](../../infra/template.yaml) serves this
+  backend and its dev login. Nothing in [infra/template.yaml](../../../infra/template.yaml) serves this
   page, so there is no deployed copy to test.
 - **Browsers other than Chrome.** The Playwright config pins `/usr/bin/google-chrome`.
 
@@ -720,7 +720,7 @@ the `core/` layer check in V7. The alternative was keeping computation and drawi
 in Node, so I rejected it.
 
 ### C14 [RESOLVED]: `analysisCache` is dead code
-Original concern: it is declared at [timeline.html:2710](../../timeline.html#L2710) and never used.
+Original concern: it is declared at [timeline.html:2710](../../../timeline.html#L2710) and never used.
 Carrying it into a new file would suggest it matters.
 **Resolution:** dropped; [3e (line 320)](2026-09-30-split-timeline-script.md#L320). Revert this if
 you'd rather the split carry it unchanged.
@@ -739,7 +739,7 @@ especially the prompt, kept for the port, but not obsolete code kept in the tree
 [3f (line 323)](2026-09-30-split-timeline-script.md#L323), done as step D1 in
 [§6 (line 581)](2026-09-30-split-timeline-script.md#L581). The migration plan's V3 now links to
 the deleted code at commit `64996c5`, which is already on GitHub, with current line numbers
-([reference list (line 531)](2026-09-09-rust-aws-backend-migration.md#L531)). A future Bedrock button
+([reference list (line 531)](../2026-09-09-rust-aws-backend-migration.md#L531)). A future Bedrock button
 fits the layout without a new folder: network calls in `infra/api-client.js`, and the button
 logic in a new `ui/classify-run.js` that starts a run and polls it the way `runDetectionPass`
 does.

@@ -9,7 +9,7 @@
 # The restart-only-if-stale behavior is the point, not an optimization:
 # timeline-api keeps every upload and confirmed flag in memory only, so
 # restarting it when nothing changed throws away whatever you were looking
-# at. See docs/plans/2026-09-28-frontend-quality-of-life.md's Phase 1.
+# at. See docs/plans/completed/2026-09-28-frontend-quality-of-life.md's Phase 1.
 
 set -euo pipefail
 

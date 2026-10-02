@@ -5,7 +5,7 @@
 // It never reuses a server. If anything already answers on the test port,
 // the run stops with a message naming the port, rather than testing
 // against a server of unknown age -- which is exactly what went wrong on
-// 2026-10-01 (docs/plans/2026-10-01-browser-tests-own-server.md).
+// 2026-10-01 (docs/plans/completed/2026-10-01-browser-tests-own-server.md).
 //
 // The server binary is built first and then run directly, not through
 // `cargo run`, so the process this file starts is the server itself: its

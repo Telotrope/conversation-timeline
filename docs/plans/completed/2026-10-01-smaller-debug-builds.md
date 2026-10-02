@@ -4,7 +4,7 @@
 
 ## Why
 
-A clean build of [backend/](../../backend/) takes 7.3 GB, and Cargo keeps every outdated copy, so the
+A clean build of [backend/](../../../backend/) takes 7.3 GB, and Cargo keeps every outdated copy, so the
 build folder reached 33 GB and filled the disk three times on 2026-10-01. Measured that day with
 `readelf`, most of each test program is debugging information (the data a debugger uses to step
 through code and show variable values):
@@ -21,7 +21,7 @@ debugging with variable values.
 
 ## Change
 
-Add to [backend/Cargo.toml](../../backend/Cargo.toml):
+Add to [backend/Cargo.toml](../../../backend/Cargo.toml):
 
 ```toml
 [profile.dev]
@@ -50,7 +50,7 @@ No code changes. The release build used for Lambda is not affected.
    - A deliberately failing test run with `RUST_BACKTRACE=1` still shows file and line in the
      backtrace. This is a throwaway check on a scratch copy, never committed.
 5. **Report** the before and after numbers in the commit message and in
-   [backend/README.md](../../backend/README.md), next to the build instructions.
+   [backend/README.md](../../../backend/README.md), next to the build instructions.
 
 ## Not in this plan
 

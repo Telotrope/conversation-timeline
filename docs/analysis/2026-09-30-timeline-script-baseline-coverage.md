@@ -1,7 +1,7 @@
 # Coverage of timeline.html's script, before and after the module split
 
 Measures which lines of the page's JavaScript the end-to-end tests actually run, as
-steps V3, V4 and V8 of [the split plan](../plans/2026-09-30-split-timeline-script.md).
+steps V3, V4 and V8 of [the split plan](../plans/completed/2026-09-30-split-timeline-script.md).
 
 **How it was measured.** Chrome's precise coverage, recorded per test by
 [e2e/coverage.js](../../e2e/coverage.js) when `COVERAGE_DIR` is set and merged by

@@ -1,6 +1,6 @@
 // Proves the browser tests talk to the server this run started -- not
 // whatever else might be listening. See backend-server.js and
-// docs/plans/2026-10-01-browser-tests-own-server.md.
+// docs/plans/completed/2026-10-01-browser-tests-own-server.md.
 
 const { execFileSync } = require('child_process');
 const { test, expect } = require('@playwright/test');

@@ -4,7 +4,7 @@
 //
 // These exist because timeline.html is about to lose ~85% of its bytes
 // (the embedded dictionary and sentiment lexicon, per
-// docs/plans/2026-09-28-frontend-quality-of-life.md Phase 3), and a
+// docs/plans/completed/2026-09-28-frontend-quality-of-life.md Phase 3), and a
 // deletion that large needs something asserting the rest of the page still
 // works. Every assertion here is against DOM state the real backend
 // produced -- same real server, same real browser, same real fixture as
@@ -420,7 +420,7 @@ test('"Load a different file" stops the session coming back', async ({ page }) =
 // ---------------------------------------------------------------------------
 // Paths the module split rewires, and the load-screen and save failures the
 // suite above never reaches. Written against the single-file page before any
-// of its script moved (docs/plans/2026-09-30-split-timeline-script.md, V4),
+// of its script moved (docs/plans/completed/2026-09-30-split-timeline-script.md, V4),
 // so they record what the page did then and must keep passing unchanged.
 // ---------------------------------------------------------------------------
 

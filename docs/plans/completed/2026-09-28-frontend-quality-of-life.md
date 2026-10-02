@@ -96,7 +96,7 @@ Ordered by risk, the things **no test of any kind touches**:
 
 ### New tests for this phase
 
-In [e2e/](../../e2e/), against the same real backend the existing suite uses — prioritizing the
+In [e2e/](../../../e2e/), against the same real backend the existing suite uses — prioritizing the
 table above, and specifically the things Phase 3's deletion could break:
 - **Each of the five analytics views** renders non-empty content with no console errors.
 - **Calendar** renders day cells with session blocks for the fixture's real dates, and a day click
@@ -116,7 +116,7 @@ These are outside this phase's scope but shouldn't be lost — see C11 and C12:
   only when someone remembers to run it.
 - **`tests/test_no_unhandled_exceptions.py`, referenced in CLAUDE.md, does not exist in this repo.**
   No silent-swallow check runs on either Rust or JavaScript.
-- **The file-size ratchet exists** ([backend/timeline-core/tests/file_sizes.rs](../../backend/timeline-core/tests/file_sizes.rs),
+- **The file-size ratchet exists** ([backend/timeline-core/tests/file_sizes.rs](../../../backend/timeline-core/tests/file_sizes.rs),
   passing, empty allowlist) **but only scans `.rs` files under `backend/`** — `timeline.html` is
   entirely outside its reach.
 
@@ -126,12 +126,12 @@ These are outside this phase's scope but shouldn't be lost — see C11 and C12:
 
 ### What's actually in the file
 
-[timeline.html](../../timeline.html) is 752,370 bytes / 66,839 lines. Measured:
+[timeline.html](../../../timeline.html) is 752,370 bytes / 66,839 lines. Measured:
 
 | Block | Location | Bytes | Share |
 |---|---|---|---|
-| `DICTIONARY_WORDS_RAW` — embedded English word list | [timeline.html:960-64834](../../timeline.html#L960) | 594,666 | 79% |
-| `AFINN` — embedded sentiment lexicon | [timeline.html:64864](../../timeline.html#L64864) | 46,252 | 6% |
+| `DICTIONARY_WORDS_RAW` — embedded English word list | [timeline.html:960-64834](../../../timeline.html#L960) | 594,666 | 79% |
+| `AFINN` — embedded sentiment lexicon | [timeline.html:64864](../../../timeline.html#L64864) | 46,252 | 6% |
 | Everything else — UI, rendering, calendar, analytics, review table | — | ~111,000 | 15% |
 
 **85% of the file is lexicon data feeding detection the backend now performs.** Deleting it leaves
@@ -141,23 +141,23 @@ roughly 112KB / ~2,965 lines — a file you can read a diff against.
 
 1. **The detection functions have exactly two call sites**, both inside
    `parseUploadedConversations`: the drift comparison at
-   [timeline.html:65011-65013](../../timeline.html#L65011-L65013) and the "refresh detection" path
-   at [timeline.html:65019-65021](../../timeline.html#L65019-L65021). Nothing else calls them —
+   [timeline.html:65011-65013](../../../timeline.html#L65011-L65013) and the "refresh detection" path
+   at [timeline.html:65019-65021](../../../timeline.html#L65019-L65021). Nothing else calls them —
    rendering, the review table, the calendar, and analytics all read the already-computed
    `default_caps`/`default_critical`/`default_angry` fields.
 2. **The backend computes auto flags for every human message.** `process_upload` in
-   [backend/timeline-api/src/processing.rs](../../backend/timeline-api/src/processing.rs) skips
+   [backend/timeline-api/src/processing.rs](../../../backend/timeline-api/src/processing.rs) skips
    non-human messages, then calls `set_auto_flags` unconditionally for the rest.
 3. **The export embeds those flags per message** —
-   [backend/timeline-api/src/routes/export.rs](../../backend/timeline-api/src/routes/export.rs)
+   [backend/timeline-api/src/routes/export.rs](../../../backend/timeline-api/src/routes/export.rs)
    writes `_claude_timeline_auto` and `_claude_timeline_user` in the shape the page already reads at
-   [timeline.html:64991-64992](../../timeline.html#L64991-L64992).
+   [timeline.html:64991-64992](../../../timeline.html#L64991-L64992).
 4. **The page's own deduplication is already unreachable.** The export serializes
    `{"conversations": [...]}`, sending the page down the `alreadyProcessed: true` branch at
-   [timeline.html:64961-64962](../../timeline.html#L64961-L64962), which does not dedup. Client
+   [timeline.html:64961-64962](../../../timeline.html#L64961-L64962), which does not dedup. Client
    dedup only runs on a bare top-level array, which the backend never produces. Cross-checked in
    Rust: `unwrap_uploaded_value` dedups the bare-array case only
-   ([format.rs:70](../../backend/timeline-core/src/format.rs#L70)), and both `process_upload` and
+   ([format.rs:70](../../../backend/timeline-core/src/format.rs#L70)), and both `process_upload` and
    `export` call it on the same raw text, so they agree.
 
 Note fact 2 is what Phase 4 would change — see the interaction note there.
@@ -167,10 +167,10 @@ Note fact 2 is what Phase 4 would change — see the interaction note there.
 - `DICTIONARY_WORDS_RAW`, `DICTIONARY`, `CAPS_EXCLUDE`, `AFINN`, `ANGER_LEXICON_RE`, the sentiment
   scorer, `findEmphasisCapsWords`, `detectCritical`, `detectAngry`.
 - `dedupChatMessages` / `dedupConversations` — unreachable per fact 4.
-- The drift modal ([timeline.html:901-909](../../timeline.html#L901-L909)), `showDriftModal`, and
+- The drift modal ([timeline.html:901-909](../../../timeline.html#L901-L909)), `showDriftModal`, and
   the whole `driftCount` mechanism. **You approved this.** With no second implementation in the
   browser there is nothing to compare, so the feature dies rather than becoming lazy.
-- **The e2e drift block** at [e2e/upload-flow.spec.js:63-66](../../e2e/upload-flow.spec.js#L63-L66)
+- **The e2e drift block** at [e2e/upload-flow.spec.js:63-66](../../../e2e/upload-flow.spec.js#L63-L66)
   and its 13-line explanatory comment. To be precise about what that costs: those four lines are a
   conditional modal dismissal inside the shared `loadFixtureAndWaitForRender` helper, not a test of
   their own — no test disappears, and all three existing assertions still run through the same real
@@ -178,18 +178,18 @@ Note fact 2 is what Phase 4 would change — see the interaction note there.
 - `parseUploadedConversations` loses its `runAutoDetect` / `refreshAutoDetect` parameters and its
   `driftCount` return field.
 - The "Refresh automatic tags saved in this file" checkbox
-  ([timeline.html:768-780](../../timeline.html#L768-L780)) — re-uploading already re-runs the
+  ([timeline.html:768-780](../../../timeline.html#L768-L780)) — re-uploading already re-runs the
   backend's detection with current code, which is what the checkbox promised.
 
 ### Stale user-facing copy to fix in the same pass
 
-- [timeline.html:896](../../timeline.html#L896) tells the user "Your conversation export is read
+- [timeline.html:896](../../../timeline.html#L896) tells the user "Your conversation export is read
   locally in this browser tab and is never uploaded anywhere." That is now **false**. Must be
   corrected regardless of the rest of this phase.
-- `window.storage` residue ([timeline.html:65385](../../timeline.html#L65385),
-  [:65407](../../timeline.html#L65407)) — an auto-flag cache still written to the Claude-artifact
+- `window.storage` residue ([timeline.html:65385](../../../timeline.html#L65385),
+  [:65407](../../../timeline.html#L65407)) — an auto-flag cache still written to the Claude-artifact
   storage API though flags now live in the backend. Sweep it and the stale comments at
-  [:65378-65394](../../timeline.html#L65378).
+  [:65378-65394](../../../timeline.html#L65378).
 
 ---
 
@@ -198,7 +198,7 @@ Note fact 2 is what Phase 4 would change — see the interaction note there.
 ### Why it currently does
 
 Not an oversight, but a decision recorded in the migration plan: line 32-33 of
-[docs/plans/2026-09-09-rust-aws-backend-migration.md](2026-09-09-rust-aws-backend-migration.md)
+[docs/plans/2026-09-09-rust-aws-backend-migration.md](../2026-09-09-rust-aws-backend-migration.md)
 specifies a **free heuristic tier** (dictionary caps + keyword/sentiment criticism-anger, "~$0
 marginal cost") that is "always available," against **one Bedrock-quality classification pass per
 $5** (V3/V4, unbuilt).
@@ -249,7 +249,7 @@ client drives the loop instead, in batches:
 - The page requests detection for a batch of messages, gets the resulting flags, advances the bar,
   and repeats until done.
 - This reuses the idiom already in the page: `classifyWithAI` at
-  [timeline.html:65605-65650](../../timeline.html#L65605) already batches its work
+  [timeline.html:65605-65650](../../../timeline.html#L65605) already batches its work
   (`CLASSIFY_BATCH_SIZE`) and drives `.progress-track` / `.progress-fill` / `.progress-label` per
   batch. Same CSS, same shape of loop, no new streaming or background-job machinery — which per this
   repo's reuse-order rule beats adding server-sent events or a polling status endpoint.
@@ -272,7 +272,7 @@ The user has **tabled** the question of how the two tiers are named and explaine
 non-generative versus generative emotion detection — and will design that separately. So this phase
 deliberately does not invent user-facing labels, does not pair the two triggers in the interface, and
 does not touch the existing "auto"/"AI" source markers at
-[timeline.html:66198](../../timeline.html#L66198) and [:66215](../../timeline.html#L66215). It changes
+[timeline.html:66198](../../../timeline.html#L66198) and [:66215](../../../timeline.html#L66215). It changes
 *when* the pass runs and *whether the user can see it running*. Nothing else.
 
 ### Interaction with Phase 3
@@ -284,7 +284,7 @@ phase changes, so the two must not land together unverified. Phase 3's deletion 
 - **Phase 3 alone should be output-neutral**: the rendered page must look identical before and after.
   This is checkable rather than hopeful, because the flags being rendered already come from the
   backend today — when "refresh detection" is unchecked, the defaults are read straight from the
-  stored values at [timeline.html:65001-65005](../../timeline.html#L65001-L65005), and the page's own
+  stored values at [timeline.html:65001-65005](../../../timeline.html#L65001-L65005), and the page's own
   detectors only feed the drift count. Deleting code that wasn't feeding the render should change
   nothing on screen.
 - **Phase 4 deliberately changes output**: with detection no longer running at upload, a freshly
@@ -297,7 +297,7 @@ Hence Phase 3 first, verified output-neutral, then Phase 4 with its own expected
 
 ## Phase 5: real progress for the upload, honest labels elsewhere
 
-`handleLoadClick` ([timeline.html:65115-65204](../../timeline.html#L65115-L65204)) runs six phases
+`handleLoadClick` ([timeline.html:65115-65204](../../../timeline.html#L65115-L65204)) runs six phases
 that differ in whether progress is observable at all. The design says so rather than inventing
 numbers:
 
@@ -310,20 +310,20 @@ numbers:
 | `GET {export_url}` (download) | **Yes, if `Content-Length` is set** | Bar + %, else running byte count |
 | Client-side parse | Not without restructuring | Label only — see C1 |
 
-That fourth row matters: per [timeline.html:65142-65146](../../timeline.html#L65142-L65146), the
+That fourth row matters: per [timeline.html:65142-65146](../../../timeline.html#L65142-L65146), the
 local-dev `PUT` handler processes the upload *synchronously before responding*, so byte progress
 reaching 100% doesn't mean the wait is over. A full bar with nothing happening looks frozen, so the
 label changes to say what's going on.
 
 - **Upload progress needs `XMLHttpRequest`** — `fetch` has no upload-progress facility. Only the
-  `PUT` at [timeline.html:65139](../../timeline.html#L65139) changes; everything else stays on
+  `PUT` at [timeline.html:65139](../../../timeline.html#L65139) changes; everything else stays on
   `fetch`. A built-in browser API beats adding a library, per the reuse-order rule.
 - **Download progress** via `fetch` + `response.body.getReader()` against `Content-Length`; with no
   such header, show transferred bytes, never a fabricated percentage.
 - **ETA** from a rolling ~3-second window, suppressed until two samples exist, rendered as
   `about 20 seconds left` — never `18.4s`.
 - **Reuses the existing progress idiom** — `.progress-track` / `.progress-fill` / `.progress-label`
-  at [timeline.html:534-553](../../timeline.html#L534-L553), already used by the AI-classify bar and
+  at [timeline.html:534-553](../../../timeline.html#L534-L553), already used by the AI-classify bar and
   analytics. No new CSS; `.is-error` already exists.
 
 ---
@@ -333,14 +333,14 @@ label changes to say what's going on.
 ### Hash routing
 
 Nothing in the page touches the History API today — no `pushState`, `hashchange`, or `popstate` —
-so tab changes, conversation selection ([timeline.html:65906](../../timeline.html#L65906)), and
+so tab changes, conversation selection ([timeline.html:65906](../../../timeline.html#L65906)), and
 analytics selection are invisible to the browser, and Back exits the page entirely.
 
 Write that state to `location.hash` (`#calendar`, `#conversations/42`, `#analytics/friction`) and
 restore on `hashchange`. Real Back/Forward, plus bookmarkable deep links.
 
 **Hash, not `pushState`, because the page is still opened as a `file://` URL** — the e2e suite does
-exactly that at [e2e/upload-flow.spec.js:13](../../e2e/upload-flow.spec.js#L13) — and `pushState` is
+exactly that at [e2e/upload-flow.spec.js:13](../../../e2e/upload-flow.spec.js#L13) — and `pushState` is
 restricted for file URLs in some browsers, while hash works everywhere.
 
 Scope: those three axes. Review search/pagination stay out of the hash (they'd churn history on every
@@ -352,8 +352,8 @@ keystroke).
   directly — no file picking, no re-upload.
 - If that returns nothing, or the server was restarted (in-memory storage), fall back to the load
   screen as today.
-- **"Load a different file…"** ([timeline.html:797](../../timeline.html#L797), handler at
-  [:65237-65243](../../timeline.html#L65237)) already does the right thing; it needs rewiring only to
+- **"Load a different file…"** ([timeline.html:797](../../../timeline.html#L797), handler at
+  [:65237-65243](../../../timeline.html#L65237)) already does the right thing; it needs rewiring only to
   also clear the remembered session so the next startup doesn't silently restore the old export.
 - The dev login name must be persisted to `localStorage` on successful login; it currently isn't.
 
@@ -435,7 +435,7 @@ via `build_router` and bypass `main` entirely. Its module doc states the Lambda 
 from anything deployable. Reading the source, that claim looks correct — but **no test asserts it**,
 and it is the one property in this codebase where being wrong would mean shipping an unauthenticated
 token-minting endpoint to production.
-**Resolution:** [backend/timeline-api/tests/lambda_router.rs](../../backend/timeline-api/tests/lambda_router.rs)
+**Resolution:** [backend/timeline-api/tests/lambda_router.rs](../../../backend/timeline-api/tests/lambda_router.rs)
 builds exactly what the Lambda branch builds and asserts every `/_dev/*` path 404s — and, because
 that alone would also pass on an empty router, asserts the real routes are present and merely
 unauthorized. Brought forward from "before deployment" by the arrival of `POST /_dev/reset`, which

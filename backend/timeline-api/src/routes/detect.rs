@@ -5,7 +5,7 @@
 //! proportional to the number of speech acts in the export, and nothing here
 //! has measured how long that takes, so it runs only when the user asks for
 //! it and reports progress while it does -- see
-//! `docs/plans/2026-09-28-frontend-quality-of-life.md` Phase 4.
+//! `docs/plans/completed/2026-09-28-frontend-quality-of-life.md` Phase 4.
 //!
 //! **Why this is paged rather than one call.** A single request that returns
 //! when the whole pass is finished can report no progress at all. Paging lets

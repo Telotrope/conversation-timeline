@@ -1,4 +1,4 @@
-// Structural rules for the page's modules (docs/plans/2026-09-30-split-timeline-script.md,
+// Structural rules for the page's modules (docs/plans/completed/2026-09-30-split-timeline-script.md,
 // section 1 and step V7): no circular imports, no file over 1,000 lines, and
 // every import pointing down the layers.
 //

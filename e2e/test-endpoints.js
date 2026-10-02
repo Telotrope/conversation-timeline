@@ -5,7 +5,7 @@
 // where the dev launcher (scripts/dev-up.sh) runs your own backend. On
 // 2026-10-01 the tests silently talked to an old dev backend on 3000 and
 // failed for reasons that had nothing to do with the code under test; see
-// docs/plans/2026-10-01-browser-tests-own-server.md.
+// docs/plans/completed/2026-10-01-browser-tests-own-server.md.
 
 const BACKEND_PORT = 3123;
 const API_BASE = `http://127.0.0.1:${BACKEND_PORT}`;

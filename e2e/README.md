@@ -38,7 +38,7 @@ backend with its `api_base` query parameter ([test-endpoints.js](test-endpoints.
 [test-server.spec.js](test-server.spec.js) checks that the process listening on 3123 is the one
 the run started. This exists because on 2026-10-01 the tests silently reused an old dev backend on
 port 3000 (see
-[docs/plans/2026-10-01-browser-tests-own-server.md](../docs/plans/2026-10-01-browser-tests-own-server.md)).
+[docs/plans/completed/2026-10-01-browser-tests-own-server.md](../docs/plans/completed/2026-10-01-browser-tests-own-server.md)).
 
 The run also serves the repo root over HTTP on port 8123 (Playwright's `webServer` setting in
 [playwright.config.js](playwright.config.js)), drives `timeline.html` through the real upload flow,
