@@ -1,0 +1,47 @@
+# The read-after-write experiment, run from inside Lambda (plan
+# docs/plans/2026-10-02-upload-processing-failures.md §0b). A separate stack
+# from timeline-<stage>, deployed only while the experiment runs:
+#
+#   cd backend
+#   PATH="$HOME/.local/opt/zig:$PATH" cargo lambda build --release --arm64 -p timeline-experiments
+#   cd ../infra/experiments
+#   sam deploy --template-file read-after-write.yaml \
+#     --stack-name timeline-experiment-read-after-write --capabilities CAPABILITY_IAM \
+#     --resolve-s3 --parameter-overrides FlagsTableName=timeline-message-flags-dev
+#   aws lambda invoke --function-name timeline-experiment-read-after-write \
+#     --cli-binary-format raw-in-base64-out --payload '{"rows": 4000}' report.json
+#   sam delete --stack-name timeline-experiment-read-after-write --no-prompts
+#
+# Memory matches the processing function's, so it gets the same CPU share.
+
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Read-after-write experiment on the timeline flags table (temporary).
+
+Parameters:
+  FlagsTableName:
+    Type: String
+    Description: The deployed flags table, e.g. timeline-message-flags-dev.
+
+Resources:
+  ExperimentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: timeline-experiment-read-after-write
+      CodeUri: ../../backend/target/lambda/read_after_write/
+      Handler: bootstrap
+      Runtime: provided.al2023
+      Architectures: [arm64]
+      MemorySize: 512
+      Timeout: 300
+      Environment:
+        Variables:
+          TIMELINE_EXPERIMENT_TABLE: !Ref FlagsTableName
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:UpdateItem
+                - dynamodb:GetItem
+                - dynamodb:DeleteItem
+              Resource: !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${FlagsTableName}"

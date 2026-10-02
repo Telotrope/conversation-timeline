@@ -17,3 +17,4 @@ fi
 # SAM sends usage data to AWS unless told not to.
 export SAM_CLI_TELEMETRY=0
 sam validate --lint --template "$repo/infra/template.yaml" --region "${AWS_REGION:-us-east-1}"
+sam validate --lint --template "$repo/infra/experiments/read-after-write.yaml" --region "${AWS_REGION:-us-east-1}"
