@@ -21,13 +21,35 @@ failures=0
 pass() { echo "  PASS: $1"; }
 fail() { echo "  FAIL: $1" >&2; failures=$((failures + 1)); }
 
-# The stand-in `aws`: logs its arguments and standard input, then answers
-# from $work/answer-<subcommand>.
+# The stand-in `aws`: logs its arguments, then answers from
+# $work/answer-<subcommand>.
+#
+# For `cognito-idp`, it reads the file named by --cli-input-json twice and
+# refuses an empty second read the way the real one does: aws-cli 2.37.8
+# appears to open that file twice, so a pipe arrives empty the second time
+# (docs/analysis/2026-10-02-deployment-checks-status.md, check D3). It records
+# the request, the file's path and its permissions, and answers with an error
+# instead of a token while $work/fail-cognito-idp exists.
 mkdir -p "$work/bin"
 cat > "$work/bin/aws" <<'STUB'
 #!/usr/bin/env bash
 echo "$*" >> "$STUB_DIR/argv.log"
-if [ "$1" = "cognito-idp" ]; then cat > "$STUB_DIR/stdin.log"; fi
+if [ "$1" = "cognito-idp" ]; then
+  path=""; prev=""
+  for arg in "$@"; do [ "$prev" = "--cli-input-json" ] && path="${arg#file://}"; prev="$arg"; done
+  first_read="$(cat "$path")"
+  if [ -z "$first_read" ] || [ -z "$(cat "$path")" ]; then
+    echo "aws: [ERROR]: An error occurred (ParamValidation): Error parsing parameter 'cli-input-json': Invalid JSON received." >&2
+    exit 252
+  fi
+  cat "$path" > "$STUB_DIR/request.log"
+  echo "$path" > "$STUB_DIR/request-path.log"
+  stat -c %a "$path" > "$STUB_DIR/request-mode.log"
+  if [ -e "$STUB_DIR/fail-cognito-idp" ]; then
+    echo "aws: [ERROR]: An error occurred (NotAuthorizedException) when calling the InitiateAuth operation: Incorrect username or password." >&2
+    exit 254
+  fi
+fi
 cat "$STUB_DIR/answer-$1"
 STUB
 chmod +x "$work/bin/aws"
@@ -83,17 +105,38 @@ echo "aws-dev-token.sh"
 echo "4hj2k3l4m5n6o7p8q9r0s1t2u3" > "$work/answer-cloudformation"
 echo "eyJ.test.token" > "$work/answer-cognito-idp"
 secret='p@ss, "word" with commas'
-token="$(printf '%s\n' "$secret" | "$REPO_ROOT/scripts/aws-dev-token.sh" alice@example.com 2>/dev/null)"
-[ "$token" = "eyJ.test.token" ] && pass "prints the token" || fail "printed: $token"
+if token="$(printf '%s\n' "$secret" | "$REPO_ROOT/scripts/aws-dev-token.sh" alice@example.com 2>"$work/err.txt")"; then
+  [ "$token" = "eyJ.test.token" ] && pass "prints the token" || fail "printed: $token"
+else
+  fail "exited with an error: $(cat "$work/err.txt")"
+fi
 grep -qF "$secret" "$work/argv.log" && fail "the password appeared on a command line" \
   || pass "the password never appears on a command line"
-python3 - "$work/stdin.log" "$secret" <<'PY' && pass "sends a password sign-in for the client and user" || fail "wrong request: $(cat "$work/stdin.log")"
+python3 - "$work/request.log" "$secret" <<'PY' && pass "sends a password sign-in for the client and user" || fail "wrong request: $(cat "$work/request.log")"
 import json, sys
 r = json.load(open(sys.argv[1]))
 assert r["AuthFlow"] == "USER_PASSWORD_AUTH", r
 assert r["ClientId"] == "4hj2k3l4m5n6o7p8q9r0s1t2u3", r
 assert r["AuthParameters"] == {"USERNAME": "alice@example.com", "PASSWORD": sys.argv[2]}, r
 PY
+[ "$(cat "$work/request-mode.log" 2>/dev/null)" = "600" ] && pass "the request file is readable by its owner only" \
+  || fail "the request file's permissions were: $(cat "$work/request-mode.log" 2>/dev/null)"
+request_file="$(cat "$work/request-path.log" 2>/dev/null || true)"
+[ -n "$request_file" ] && [ ! -e "$request_file" ] && pass "the request file is deleted after success" \
+  || fail "the request file was not deleted after success: ${request_file:-(none recorded)}"
+
+: > "$work/request-path.log"
+touch "$work/fail-cognito-idp"
+if printf '%s\n' "$secret" | "$REPO_ROOT/scripts/aws-dev-token.sh" alice@example.com > "$work/out.txt" 2>&1; then
+  fail "succeeded although Cognito refused the sign-in"
+else
+  grep -q "NotAuthorizedException" "$work/out.txt" && pass "passes on Cognito's refusal" \
+    || fail "did not pass on Cognito's refusal: $(cat "$work/out.txt")"
+fi
+rm "$work/fail-cognito-idp"
+request_file="$(cat "$work/request-path.log" 2>/dev/null || true)"
+[ -n "$request_file" ] && [ ! -e "$request_file" ] && pass "the request file is deleted after a refusal" \
+  || fail "the request file was not deleted after a refusal: ${request_file:-(none recorded)}"
 
 echo
 if [ "$failures" -eq 0 ]; then echo "All passed."; else echo "$failures failed." >&2; exit 1; fi
