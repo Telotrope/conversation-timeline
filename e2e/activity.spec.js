@@ -10,14 +10,12 @@
 // The backend's standard output is kept in a file by backend-server.js.
 
 const fs = require('fs');
-const { test, expect } = require('@playwright/test');
+const { test, expect } = require('./fixtures');
 const { failOnPageErrors } = require('./page-health');
-const { collectCoverage } = require('./coverage');
 const { syntheticExport } = require('./synthetic-export');
 const { API_BASE, TIMELINE_HTML } = require('./test-endpoints');
 
 failOnPageErrors();
-collectCoverage();
 
 const S3_PUT_ROUTE = 's3 PUT raw/…';
 

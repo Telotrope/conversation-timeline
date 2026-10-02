@@ -9,9 +9,8 @@
 // to the real server, which says "ready".
 
 const path = require('path');
-const { test, expect } = require('@playwright/test');
+const { test, expect } = require('./fixtures');
 const { failOnPageErrors } = require('./page-health');
-const { collectCoverage } = require('./coverage');
 
 const { API_BASE, TIMELINE_HTML } = require('./test-endpoints');
 const FIXTURE = path.resolve(
@@ -19,7 +18,6 @@ const FIXTURE = path.resolve(
 );
 
 failOnPageErrors();
-collectCoverage();
 
 test.beforeEach(async () => {
   const res = await fetch(`${API_BASE}/_dev/reset`, { method: 'POST' });

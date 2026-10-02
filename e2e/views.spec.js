@@ -11,9 +11,8 @@
 // upload-flow.spec.js.
 
 const path = require('path');
-const { test, expect } = require('@playwright/test');
+const { test, expect } = require('./fixtures');
 const { failOnPageErrors } = require('./page-health');
-const { collectCoverage } = require('./coverage');
 const { syntheticExport } = require('./synthetic-export');
 const fs = require('fs');
 
@@ -80,7 +79,6 @@ async function firstNonEmptyConversationIndex(page) {
 }
 
 failOnPageErrors();
-collectCoverage();
 
 // The server is started once per run by backend-server.js (Playwright's
 // global setup), not by this file.

@@ -8,7 +8,7 @@
 // every test checks for this explicitly rather than hoping an assertion
 // elsewhere happens to notice.
 
-const { test, expect } = require('@playwright/test');
+const { test, expect } = require('./fixtures');
 
 function failOnPageErrors() {
   let problems = [];

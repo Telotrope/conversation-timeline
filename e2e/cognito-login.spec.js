@@ -7,7 +7,7 @@
 // settings file is answered here, so nothing is written to disk.
 
 const path = require('path');
-const { test, expect } = require('@playwright/test');
+const { test, expect } = require('./fixtures');
 const { failOnPageErrors } = require('./page-health');
 const { startCognitoStandIn } = require('./cognito-standin');
 const { API_BASE, PAGE_URL } = require('./test-endpoints');

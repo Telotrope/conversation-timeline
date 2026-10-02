@@ -3,7 +3,7 @@
 // docs/plans/completed/2026-10-01-browser-tests-own-server.md.
 
 const { execFileSync } = require('child_process');
-const { test, expect } = require('@playwright/test');
+const { test, expect } = require('./fixtures');
 const { BACKEND_PORT } = require('./test-endpoints');
 
 test('the process listening on the test port is the server this run started', () => {
