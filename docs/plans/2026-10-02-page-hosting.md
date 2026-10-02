@@ -124,7 +124,7 @@ In [infra/template.yaml](../../infra/template.yaml):
   the stack is exactly as today: it points at a page on your machine via `FrontendUrl`. A dev
   stack can be hosted too (you said one will be needed); see `AlsoAllowLocalPage` below.
 - New parameter `PageDomain` (default empty), used only when hosting. Empty: the page lives at
-  CloudFront's own address (`xxxx.cloudfront.net`). Set (e.g. `timeline.telotrope.ai`): see §1a.
+  CloudFront's own address (`xxxx.cloudfront.net`). Set (e.g. `howangryami.telotrope.ai`): see §1a.
 - New parameter `AlsoAllowLocalPage` (`on` / `off`, default `off`), used only when hosting. With
   `on`, `FrontendUrl` is accepted *in addition to* the hosted address, so a hosted dev stack still
   works with a page served from your machine. A production stack leaves it `off` (C6).
@@ -135,7 +135,7 @@ In [infra/template.yaml](../../infra/template.yaml):
     never readable directly.
   - `PageBucketPolicy`: allows reads only by the CloudFront service, and only for this
     distribution.
-  - `PageDistribution`: CloudFront distribution. `DefaultRootObject: timeline.html`. Viewer
+  - `PageDistribution`: CloudFront distribution. `DefaultRootObject: index.html`, so the page is served at `/` (§3 uploads `timeline.html` under that name). Viewer
     traffic redirected to HTTPS. Compression on. Managed response-headers policy
     `SecurityHeadersPolicy` (HSTS, `X-Content-Type-Options: nosniff`, frame and referrer
     headers). Its cache policy keeps files at the edge for a day (`MinTTL` 86400) while browsers
@@ -150,13 +150,13 @@ In [infra/template.yaml](../../infra/template.yaml):
   | Stack | Cognito return addresses | CORS origins |
   |---|---|---|
   | Not hosted | `FrontendUrl` | `FrontendUrl`'s origin |
-  | Hosted | `https://<host>/` and `https://<host>/timeline.html` | `https://<host>` |
+  | Hosted | `https://<host>/` | `https://<host>` |
   | Hosted, `AlsoAllowLocalPage=on` | both of the above, plus `FrontendUrl` | both origins |
 
-  `<host>` is `PageDomain` when set, otherwise the distribution's own domain. Both `/` and
-  `/timeline.html` are listed because the page asks Cognito to return to whatever path it was
-  opened at ([frontend/infra/cognito-login.js (line 27)](../../frontend/infra/cognito-login.js#L27)),
-  and the distribution serves the page at both (C12).
+  `<host>` is `PageDomain` when set, otherwise the distribution's own domain. Only `/` is listed:
+  the page asks Cognito to return to the exact path it was opened at
+  ([frontend/infra/cognito-login.js (line 27)](../../frontend/infra/cognito-login.js#L27)), and `/`
+  is the only address we give out (C12).
 - New outputs (only when hosting): `PageUrl`, `PageBucketName`, `PageDistributionId`, and
   `PageDnsTarget` (the distribution's own domain, which the custom domain's DNS record points to).
 
@@ -180,12 +180,14 @@ into [infra/README.md](../../infra/README.md) (§4):
    value) from the CloudFormation events or the Certificate Manager console. I recall that
    CloudFormation prints it in the event's status message; check H8 confirms.
 2. Add that `CNAME` at Porkbun (*Domain Management → DNS*). The deploy then continues.
-3. After the deploy, add a second `CNAME` at Porkbun: `PageDomain`'s subdomain (e.g. `timeline`)
+3. After the deploy, add a second `CNAME` at Porkbun: `PageDomain`'s subdomain (e.g. `howangryami`)
    → the `PageDnsTarget` output.
 
 Both records are added by hand. Porkbun has an API that could do it, but that means storing a
-Porkbun API key; not worth it for a step done once per stack. Proposed names (open question 1):
-`timeline.telotrope.ai` for production and `timeline-dev.telotrope.ai` for dev.
+Porkbun API key; not worth it for a step done once per stack. The name is a deploy-time
+parameter, not written into the template, so choosing it doesn't block the work (open question 1).
+A separately registered domain at Porkbun works the same way: the certificate covers whatever
+`PageDomain` says.
 
 No dependency cycle: the distribution refers to nothing in Cognito or the API. They refer to it.
 
@@ -194,7 +196,7 @@ No dependency cycle: the distribution refers to nothing in Cognito or the API. T
 Today the page picks a deployment from `?deploy=<name>`, remembered in the browser
 ([frontend/infra/deploy-config-file.js (line 16)](../../frontend/infra/deploy-config-file.js#L16)).
 A visitor should not need that. The publish script (§3) adds
-`<meta name="timeline-deploy" content="<stage>">` to the uploaded copy of `timeline.html`.
+`<meta name="timeline-deploy" content="<stage>">` to the uploaded copy of `timeline.html` (uploaded as `index.html`, §3).
 `chosenDeployName()` reads it first. When it is present and passes `isDeployName`, it is the
 answer, and `?deploy=` and the remembered choice are ignored. When it is present but invalid, the
 page shows the same error a bad `?deploy=` name gives today. The repository's `timeline.html`
@@ -205,7 +207,7 @@ never contains the tag, so local development is unchanged.
 1. Read the stack `timeline-<stage>`'s outputs. If `PageBucketName` is missing, stop with "deploy
    with HostPage=on first."
 2. Stage the files in a temporary folder from an explicit list of what to include:
-   `timeline.html` (with the §2 tag inserted by Python, not `sed`), `frontend/**/*.js` except
+   `timeline.html`, renamed to `index.html` and with the §2 tag inserted by Python, not `sed`; `frontend/**/*.js` except
    `frontend/tests/`, and `vendor/**`. Nothing else is published (no `docs/`, `backend/`,
    `real-flags.json`, other deployments' settings).
 3. Write the settings file into the staged copy by running
@@ -260,7 +262,7 @@ existing scripts do).
 | H6 | Responses are compressed (`content-encoding: br` or `gzip`) and carry the security headers. |
 | H7 | After a week, Cost Explorer shows CloudFront and the page bucket at $0.00. |
 | H8 | With `PageDomain` set: the validation record appears in the stack's events, the deploy finishes once it's added at Porkbun, and `https://<PageDomain>/` serves the page with a valid certificate. |
-| H9 | Sign-in works when the page is opened at `/` and at `/timeline.html`. |
+| H9 | Sign-in from `https://<host>/` returns to `/`, and the page's files load from below `/` (`/frontend/main.js`, `/vendor/...`). |
 | H10 | A hosted dev stack with `AlsoAllowLocalPage=on` accepts the page from your machine as well as the hosted one. |
 
 Until H1–H10 pass on a real stack, the status is "code-level only, end-to-end TBD."
@@ -274,8 +276,10 @@ Until H1–H10 pass on a real stack, the status is "code-level only, end-to-end 
 
 ## Open questions for you
 
-1. Are `timeline.telotrope.ai` (production) and `timeline-dev.telotrope.ai` (dev) the names you
-   want?
+1. The app's address. You're considering the name "How angry am I", so for example
+   `howangryami.telotrope.ai` (production) and `dev.howangryami.telotrope.ai` (dev). Not needed
+   before coding: it's only a deploy-time setting. Renaming the app itself (page title, the
+   `timeline-<stage>` stack names) is not part of this plan.
 
 Answered 2026-10-02: DNS is at Porkbun (§1a); a hosted dev stack will be needed at some point
 (`AlsoAllowLocalPage`, §1); the page being publicly reachable is fine, since it's how people
@@ -351,11 +355,14 @@ the public page is how people reach the product. Data stays behind the sign-in. 
 the open questions ([line 275](2026-10-02-page-hosting.md#L275)).
 
 ### C12 [RESOLVED]: Opening the site at `/` would break sign-in
-Original concern: the distribution serves `timeline.html` at `/`, but the page asks Cognito to
+Original concern: the distribution served `timeline.html` at `/`, but the page asks Cognito to
 return to the exact path it was opened at, and only `/timeline.html` was listed. A visitor typing
-`timeline.telotrope.ai` would be refused after signing in. **Resolution:** both paths are listed
-([§1 table (line 150)](2026-10-02-page-hosting.md#L150)). A redirect from `/` to `/timeline.html` (a
-CloudFront Function) was the alternative; listing both needs no code. Check H9.
+just the domain would be refused after signing in. First resolution: list both paths. **Revised
+after your direction** that the file can live at `/` and needn't keep its name: the publish script
+uploads it as `index.html`, the distribution serves it at `/`, and only `/` is listed
+([§1 table (line 150)](2026-10-02-page-hosting.md#L150), [§3 (line 205)](2026-10-02-page-hosting.md#L205)).
+Someone who types `/index.html` by hand can load the page but not sign in; nothing links there.
+Check H9.
 
 ### C13 [OPEN]: The custom-domain deploy waits on a hand-added DNS record
 The first deploy with a `PageDomain` stalls until the validation `CNAME` is added at Porkbun, and
