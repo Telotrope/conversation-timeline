@@ -71,3 +71,14 @@ timing difference the first run's analysis predicted.
   (1 − e^(−538/2000)). Two failures in three attempts is unlucky, but within reason (about 13%).
 - **What this doesn't show:** that no *other* cause contributed to the deployed failure, because
   the original log names no row (plan §1 fixes that).
+
+## Correction (2026-10-02, later the same day)
+
+A default read can miss only a row that **did not exist before** the write just ahead of it; if
+the row already existed, the read returns the old or the new version, never nothing. So the
+"about 24% per attempt" above applies only when all 538 review rows are new, i.e. the first time
+an export's reviews are stored. In the deployed failure, attempts 1 and 2 had already created 515
+of the rows, which is why attempt 3 (23 new rows) got through. Every later upload of the same
+file only updated existing rows and **could not** hit this failure; Claude's statement that four
+clean re-uploads were "about a 33% coincidence" was wrong. Live testing of the original failure
+needs the review rows deleted first (done by the user on 2026-10-02).
