@@ -278,11 +278,12 @@ fixtures folder's README, like the S3 notification sample before C24. **Open:** 
 first real failure after deployment; or the user can force one (upload a file larger than the
 function's memory allows) to capture it on purpose.
 
-### C7 [OPEN]: The truthful 10-minute message needs a committed test changed
+### C7 [RESOLVED]: The truthful 10-minute message needs a committed test changed
 [upload-wait.test.js:47-50](../../frontend/tests/upload-wait.test.js#L47-L50) asserts the old,
 false message. Project rules forbid changing a committed test without approval. **Mitigation in
-plan:** Phase A keeps the old message; the line shown above the bar already gives the true last
-status. **Open:** trigger is the user's answer when Phase A is reported.
+plan:** Phase A kept the old message at first. **Resolution (2026-10-02):** the user approved
+changing the test; message and test now use the plan's wording, see
+[§3 (line 177)](2026-10-02-upload-processing-failures.md#L177).
 
 ### C6 [RESOLVED]: The page's bar never moved
 `setLoadProgressIndeterminate` fills the bar to 100% and stops, which reads as finished or stuck.
