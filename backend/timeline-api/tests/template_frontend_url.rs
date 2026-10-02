@@ -96,10 +96,40 @@ fn cognito_returns_to_exactly_the_page_address() {
     }
 }
 
+/// One full copy of the API's CORS block at `indent` spaces, allowing
+/// `origins`.
+fn api_cors(indent: usize, origins: &[&str]) -> String {
+    let pad = " ".repeat(indent);
+    let listed: String = origins
+        .iter()
+        .map(|o| format!("{pad}    - {o}\n"))
+        .collect();
+    format!(
+        "{pad}- AllowOrigins:\n{listed}\
+         {pad}  AllowHeaders: [authorization, content-type, x-timeline-session]\n\
+         {pad}  AllowMethods: [GET, POST, PATCH]\n\
+         {pad}  ExposeHeaders: [apigw-requestid]\n\
+         {pad}  MaxAge: 600\n"
+    )
+}
+
 #[test]
 fn the_api_and_the_bucket_allow_the_same_origin_cut_from_the_page_address() {
-    let api = address_list(8, "AllowOrigins", HOSTED_ORIGIN, ORIGIN);
+    // The API's whole CORS block is chosen by condition, not just its
+    // AllowOrigins: SAM takes a conditional AllowOrigins to be the entire
+    // block and drops the other settings, which on 2026-10-02 left the
+    // deployed API with its old origins (docs/analysis/
+    // 2026-10-02-page-hosting-deployment.md).
+    let api = format!(
+        "      CorsConfiguration: !If\n        - HostingPage\n        - !If\n          - AllowsLocalPage\n{}{}{}",
+        api_cors(10, &[HOSTED_ORIGIN, ORIGIN]),
+        api_cors(10, &[HOSTED_ORIGIN]),
+        api_cors(8, &[ORIGIN]),
+    );
     assert!(block("HttpApi").contains(&api), "API:\n{api}");
+    assert!(!block("HttpApi").contains("AllowOrigins: !If"));
+    // A definition API Gateway can't use fails the deploy.
+    assert!(block("HttpApi").contains("FailOnWarnings: true\n"));
     let bucket = address_list(12, "AllowedOrigins", HOSTED_ORIGIN, ORIGIN);
     assert!(
         block("RawUploadsBucket").contains(&bucket),
