@@ -121,8 +121,13 @@ app is down wherever the page is. A non-AWS host adds a second way to fail. It d
 In [infra/template.yaml](../../infra/template.yaml):
 
 - New parameter `HostPage` (`on` / `off`, default `off`) and condition `HostingPage`. With `off`,
-  the stack is exactly as today: dev stacks keep pointing at a page on your machine via
-  `FrontendUrl`.
+  the stack is exactly as today: it points at a page on your machine via `FrontendUrl`. A dev
+  stack can be hosted too (you said one will be needed); see `AlsoAllowLocalPage` below.
+- New parameter `PageDomain` (default empty), used only when hosting. Empty: the page lives at
+  CloudFront's own address (`xxxx.cloudfront.net`). Set (e.g. `timeline.telotrope.ai`): see §1a.
+- New parameter `AlsoAllowLocalPage` (`on` / `off`, default `off`), used only when hosting. With
+  `on`, `FrontendUrl` is accepted *in addition to* the hosted address, so a hosted dev stack still
+  works with a page served from your machine. A production stack leaves it `off` (C6).
 - New resources, all under `HostingPage`:
   - `PageBucket`: private S3 bucket, all public access blocked (same settings as
     `RawUploadsBucket`).
@@ -136,13 +141,51 @@ In [infra/template.yaml](../../infra/template.yaml):
     headers). Its cache policy keeps files at the edge for a day (`MinTTL` 86400) while browsers
     are told to recheck every load (C4, C7). Default price class (all edge locations); within
     the free allowance it costs the same.
-- One derived value replaces the three copies of the origin expression: the hosted address
-  `https://<distribution domain>/timeline.html` when `HostingPage`, otherwise `FrontendUrl`.
-  It goes into Cognito's return and sign-out addresses ([line 229](../../infra/template.yaml#L229)),
-  the upload bucket's CORS ([line 146](../../infra/template.yaml#L146)) and the API's CORS
-  ([line 442](../../infra/template.yaml#L442)). A hosted stack therefore accepts **only** the
-  hosted page (C6).
-- New outputs (only when hosting): `PageUrl`, `PageBucketName`, `PageDistributionId`.
+- The allowed-address lists are derived in one place instead of three copies of the origin
+  expression. They feed Cognito's return and sign-out addresses
+  ([line 229](../../infra/template.yaml#L229)), the upload bucket's CORS
+  ([line 146](../../infra/template.yaml#L146)) and the API's CORS
+  ([line 442](../../infra/template.yaml#L442)):
+
+  | Stack | Cognito return addresses | CORS origins |
+  |---|---|---|
+  | Not hosted | `FrontendUrl` | `FrontendUrl`'s origin |
+  | Hosted | `https://<host>/` and `https://<host>/timeline.html` | `https://<host>` |
+  | Hosted, `AlsoAllowLocalPage=on` | both of the above, plus `FrontendUrl` | both origins |
+
+  `<host>` is `PageDomain` when set, otherwise the distribution's own domain. Both `/` and
+  `/timeline.html` are listed because the page asks Cognito to return to whatever path it was
+  opened at ([frontend/infra/cognito-login.js (line 27)](../../frontend/infra/cognito-login.js#L27)),
+  and the distribution serves the page at both (C12).
+- New outputs (only when hosting): `PageUrl`, `PageBucketName`, `PageDistributionId`, and
+  `PageDnsTarget` (the distribution's own domain, which the custom domain's DNS record points to).
+
+### §1a. Custom domain at Porkbun
+
+`telotrope.ai`'s DNS is at Porkbun, and it stays there: no Route 53, no $0.50/month. With
+`PageDomain` set, the template adds:
+
+- `PageCertificate`: a free public certificate from AWS Certificate Manager for `PageDomain`,
+  validated by DNS. CloudFront accepts certificates only from `us-east-1`, which is the region
+  the dev stack already uses ([infra/samconfig.toml](../../infra/samconfig.toml) is git-ignored;
+  I read it on this machine), so the certificate can live in the same template. A stack in any
+  other region would need it created separately; the template refuses that combination with a
+  rule rather than failing midway.
+- `Aliases: [PageDomain]` and the certificate on `PageDistribution`.
+
+A deploy with a new `PageDomain` pauses until the certificate is validated. The steps, written
+into [infra/README.md](../../infra/README.md) (§4):
+
+1. While the stack is creating the certificate, read the validation record (a `CNAME` name and
+   value) from the CloudFormation events or the Certificate Manager console. I recall that
+   CloudFormation prints it in the event's status message; check H8 confirms.
+2. Add that `CNAME` at Porkbun (*Domain Management → DNS*). The deploy then continues.
+3. After the deploy, add a second `CNAME` at Porkbun: `PageDomain`'s subdomain (e.g. `timeline`)
+   → the `PageDnsTarget` output.
+
+Both records are added by hand. Porkbun has an API that could do it, but that means storing a
+Porkbun API key; not worth it for a step done once per stack. Proposed names (open question 1):
+`timeline.telotrope.ai` for production and `timeline-dev.telotrope.ai` for dev.
 
 No dependency cycle: the distribution refers to nothing in Cognito or the API. They refer to it.
 
@@ -181,8 +224,9 @@ existing scripts do).
 
 ### §4. Documentation
 
-- [infra/README.md](../../infra/README.md): a "Hosting the page" step (deploy with `HostPage=on`,
-  run `publish-page.sh`).
+- [infra/README.md](../../infra/README.md): a "Hosting the page" step (deploy with `HostPage=on`
+  and optionally `PageDomain` and `AlsoAllowLocalPage`, add the two Porkbun records, run
+  `publish-page.sh`).
 - Migration plan C30: re-tagged `[OPEN, cross-plan]` and pointed here. When this plan's
   deployment checks pass, it becomes `[RESOLVED]`.
 
@@ -201,8 +245,8 @@ existing scripts do).
 - **Page**: a browser test in [e2e/](../../e2e/) that serves `timeline.html` with the tag
   injected (Playwright request interception). It checks that the page fetches that deployment's
   settings, ignores `?deploy=other`, and errors on an invalid tag value.
-- **Template**: [scripts/check-template.sh](../../scripts/check-template.sh) validates with both
-  `HostPage` values.
+- **Template**: [scripts/check-template.sh](../../scripts/check-template.sh) validates the
+  template with `HostPage` off, on, on with `PageDomain`, and on with `AlsoAllowLocalPage`.
 
 ### Deployment checks (only a real deployment can confirm these)
 
@@ -215,14 +259,14 @@ existing scripts do).
 | H5 | After a second publish, a reload shows the new version (invalidation, and browsers honoring `no-cache` despite the edge's one-day `MinTTL`; see C7). |
 | H6 | Responses are compressed (`content-encoding: br` or `gzip`) and carry the security headers. |
 | H7 | After a week, Cost Explorer shows CloudFront and the page bucket at $0.00. |
+| H8 | With `PageDomain` set: the validation record appears in the stack's events, the deploy finishes once it's added at Porkbun, and `https://<PageDomain>/` serves the page with a valid certificate. |
+| H9 | Sign-in works when the page is opened at `/` and at `/timeline.html`. |
+| H10 | A hosted dev stack with `AlsoAllowLocalPage=on` accepts the page from your machine as well as the hosted one. |
 
-Until H1–H7 pass on a real stack, the status is "code-level only, end-to-end TBD."
+Until H1–H10 pass on a real stack, the status is "code-level only, end-to-end TBD."
 
 ## Out of scope
 
-- **A custom domain** (e.g. `timeline.telotrope.ai`). It needs a certificate from AWS Certificate
-  Manager, free but required to be in `us-east-1` for CloudFront, and a DNS record wherever
-  `telotrope.ai`'s DNS is hosted. See open question 1.
 - **A Content-Security-Policy header** (a browser rule listing where the page may load code and
   styles from). See C5.
 - **Publishing from CI** on every merge. It needs a GitHub-to-AWS trust role. It's worth doing
@@ -230,11 +274,12 @@ Until H1–H7 pass on a real stack, the status is "code-level only, end-to-end T
 
 ## Open questions for you
 
-1. Which domain should the app live at, and who hosts that domain's DNS today?
-2. Should the dev stack be hosted too, or only a future production stack? (The recommendation
-   assumes hosting is opt-in per stack.)
-3. Anyone can load the hosted page itself, though only signed-in users reach data. Is that
-   acceptable before launch?
+1. Are `timeline.telotrope.ai` (production) and `timeline-dev.telotrope.ai` (dev) the names you
+   want?
+
+Answered 2026-10-02: DNS is at Porkbun (§1a); a hosted dev stack will be needed at some point
+(`AlsoAllowLocalPage`, §1); the page being publicly reachable is fine, since it's how people
+will find the product and pay (C11).
 
 ## Self-critique log
 
@@ -270,9 +315,11 @@ payment.
 
 ### C6 [RESOLVED]: A hosted stack would refuse a page served from localhost
 Original concern: with one derived address, you can't point a local page at a hosted stack.
-**Resolution:** hosting is opt-in per stack (`HostPage`, default `off`), so dev stacks keep the
-local page ([§1 (line 119)](2026-10-02-page-hosting.md#L119)). Listing both addresses was rejected:
-it would let any page on any machine's `localhost:8000` call a production API.
+**Resolution:** hosting is opt-in per stack (`HostPage`, default `off`), so unhosted dev stacks
+keep the local page. Listing both addresses on every hosted stack was rejected: it would let any
+page on any machine's `localhost:8000` call a production API. **Revised after your answer** that
+a hosted dev stack will be needed: `AlsoAllowLocalPage` lists both, per stack, off by default
+([§1 (line 119)](2026-10-02-page-hosting.md#L119)).
 
 ### C7 [OPEN]: The caching setup relies on CloudFront behavior I recalled, not checked
 I believe that a cache policy's `MinTTL` keeps files at the edge even when the file says
@@ -296,6 +343,26 @@ SaaS use, its origin is shared, and it can't set headers. It's excluded in
 ### C10 [OPEN]: No measured uptime for any host
 All uptime figures are SLA promises or provider claims. **Open:** an external uptime check on
 `PageUrl` and the API. Trigger: the first stack with users outside the team.
+
+
+### C11 [RESOLVED]: Whether a publicly loadable page is acceptable
+Original concern: anyone can load the page before launch. **Resolution:** you said it's fine;
+the public page is how people reach the product. Data stays behind the sign-in. Removed from
+the open questions ([line 275](2026-10-02-page-hosting.md#L275)).
+
+### C12 [RESOLVED]: Opening the site at `/` would break sign-in
+Original concern: the distribution serves `timeline.html` at `/`, but the page asks Cognito to
+return to the exact path it was opened at, and only `/timeline.html` was listed. A visitor typing
+`timeline.telotrope.ai` would be refused after signing in. **Resolution:** both paths are listed
+([§1 table (line 150)](2026-10-02-page-hosting.md#L150)). A redirect from `/` to `/timeline.html` (a
+CloudFront Function) was the alternative; listing both needs no code. Check H9.
+
+### C13 [OPEN]: The custom-domain deploy waits on a hand-added DNS record
+The first deploy with a `PageDomain` stalls until the validation `CNAME` is added at Porkbun, and
+the record's location in CloudFormation's output is from memory. **Mitigation in plan:** the
+README steps (§1a). Certificate Manager also shows the record. **Open:** how long CloudFormation
+waits before failing, if you're slow to add it. Trigger: check H8 on the first custom-domain
+deploy.
 
 ## Sources
 
