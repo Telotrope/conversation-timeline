@@ -3,6 +3,7 @@
 //! in-memory fakes used by `timeline-api`'s own unit tests and local
 //! development; `s3`/`dynamo` are the real AWS-backed implementations.
 
+pub mod aws_failure;
 pub mod dynamo;
 pub mod memory;
 pub mod s3;

@@ -10,6 +10,7 @@
 //! `tests/dynamo_message_flags.rs`), which reads back what each kind of
 //! write actually stored.
 
+use crate::aws_failure::report;
 use std::collections::HashMap;
 
 use async_trait::async_trait;
@@ -46,8 +47,15 @@ fn sort_key(message_id: MessageId) -> String {
     message_id.to_string()
 }
 
-fn backend_error(e: impl std::error::Error + Send + Sync + 'static) -> StoreError {
-    StoreError::Backend(Box::new(e))
+/// Maps a failed call to `operation` to a backend error, reporting it for
+/// the request's log line (`crate::aws_failure`).
+fn backend_error<E: std::error::Error + Send + Sync + 'static>(
+    operation: &'static str,
+) -> impl FnOnce(E) -> StoreError {
+    move |e| {
+        report(operation, &e);
+        StoreError::Backend(Box::new(e))
+    }
 }
 
 type UpdateExpressionParts = (
@@ -184,7 +192,7 @@ impl MessageFlagsReader for DynamoMessageFlagsStore {
             .key("sk", AttributeValue::S(sort_key(message_id)))
             .send()
             .await
-            .map_err(backend_error)?;
+            .map_err(backend_error("DynamoDB.GetItem"))?;
         output
             .item
             .map(|item| record_from_item(message_id, &item))
@@ -207,7 +215,7 @@ impl MessageFlagsReader for DynamoMessageFlagsStore {
             )
             .send()
             .await
-            .map_err(backend_error)?;
+            .map_err(backend_error("DynamoDB.Query"))?;
         output
             .items
             .unwrap_or_default()
@@ -243,7 +251,7 @@ impl AutoFlagWriter for DynamoMessageFlagsStore {
             .set_expression_attribute_values(Some(values))
             .send()
             .await
-            .map_err(backend_error)?;
+            .map_err(backend_error("DynamoDB.UpdateItem"))?;
         Ok(())
     }
 }
@@ -271,7 +279,7 @@ impl UserFlagWriter for DynamoMessageFlagsStore {
                 .set_expression_attribute_values(Some(values))
                 .send()
                 .await
-                .map_err(backend_error)?;
+                .map_err(backend_error("DynamoDB.UpdateItem"))?;
         }
         self.get(user_id, conversation_id, message_id)
             .await?

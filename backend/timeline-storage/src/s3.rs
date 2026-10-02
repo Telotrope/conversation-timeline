@@ -7,6 +7,7 @@
 //! buckets the way S3 does. The real-AWS run in the migration plan's §V2
 //! is still needed before V2 can be called done.
 
+use crate::aws_failure::report;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -30,8 +31,15 @@ impl S3ObjectStore {
     }
 }
 
-fn backend_error(e: impl std::error::Error + Send + Sync + 'static) -> ObjectStoreError {
-    ObjectStoreError::Backend(Box::new(e))
+/// Maps a failed call to `operation` to a backend error, reporting it for
+/// the request's log line (`crate::aws_failure`).
+fn backend_error<E: std::error::Error + Send + Sync + 'static>(
+    operation: &'static str,
+) -> impl FnOnce(E) -> ObjectStoreError {
+    move |e| {
+        report(operation, &e);
+        ObjectStoreError::Backend(Box::new(e))
+    }
 }
 
 #[async_trait]
@@ -41,7 +49,10 @@ impl ObjectStore for S3ObjectStore {
         key: &str,
         expires_in: Duration,
     ) -> Result<String, ObjectStoreError> {
-        let config = PresigningConfig::expires_in(expires_in).map_err(backend_error)?;
+        // Presigning signs a link here, without calling AWS; a failure is
+        // still reported, under a name that says so.
+        let config = PresigningConfig::expires_in(expires_in)
+            .map_err(backend_error("S3.PutObject presign"))?;
         let presigned = self
             .client
             .put_object()
@@ -49,7 +60,7 @@ impl ObjectStore for S3ObjectStore {
             .key(key)
             .presigned(config)
             .await
-            .map_err(backend_error)?;
+            .map_err(backend_error("S3.PutObject presign"))?;
         Ok(presigned.uri().to_string())
     }
 
@@ -58,7 +69,8 @@ impl ObjectStore for S3ObjectStore {
         key: &str,
         expires_in: Duration,
     ) -> Result<String, ObjectStoreError> {
-        let config = PresigningConfig::expires_in(expires_in).map_err(backend_error)?;
+        let config = PresigningConfig::expires_in(expires_in)
+            .map_err(backend_error("S3.GetObject presign"))?;
         let presigned = self
             .client
             .get_object()
@@ -66,7 +78,7 @@ impl ObjectStore for S3ObjectStore {
             .key(key)
             .presigned(config)
             .await
-            .map_err(backend_error)?;
+            .map_err(backend_error("S3.GetObject presign"))?;
         Ok(presigned.uri().to_string())
     }
 
@@ -82,10 +94,19 @@ impl ObjectStore for S3ObjectStore {
                 // A missing key is the caller's "no such object" case; any
                 // other failure -- including a missing bucket, which is a
                 // misconfiguration -- stays a backend error.
-                Some(GetObjectError::NoSuchKey(_)) => ObjectStoreError::NotFound,
-                _ => backend_error(e),
+                // Reported too: AWS answered the call with an error.
+                Some(GetObjectError::NoSuchKey(_)) => {
+                    report("S3.GetObject", &e);
+                    ObjectStoreError::NotFound
+                }
+                _ => backend_error("S3.GetObject")(e),
             })?;
-        let bytes = output.body.collect().await.map_err(backend_error)?;
+        // Reading the body is still part of the GetObject call.
+        let bytes = output
+            .body
+            .collect()
+            .await
+            .map_err(backend_error("S3.GetObject"))?;
         Ok(bytes.to_vec())
     }
 
@@ -97,7 +118,7 @@ impl ObjectStore for S3ObjectStore {
             .body(data.into())
             .send()
             .await
-            .map_err(backend_error)?;
+            .map_err(backend_error("S3.PutObject"))?;
         Ok(())
     }
 }

@@ -8,7 +8,9 @@
 //! (aws-smithy-runtime 1.14's orchestrator). [`AwsCallCounter`] watches only
 //! those two kinds of span and adds them to the current
 //! [`crate::request_record`]: an operation span is one call, an attempt
-//! numbered 2 or more is one retry. Nothing is printed by it.
+//! numbered 2 or more is one retry. A call that failed for good is reported
+//! by our storage adapters as an event (`timeline_storage::aws_failure`),
+//! which it counts as one failure. Nothing is printed by it.
 //!
 //! Every other span and event is declined when its call site is first
 //! registered, so the rest of the program's `tracing` output costs one
@@ -17,11 +19,14 @@
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id};
 use tracing::subscriber::Interest;
+use tracing::Event;
 use tracing::{Metadata, Subscriber};
 use tracing_subscriber::layer::{Context, SubscriberExt};
 use tracing_subscriber::Layer;
 
-use crate::request_record::{count_aws_call, count_aws_retry};
+use timeline_storage::aws_failure::AWS_FAILURE_TARGET;
+
+use crate::request_record::{count_aws_call, count_aws_failure, count_aws_retry};
 
 const RETRY_SPAN: &str = "try_attempt";
 
@@ -40,8 +45,35 @@ fn is_retry_span(metadata: &Metadata<'_>) -> bool {
         && metadata.target().starts_with("aws_smithy_runtime")
 }
 
+fn is_failure_event(metadata: &Metadata<'_>) -> bool {
+    metadata.is_event() && metadata.target() == AWS_FAILURE_TARGET
+}
+
 fn is_watched(metadata: &Metadata<'_>) -> bool {
-    is_operation_span(metadata) || is_retry_span(metadata)
+    is_operation_span(metadata) || is_retry_span(metadata) || is_failure_event(metadata)
+}
+
+/// A failure event's `operation` and `error` fields.
+#[derive(Default)]
+struct Failure {
+    operation: String,
+    error: String,
+}
+
+impl Visit for Failure {
+    fn record_str(&mut self, field: &Field, value: &str) {
+        if field.name() == "operation" {
+            self.operation = value.to_string();
+        }
+    }
+
+    // `error` arrives here (it is sent with `%`, as text through Display);
+    // anything else is ignored.
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "error" {
+            self.error = format!("{value:?}");
+        }
+    }
 }
 
 /// Reads a span's `attempt` field.
@@ -85,6 +117,14 @@ impl<S: Subscriber> Layer<S> for AwsCallCounter {
             count_aws_call(metadata.name());
         } else if is_retry_span(metadata) && attempt_number(attrs) >= 2 {
             count_aws_retry();
+        }
+    }
+
+    fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+        if is_failure_event(event.metadata()) {
+            let mut failure = Failure::default();
+            event.record(&mut failure);
+            count_aws_failure(&failure.operation, &failure.error);
         }
     }
 }

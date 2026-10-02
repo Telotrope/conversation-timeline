@@ -12,6 +12,8 @@ aws-sdk-dynamodb = "1"
 aws-smithy-types = "1"
 uuid = "1"
 serde_json = "1"
+# Reporting failed AWS calls to the API's per-request log (src/aws_failure.rs). MIT.
+tracing = "0.1"
 
 [dev-dependencies]
 aws-config = { version = "1", features = ["credentials-login"] }

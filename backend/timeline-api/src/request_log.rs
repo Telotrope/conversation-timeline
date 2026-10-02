@@ -90,6 +90,8 @@ pub fn api_request_line(
         "facts": Value::Object(record.facts.clone()),
         "aws_calls": record.aws_calls,
         "aws_retries": record.aws_retries,
+        "aws_failures": record.aws_failures,
+        "aws_errors": record.aws_errors,
     })
     .to_string()
 }

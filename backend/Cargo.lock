@@ -3902,6 +3902,7 @@ dependencies = [
  "tempfile",
  "timeline-core",
  "tokio",
+ "tracing",
  "uuid",
 ]
 

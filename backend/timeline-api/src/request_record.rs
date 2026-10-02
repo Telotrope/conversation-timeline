@@ -30,7 +30,15 @@ pub struct RequestRecord {
     pub aws_calls: BTreeMap<String, u64>,
     /// How many times the SDK retried a call after a failed attempt.
     pub aws_retries: u64,
+    /// Calls that still failed once the SDK stopped retrying, by operation.
+    pub aws_failures: BTreeMap<String, u64>,
+    /// The first [`MAX_KEPT_ERRORS`] of those failures' messages, each cut
+    /// to [`MAX_ERROR_CHARS`] characters.
+    pub aws_errors: Vec<String>,
 }
+
+pub const MAX_KEPT_ERRORS: usize = 3;
+pub const MAX_ERROR_CHARS: usize = 200;
 
 tokio::task_local! {
     static CURRENT: RefCell<RequestRecord>;
@@ -69,6 +77,20 @@ pub fn count_aws_call(operation: &str) {
 /// Counts one retried AWS call attempt. Does nothing outside [`recording`].
 pub fn count_aws_retry() {
     with_current(|r| r.aws_retries += 1);
+}
+
+/// Counts one AWS call that failed for good, keeping its message if fewer
+/// than [`MAX_KEPT_ERRORS`] are kept. Does nothing outside [`recording`].
+pub fn count_aws_failure(operation: &str, error: &str) {
+    with_current(|r| {
+        *r.aws_failures.entry(operation.to_string()).or_insert(0) += 1;
+        if r.aws_errors.len() < MAX_KEPT_ERRORS {
+            r.aws_errors.push(format!(
+                "{operation}: {}",
+                error.chars().take(MAX_ERROR_CHARS).collect::<String>()
+            ));
+        }
+    });
 }
 
 /// Runs `change` on the current record if there is one. `try_with` fails

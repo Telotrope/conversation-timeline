@@ -9,6 +9,7 @@
 //! is no earlier, pending row), `CONV#<conversation_id>` for each
 //! conversation summary it eventually produces.
 
+use crate::aws_failure::report;
 use std::collections::HashMap;
 
 use async_trait::async_trait;
@@ -38,8 +39,15 @@ impl DynamoConversationsTable {
     }
 }
 
-fn backend_error(e: impl std::error::Error + Send + Sync + 'static) -> StoreError {
-    StoreError::Backend(Box::new(e))
+/// Maps a failed call to `operation` to a backend error, reporting it for
+/// the request's log line (`crate::aws_failure`).
+fn backend_error<E: std::error::Error + Send + Sync + 'static>(
+    operation: &'static str,
+) -> impl FnOnce(E) -> StoreError {
+    move |e| {
+        report(operation, &e);
+        StoreError::Backend(Box::new(e))
+    }
 }
 
 fn upload_sort_key(upload_id: UploadId) -> String {
@@ -111,7 +119,10 @@ impl UploadOutcomeStore for DynamoConversationsTable {
                 .item("status", AttributeValue::S("failed".to_string()))
                 .item("failure_reason", AttributeValue::S(reason)),
         };
-        request.send().await.map_err(backend_error)?;
+        request
+            .send()
+            .await
+            .map_err(backend_error("DynamoDB.PutItem"))?;
         Ok(())
     }
 
@@ -128,7 +139,7 @@ impl UploadOutcomeStore for DynamoConversationsTable {
             .key("sk", AttributeValue::S(upload_sort_key(upload_id)))
             .send()
             .await
-            .map_err(backend_error)?;
+            .map_err(backend_error("DynamoDB.GetItem"))?;
         output
             .item
             .map(|item| upload_outcome_from_item(&item))
@@ -154,7 +165,7 @@ impl UploadOutcomeStore for DynamoConversationsTable {
             .return_values(aws_sdk_dynamodb::types::ReturnValue::UpdatedNew)
             .send()
             .await
-            .map_err(backend_error)?;
+            .map_err(backend_error("DynamoDB.UpdateItem"))?;
         // Unreachable backstop: an `UpdatedNew` reply to this ADD always
         // carries `attempts`.
         let item = output
@@ -178,7 +189,7 @@ impl UploadOutcomeStore for DynamoConversationsTable {
             .expression_attribute_values(":error", AttributeValue::S(error))
             .send()
             .await
-            .map_err(backend_error)?;
+            .map_err(backend_error("DynamoDB.UpdateItem"))?;
         Ok(())
     }
 
@@ -198,7 +209,7 @@ impl UploadOutcomeStore for DynamoConversationsTable {
             .consistent_read(true)
             .send()
             .await
-            .map_err(backend_error)?;
+            .map_err(backend_error("DynamoDB.GetItem"))?;
         let Some(item) = output.item else {
             return Ok(None);
         };
@@ -252,7 +263,7 @@ impl ConversationSummaryStore for DynamoConversationsTable {
             )
             .send()
             .await
-            .map_err(backend_error)?;
+            .map_err(backend_error("DynamoDB.Query"))?;
         output
             .items
             .unwrap_or_default()
@@ -297,7 +308,7 @@ impl ConversationSummaryStore for DynamoConversationsTable {
             )
             .send()
             .await
-            .map_err(backend_error)?;
+            .map_err(backend_error("DynamoDB.GetItem"))?;
         output
             .item
             .map(|item| conversation_summary_from_item(conversation_id, &item))
@@ -324,7 +335,7 @@ impl ConversationSummaryStore for DynamoConversationsTable {
             )
             .send()
             .await
-            .map_err(backend_error)?;
+            .map_err(backend_error("DynamoDB.PutItem"))?;
         Ok(())
     }
 }
