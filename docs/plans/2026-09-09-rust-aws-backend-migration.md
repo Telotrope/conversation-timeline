@@ -1400,7 +1400,43 @@ document in `docs/analysis/`.
 D8 was removed on 2026-10-01; it is now C24's follow-up. The other numbers are kept so earlier
 references stay valid.
 
+**Where things stand (hand-off, 2026-10-02).** Facts a new session needs that aren't elsewhere in
+this plan:
+- **Deployed:** the `dev` stack, last deployed 2026-10-02 16:47 UTC, includes the error handling
+  from [the upload-processing plan](2026-10-02-upload-processing-failures.md) (its phase A:
+  attempts counted and shown on the page, `RecordFailedUploadFunction` marking an upload failed
+  after the last retry). It does **not** include the later `FailProcessing` test setting (built,
+  committed, never deployed). Its address setting is `FrontendUrl =
+  https://dev.tail13dce8.ts.net/proxy/8000/timeline.html` (E10), kept in `infra/samconfig.toml`,
+  which is local and not committed.
+- **Deployment checks so far** (not yet written up in `docs/analysis/` as this section requires):
+  D1 passed (the stack deployed). D3 passed for the page's sign-in after E10; the command-line
+  script part was not run. D2, D4, D6, D7 not run. D5 and D9, partial numbers only, from the
+  processing function's logs for the 60.6 MB export: about 6 s per attempt, 227–286 MB used of
+  512 MB, start-up 118 ms.
+- **The intermittent upload failure** ("item not found" while saving reviews) is diagnosed and
+  measured: [read-after-write analysis](../analysis/2026-10-02-read-after-write-experiment.md).
+  It happens only when review rows are new, so re-uploading the same file can't show it; review
+  rows were deleted by hand on 2026-10-02 to reproduce it. The error handling was tested live the
+  same day: retries shown with the failing row, then the upload marked failed after 3 attempts.
+  **Next in that plan:** its §1 fix (approved; the user wanted the error handling tested first,
+  which is now done), then its §3b failure-message change and §4 survey.
+- **C38 is answered:** the Rust AWS SDK uses `aws login` credentials once `aws-config`'s
+  `credentials-login` feature is on (found 2026-10-02; `timeline-storage`'s dev-dependency has
+  it).
+- **Working environment:** the user's browser is on another machine, reaching pages through VS
+  Code's forwarding over Tailscale, never `localhost`. `aws login --profile timeline --remote`
+  lasts under a day; Cognito's sign-in lasts an hour, so sign in afresh before a test (see the
+  stale sign-in item below). The browser tests need Node 20 (`~/.nvm/versions/node/v20.20.2/bin`).
+  The Rust build folder grows to about 30 GB and filled the disk on 2026-10-02; `cargo clean`
+  fixes it.
+
 **After the deployment checks (added at the user's request, 2026-10-02):**
+- **Upload processing: the rest of its plan.** [2026-10-02-upload-processing-failures.md](2026-10-02-upload-processing-failures.md):
+  phase A done and deployed; §1 fix next (see above); §3b, §4, and the optional §6 after.
+- **A development-only "delete my earlier data first" checkbox.**
+  [2026-10-02-dev-delete-before-load.md](2026-10-02-dev-delete-before-load.md): proposed, not
+  approved.
 - **Rewrite the load screen.** The Load button sits far from the file chooser it depends on,
   separated by the sign-in area and a long paragraph about scanning; the user found the page
   confusing. Needs its own plan before any change.
