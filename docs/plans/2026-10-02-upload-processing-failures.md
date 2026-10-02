@@ -43,6 +43,25 @@ observed in that run:
 The user also asked for the error handling to be checked more widely, since this kind of failure
 "could turn up anywhere later" (§4).
 
+## 0. Experiment first: does a default read miss a row just written? (done before §1, at the user's request, 2026-10-02)
+
+- **What:** a test in `backend/timeline-storage/tests/dynamo_read_after_write_experiment.rs`,
+  marked `#[ignore]` so ordinary test runs skip it; run on demand with
+  `cargo test -p timeline-storage --test dynamo_read_after_write_experiment -- --ignored --nocapture`
+  after `aws login`, with `TIMELINE_EXPERIMENT_TABLE` naming the deployed flags table.
+- **How:** 600 new rows under one scratch partition key (`experiment#<run id>`), each written with
+  the same kind of request `set_user_flags` sends (`UpdateItem … SET user_caps = :v`) and read back
+  immediately. Rows alternate between a default read and a strongly consistent read, so both kinds
+  see the same conditions. It counts misses for each kind, records each write's and read's time,
+  and prints both. It then deletes every row it wrote, and fails if any delete fails.
+- **Reading the result:** misses on default reads and none on strongly consistent reads support
+  the inferred cause. No misses in either is **not** a refutation: from this machine each request
+  takes longer than from inside Lambda, giving DynamoDB more time to catch up; the printed times
+  show by how much. Misses on strongly consistent reads would mean the cause is something else.
+- **Dependency:** `aws-config` 1 (Apache-2.0, already used by `timeline-api`) as a dev-dependency of
+  `timeline-storage`, to load the `aws login` credentials.
+- Results go in `docs/analysis/2026-10-02-read-after-write-experiment.md`.
+
 ## 1. Write-then-read without the read
 
 `set_user_flags` asks DynamoDB to return the row as it is after the update, in the same request
