@@ -54,6 +54,7 @@ My interactive loop for code creation is always as follows:
 5. User gives feedback.
 6a. If the user's feedback criticizes the plan, I modify it and return to step 3.
 6b. If, and only if, the user specifically says to start coding, I create code according to the plan.
+6c. When the code adds functionality (not when it only fixes something), I run the **post-addition check** (see "Code maintenance") on what I added, before writing tests.
 7. I write tests that confirm the functionality specified in the plan.
 8. I run the tests and note errors.
 9. I modify the (non-test) code to ensure the tests run.
@@ -103,6 +104,7 @@ When a classification or enum has multiple entries that map to identical handlin
 - When the user asks for a design or plan, write the plan doc directly to `docs/plans/` with normal file writes — do NOT invoke the `EnterPlanMode`/`ExitPlanMode` harness for this. That harness restricts writes to a single file outside the repo and gates every exit behind an approval prompt; for producing a `docs/plans/*.md` document (as opposed to planning a multi-file code change), that's pure friction with no benefit. Iterate by editing the file in place and committing each round (see "Commit plan edits as you iterate" below).
 - Consider whether to create a new plan document or modify an existing one. Prefer modifying an existing document if you're sure which one. If unsure, ask the user.
 - Always criticize your plans and modify according to the criticism before recommending a plan to the user.
+- Every plan that adds functionality includes an explicit **redundancy check**: for each new function, type, module or feature it proposes, search the repo for existing code that already does it (or nearly does), and record what was found and why it is or isn't reused.
 
 ## Plans, analyses, and reports — three categories
 
@@ -170,6 +172,11 @@ After completing a round of plan edits to a `docs/plans/*.md` file, stage only t
 
 
 ## Code maintenance
+- **Formatting:** code I author or edit is reformatted with the language's standard tool before committing (`cargo fmt` for Rust), limited to the files I changed. Never reformat code a human added or edited without asking. Formatting needs no discussion with the user.
+- **Post-addition check** (after adding functionality, before writing tests; record the result in the report):
+  1. *Redundancy:* each new function or type — does something in the repo already do this? Does its name follow the naming already used next to it (e.g. `format…`, not a new prefix)?
+  2. *Error paths:* for each new or changed AWS call, entry point (route, Lambda handler), background job and place the page waits: where does every failure end up? It must end in a response or a status the page reads and shows truthfully — including after retries run out, and for failures outside our code (time limit, out of memory, crash at start-up). A retry handed to AWS or another system needs an explicit "retries exhausted" path.
+  3. *Stale display:* no state shown to the user that was checked once and can change later (a login, a status) without being rechecked.
 - At the end of any user interaction that involves code modification, run all unit and regression tests to look for errors and fix them. Once fixes are complete, immediately commit changes to git.
 - Split git commits into small, topical commits whenever possible (for example: runtime behavior, validation, and tests in separate commits).
 - If you are unable to run tests without errors 10 times in a row, please warn the user and ask whether you should continue.
