@@ -188,18 +188,38 @@ appears and the bar moves (its animation is running).
 
 ## 4. Audit: every wait and every background failure
 
-The user asked whether this pattern is elsewhere. The audit covers **all** of the following, not a
-sample, and is written to `docs/analysis/2026-10-02-error-reporting-audit.md` with, for each item,
-the code it reads (file and line), what the user sees on failure, and a verdict: reported
-truthfully / reported falsely / not reported / waits without limit.
+The user asked whether this pattern is elsewhere (rewritten 2026-10-02 at the user's request).
+The organizing rule is theirs: **AWS errors must be handled by Rust; Rust errors must reach the
+page and be shown.** An AWS error that isn't anticipated and retried propagates to the page. The
+place this breaks is wherever Rust runs **outside a request the page made** (a background job),
+because there is no response to carry the error.
 
-- **Every place the page waits on the network:** sign-in and the code exchange, loading the deploy
-  configuration, `POST /uploads`, the `PUT` to S3, the status polling, the detection pass, `GET
-  /export`, the export download, flag saves, and anything else `frontend/` `await`s on `fetch`.
-- **Every server path whose error goes only to a log:** both existing Lambda binaries' `main`
-  functions, `s3_trigger.rs`, and every `eprintln!` in `timeline-api` and `timeline-storage`.
-- **Every write followed by a read** in `timeline-storage/src/dynamo/` (§1's bug class).
-- **Every progress message**, for whether it can show while nothing is happening.
+The audit covers **all** of each step, not a sample, and is written to
+`docs/analysis/2026-10-02-error-reporting-audit.md`. Each item gets the code it read (file and
+line), what the user sees on failure, and a verdict: *reported truthfully / reported falsely /
+not reported / waits without limit*.
+
+1. **Every AWS call in Rust** (each `.send().await` in `timeline-storage` and `timeline-api`): is
+   its error retried, passed on, or dropped; and if passed on, where does it end up?
+2. **Every server entry point** (each route in `timeline-api/src/routes/`, each Lambda binary's
+   handler): does every error path end in an HTTP response with a readable message, or a recorded
+   status, rather than only a log line? Every `eprintln!` is checked for what else happens next
+   to it.
+3. **Every background job** (today the S3-triggered processing; later V3's Bedrock queue): does
+   it have a final status the page can read in every case, including after AWS stops retrying?
+   Includes every write followed by a read in `timeline-storage/src/dynamo/` (§1's bug class: a
+   default read can miss a row created by the write just before it).
+4. **Every place the page waits** (each `fetch` and poll in `frontend/`): is every failure shown,
+   with a true message, and is there a time limit? Includes every progress or status message, for
+   whether it can be shown while nothing is happening or after it has stopped being true.
+5. **Failures outside our code** — a function's time limit, running out of memory, a crash at
+   start-up, API Gateway refusing a request: for each function, what does the page see? Read from
+   the template and the page's error handling; confirmed live where a test setting allows it (the
+   `FailProcessing` setting, §2b).
+6. **Which of these can become automatic checks**: e.g. a template test that every function AWS
+   starts in the background has an "on failure" destination, so a new one can't be added without
+   it. Each candidate is listed with what it would catch; none is built without the user's
+   approval.
 
 **When it runs:** once, in phase B (§5), across the whole codebase; it has not been run yet. From
 2026-10-02 the same questions are also asked of every code addition, before its tests are
@@ -210,7 +230,15 @@ Items found broken are fixed under this plan if the fix is small and the same sh
 anything larger is listed in the analysis with its own proposed fix, and comes back to the user
 before it's built.
 
-## 2b. A switch to make processing fail on purpose (proposed; not built until the user approves)
+## 2b. A switch to make processing fail on purpose (built 2026-10-02, at the user's request)
+
+**Status:** built and tested locally (commits `a9d09b1`, `c154618`); not yet run on AWS. The
+walkthrough's step 10 ([infra/README.md](../../infra/README.md)) is the live test. Differences
+from the design below: the on/off parsing is one helper shared with `LogS3Events`; the setting
+reaches the code through new `handle_s3_event_with` / `handle_raw_s3_event_with`, with the old
+names kept as wrappers so committed tests are unchanged. Found while writing step 10: after the
+last attempt the page's message repeats "the server couldn't process the file" (the page adds it
+in front of a reason that already starts that way); see C8.
 
 Live-testing §2 needs all three attempts to fail; with the user's export one attempt fails about
 24% of the time, so all three would be rare. Proposed: a template parameter `FailProcessing`,
@@ -289,6 +317,15 @@ false message. Project rules forbid changing a committed test without approval. 
 plan:** Phase A kept the old message at first. **Resolution (2026-10-02):** the user approved
 changing the test; message and test now use the plan's wording, see
 [§3 (line 177)](2026-10-02-upload-processing-failures.md#L177).
+
+### C8 [OPEN]: The final failure message repeats itself
+The page shows `the server couldn't process the file: ${reason}`
+([upload-wait.js](../../frontend/core/upload-wait.js)), and `record_failed_upload`'s reason
+already begins "the server couldn't process the file after 3 attempts: …"
+([failed_upload.rs](../../backend/timeline-api/src/failed_upload.rs)). **Proposed fix:** the
+reason becomes "all 3 attempts failed; the last error was: …", which changes the expected text in
+the committed `tests/failed_upload.rs`. **Open:** trigger is the user's approval to change that
+test.
 
 ### C6 [RESOLVED]: The page's bar never moved
 `setLoadProgressIndeterminate` fills the bar to 100% and stops, which reads as finished or stuck.
