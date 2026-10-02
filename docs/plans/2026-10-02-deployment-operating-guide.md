@@ -1,7 +1,9 @@
 # Deploying three ways: local, remote development, public
 
-**Status:** draft, awaiting approval. Rewrites the outline of the same name (2026-10-02) at your
-request: explicit, automated steps for three kinds of deployment.
+**Status:** approved 2026-10-02 (public stack starts empty); §1–§6 implemented and tested on this
+machine. §7, the one-time move, waits on the `dev.howangryami.telotrope.ai` certificate's Porkbun
+record and on pushing `main`. Rewrites the outline of the same name (2026-10-02) at your request:
+explicit, automated steps for three kinds of deployment.
 
 ## Why
 
@@ -206,9 +208,7 @@ TBD".
 1. AWS sign-in is `aws login --profile timeline --remote`; `aws sso` doesn't work here (§2 step 1).
 2. Review rows were deleted with a one-off script (lesson 4).
 
-## Open question for you
-
-1. Is it acceptable that the public stack starts with no accounts and no data (§7)?
+3. The public stack starts empty: new accounts, no uploads (§7).
 
 ## Self-critique log
 
