@@ -1404,10 +1404,32 @@ references stay valid.
 - **Rewrite the load screen.** The Load button sits far from the file chooser it depends on,
   separated by the sign-in area and a long paragraph about scanning; the user found the page
   confusing. Needs its own plan before any change.
-- **Sign-in that goes stale** (found 2026-10-02): "Signed in as …" is checked once when the page
-  loads, while the token lasts an hour; after that every request fails with "sign in first" under
-  a "Signed in" label. E5 said the page would send you through sign-in again; it doesn't. Proposed
-  fix (refresh-token renewal, rechecking before showing the status) awaits the user's go-ahead.
+- **Sign-in that goes stale** (found 2026-10-02; to be done after the deployment checks, at the
+  user's request). "Signed in as …" is worked out once when the page loads
+  ([login-panel.js:23-27](../../frontend/ui/login-panel.js#L23-L27)), while Cognito's access
+  token lasts an hour (template `AccessTokenValidity: 1`). After that, every request fails with
+  "sign in first" ([api-client.js:91](../../frontend/infra/api-client.js#L91)) under a "Signed
+  in" label, and flag saves fail the same way. E5 said the page would send you through sign-in
+  again; it doesn't. **Proposed fix:**
+  1. *Renew quietly.* Cognito issues a refresh token with the authorization-code sign-in (believed
+     to last 30 days by default; unverified). `oidc-client-ts`, already used
+     ([cognito-login.js](../../frontend/infra/cognito-login.js)), can trade it for a new access
+     token (`signinSilent`, or `automaticSilentRenew: true`, today `false`). `accessToken()` tries
+     a renewal when the token has expired, before answering "none".
+  2. *When renewal fails, say so.* The existing `refresh()` in login-panel.js is called whenever
+     the load screen is shown (including "Load another file") and after any request is refused
+     for an expired login, and shows "Your sign-in expired — sign in again" with the Sign in
+     button, instead of a stale "Signed in".
+  3. *Requests made after expiry* (upload, flag save, export) show that same message rather than
+     "sign in first".
+  4. *Tests:* a browser test with the existing stand-in Cognito server (`e2e/cognito-standin.js`)
+     issuing a short-lived token and a refresh token: the label changes on expiry when renewal is
+     refused; renewal keeps you signed in when it isn't; a flag save after expiry shows the expiry
+     message. Unit tests for any new pure logic.
+  - *Redundancy check:* renewal comes from the sign-in library already in use, and the status
+    display reuses `refresh()`; nothing new duplicates existing code.
+  - *To verify first:* that this Cognito client actually issues refresh tokens, and the
+    library's renewal call against the stand-in server.
 
 **Done means:** all suites pass (Rust, frontend unit, browser); the new modules are at 100% line
 coverage; `scripts/check-template.sh` passes; `infra/README.md` exists. V2 itself is done only
