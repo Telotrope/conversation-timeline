@@ -11,6 +11,9 @@
 #[path = "support/upload_outcome_contract.rs"]
 mod upload_outcome_contract;
 #[macro_use]
+#[path = "support/upload_progress_contract.rs"]
+mod upload_progress_contract;
+#[macro_use]
 #[path = "support/conversation_summary_contract.rs"]
 mod conversation_summary_contract;
 #[path = "support/dynamodb_local.rs"]
@@ -43,6 +46,10 @@ async fn make_with_raw_client() -> (DynamoConversationsTable, aws_sdk_dynamodb::
 
 mod upload_outcomes {
     upload_outcome_contract!(super::make);
+}
+
+mod upload_progress {
+    upload_progress_contract!(super::make);
 }
 
 mod conversation_summaries {
@@ -522,4 +529,42 @@ async fn a_name_stored_as_true_or_false_is_an_error() {
         ConversationSummaryStore::get(&table, &alice(), conversation()).await,
         &["`name`", "should be a string", "is a true/false value"],
     );
+}
+
+/// A progress row whose fields have the wrong types, as only another program
+/// could write it, is an error naming the field (plan
+/// `2026-10-02-upload-processing-failures.md` §3).
+#[tokio::test]
+async fn a_progress_row_with_badly_typed_fields_is_an_error_naming_the_field() {
+    let (store, raw, table) = make_with_raw_client().await;
+    let user = UserId("alice".to_string());
+    for (n, field, value) in [
+        (1u128, "attempts", AttributeValue::S("two".to_string())),
+        (2u128, "last_error", AttributeValue::N("5".to_string())),
+    ] {
+        let upload = UploadId(uuid::Uuid::from_u128(n));
+        raw.put_item()
+            .table_name(&table)
+            .item("pk", AttributeValue::S("alice".to_string()))
+            .item("sk", AttributeValue::S(format!("PROGRESS#{}", upload.0)))
+            .item(field, value)
+            .send()
+            .await
+            .unwrap();
+        let err = store.get_progress(&user, upload).await.unwrap_err();
+        assert!(err.to_string().contains(field), "{err}");
+    }
+}
+
+#[tokio::test]
+async fn progress_methods_report_a_missing_table_as_a_backend_error() {
+    let client = dynamodb_local::client();
+    let store = DynamoConversationsTable::new(client, "no-such-table");
+    let (user, upload) = (UserId("alice".to_string()), UploadId(uuid::Uuid::from_u128(1)));
+    assert!(matches!(store.record_attempt(&user, upload).await, Err(StoreError::Backend(_))));
+    assert!(matches!(
+        store.record_attempt_error(&user, upload, "x".to_string()).await,
+        Err(StoreError::Backend(_))
+    ));
+    assert!(matches!(store.get_progress(&user, upload).await, Err(StoreError::Backend(_))));
 }
