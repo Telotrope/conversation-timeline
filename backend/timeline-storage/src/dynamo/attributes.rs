@@ -143,3 +143,15 @@ pub(crate) fn optional_bool(item: &Item, name: &str) -> Result<Option<bool>, Sto
             .map_err(|found| wrong_type(item, name, "a true/false value", found)),
     }
 }
+
+/// `None` when absent, as for `optional_bool`. Present but not a string is
+/// an error.
+pub(crate) fn optional_string<'a>(item: &'a Item, name: &str) -> Result<Option<&'a str>, StoreError> {
+    match item.get(name) {
+        None => Ok(None),
+        Some(value) => value
+            .as_s()
+            .map(|s| Some(s.as_str()))
+            .map_err(|found| wrong_type(item, name, "a string", found)),
+    }
+}

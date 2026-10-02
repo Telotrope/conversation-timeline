@@ -1,9 +1,11 @@
-//! Tracks the terminal outcome of one upload's processing. Per the
-//! migration plan's §V2a-revision, nothing is written before processing
-//! finishes -- there is no persisted `Pending`/`Processing` state, because
-//! nothing currently reads one (`POST /uploads` never touches this store at
-//! all): a client that needs a "still processing…" indicator can poll
-//! `get_outcome` and treat `None` as "not done yet." Backed by the
+//! Tracks the terminal outcome of one upload's processing, and on AWS how
+//! many attempts it has taken so far ([`UploadProgress`]). The outcome is
+//! written once, when processing finishes; `None` from `get_outcome` means
+//! "not done yet". Progress was added on 2026-10-02 so the page can show a
+//! retry instead of a silent wait (plan
+//! `2026-10-02-upload-processing-failures.md` §3); before that, per the
+//! migration plan's §V2a-revision, nothing read an in-progress state, so
+//! none was stored. `POST /uploads` still never touches this store. Backed by the
 //! `Conversations` DynamoDB table from the migration plan §1.3 -- an
 //! upload's own outcome row and the per-conversation summary rows it
 //! eventually produces share that table, distinguished by sort key in the
@@ -55,6 +57,16 @@ pub enum UploadOutcome {
     },
 }
 
+/// How far processing has got on AWS before an outcome exists (plan
+/// `2026-10-02-upload-processing-failures.md` §3): how many attempts have
+/// started, and the last one's error if an attempt failed. Only the
+/// S3-triggered path records this; the local server processes in one go.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UploadProgress {
+    pub attempts: usize,
+    pub last_error: Option<String>,
+}
+
 #[async_trait]
 pub trait UploadOutcomeStore: Send + Sync {
     /// Written once, when processing finishes -- there is no earlier,
@@ -74,4 +86,25 @@ pub trait UploadOutcomeStore: Send + Sync {
         user_id: &UserId,
         upload_id: UploadId,
     ) -> Result<Option<UploadOutcome>, StoreError>;
+
+    /// Counts one more processing attempt and returns its number, from 1.
+    /// Kept apart from the outcome, which replaces nothing here.
+    async fn record_attempt(&self, user_id: &UserId, upload_id: UploadId)
+        -> Result<usize, StoreError>;
+
+    /// Records why the latest attempt failed. Later attempts keep it until
+    /// they fail with another error.
+    async fn record_attempt_error(
+        &self,
+        user_id: &UserId,
+        upload_id: UploadId,
+        error: String,
+    ) -> Result<(), StoreError>;
+
+    /// `None` until the first attempt starts.
+    async fn get_progress(
+        &self,
+        user_id: &UserId,
+        upload_id: UploadId,
+    ) -> Result<Option<UploadProgress>, StoreError>;
 }
