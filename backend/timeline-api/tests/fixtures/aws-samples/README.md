@@ -19,9 +19,9 @@ role ID in `userIdentity`, both AWS request IDs, `configurationId`, the user and
 key, and the eTag (now the checksum of an empty file). Kept as AWS sent it: field order, region,
 event name and version (`2.6`), the `awsGeneratedTags` block, time, size, `sequencer`, stack name.
 
-**One value AWS did not send:** `sourceIPAddress` is `192.0.2.1`, an address set aside for
-documentation. The logged line had it already replaced with `REDACTED`; the redaction test needs an
-address to remove.
+**One value AWS did not send:** `sourceIPAddress` is `127.0.0.1`, the address the library's sample
+used. The logged line had it already replaced with `REDACTED`; the redaction test
+(`tests/s3_event_logging.rs`) needs an address to remove, and checks for this one.
 
 The tests change only the bucket name and object key.
 

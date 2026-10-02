@@ -7,7 +7,7 @@
       "eventTime": "2026-10-02T20:01:37.726Z",
       "eventVersion": "2.6",
       "requestParameters": {
-        "sourceIPAddress": "192.0.2.1"
+        "sourceIPAddress": "127.0.0.1"
       },
       "responseElements": {
         "x-amz-id-2": "EXAMPLE-AMZ-ID-2",
