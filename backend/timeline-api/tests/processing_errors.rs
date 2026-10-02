@@ -32,7 +32,11 @@ fn export() -> String {
                 "content": [{{"type": "text", "text": "hi"}}]}}]}}"#
         )
     };
-    format!("[{}, {}]", conversation(CONV_A, MSG_A), conversation(CONV_B, MSG_B))
+    format!(
+        "[{}, {}]",
+        conversation(CONV_A, MSG_A),
+        conversation(CONV_B, MSG_B)
+    )
 }
 
 /// Saves through to a real in-memory store until the `fail_at`th call
@@ -45,7 +49,11 @@ struct FailingAt<T> {
 
 impl<T> FailingAt<T> {
     fn new(inner: T, fail_at: usize) -> Self {
-        Self { inner, fail_at, calls: std::sync::Mutex::new(0) }
+        Self {
+            inner,
+            fail_at,
+            calls: std::sync::Mutex::new(0),
+        }
     }
 
     fn this_call_fails(&self) -> bool {
@@ -67,13 +75,18 @@ impl UserFlagWriter for FailingAt<InMemoryMessageFlagsStore> {
         if self.this_call_fails() {
             return Err(StoreError::NotFound);
         }
-        self.inner.set_user_flags(user_id, conversation_id, message_id, overrides).await
+        self.inner
+            .set_user_flags(user_id, conversation_id, message_id, overrides)
+            .await
     }
 }
 
 #[async_trait]
 impl ConversationSummaryStore for FailingAt<InMemoryConversationSummaryStore> {
-    async fn list_for_user(&self, user_id: &UserId) -> Result<Vec<ConversationSummary>, StoreError> {
+    async fn list_for_user(
+        &self,
+        user_id: &UserId,
+    ) -> Result<Vec<ConversationSummary>, StoreError> {
         self.inner.list_for_user(user_id).await
     }
 
@@ -104,9 +117,16 @@ async fn run(
         .put(&raw_object_key(&user_id, upload_id), export().into_bytes())
         .await
         .unwrap();
-    process_upload(&objects, &InMemoryUploadOutcomeStore::new(), summaries, flags, &user_id, upload_id)
-        .await
-        .unwrap_err()
+    process_upload(
+        &objects,
+        &InMemoryUploadOutcomeStore::new(),
+        summaries,
+        flags,
+        &user_id,
+        upload_id,
+    )
+    .await
+    .unwrap_err()
 }
 
 #[tokio::test]
@@ -114,7 +134,17 @@ async fn a_failed_review_save_names_the_review_its_number_and_the_total() {
     let flags = FailingAt::new(InMemoryMessageFlagsStore::new(), 2);
     let err = run(&flags, &InMemoryConversationSummaryStore::new()).await;
 
-    assert!(matches!(err, ProcessingError::SavingReview { number: 2, total: 2, .. }), "{err:?}");
+    assert!(
+        matches!(
+            err,
+            ProcessingError::SavingReview {
+                number: 2,
+                total: 2,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
     assert_eq!(
         err.to_string(),
         format!("saving review 2 of 2 (conversation {CONV_B}, message {MSG_B}): item not found")

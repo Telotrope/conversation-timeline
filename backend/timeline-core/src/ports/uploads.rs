@@ -89,8 +89,11 @@ pub trait UploadOutcomeStore: Send + Sync {
 
     /// Counts one more processing attempt and returns its number, from 1.
     /// Kept apart from the outcome, which replaces nothing here.
-    async fn record_attempt(&self, user_id: &UserId, upload_id: UploadId)
-        -> Result<usize, StoreError>;
+    async fn record_attempt(
+        &self,
+        user_id: &UserId,
+        upload_id: UploadId,
+    ) -> Result<usize, StoreError>;
 
     /// Records why the latest attempt failed. Later attempts keep it until
     /// they fail with another error.

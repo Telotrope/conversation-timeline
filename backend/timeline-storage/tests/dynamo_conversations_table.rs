@@ -560,11 +560,22 @@ async fn a_progress_row_with_badly_typed_fields_is_an_error_naming_the_field() {
 async fn progress_methods_report_a_missing_table_as_a_backend_error() {
     let client = dynamodb_local::client();
     let store = DynamoConversationsTable::new(client, "no-such-table");
-    let (user, upload) = (UserId("alice".to_string()), UploadId(uuid::Uuid::from_u128(1)));
-    assert!(matches!(store.record_attempt(&user, upload).await, Err(StoreError::Backend(_))));
+    let (user, upload) = (
+        UserId("alice".to_string()),
+        UploadId(uuid::Uuid::from_u128(1)),
+    );
     assert!(matches!(
-        store.record_attempt_error(&user, upload, "x".to_string()).await,
+        store.record_attempt(&user, upload).await,
         Err(StoreError::Backend(_))
     ));
-    assert!(matches!(store.get_progress(&user, upload).await, Err(StoreError::Backend(_))));
+    assert!(matches!(
+        store
+            .record_attempt_error(&user, upload, "x".to_string())
+            .await,
+        Err(StoreError::Backend(_))
+    ));
+    assert!(matches!(
+        store.get_progress(&user, upload).await,
+        Err(StoreError::Backend(_))
+    ));
 }

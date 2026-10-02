@@ -44,13 +44,23 @@ async fn processing_reports_the_attempt_and_the_last_error_until_an_outcome_exis
 
     // An error recorded before any attempt counted is shown, with no
     // attempt number.
-    table.record_attempt_error(&user, upload, "early".to_string()).await.unwrap();
-    assert_eq!(status().await, json!({"status": "processing", "last_error": "early"}));
+    table
+        .record_attempt_error(&user, upload, "early".to_string())
+        .await
+        .unwrap();
+    assert_eq!(
+        status().await,
+        json!({"status": "processing", "last_error": "early"})
+    );
 
     table.record_attempt(&user, upload).await.unwrap();
     table.record_attempt(&user, upload).await.unwrap();
     table
-        .record_attempt_error(&user, upload, "saving review 2 of 5: item not found".to_string())
+        .record_attempt_error(
+            &user,
+            upload,
+            "saving review 2 of 5: item not found".to_string(),
+        )
         .await
         .unwrap();
     assert_eq!(
@@ -65,7 +75,13 @@ async fn processing_reports_the_attempt_and_the_last_error_until_an_outcome_exis
 
     // The outcome wins over any progress.
     table
-        .record_outcome(&user, upload, UploadOutcome::Ready { conversation_ids: vec![] })
+        .record_outcome(
+            &user,
+            upload,
+            UploadOutcome::Ready {
+                conversation_ids: vec![],
+            },
+        )
         .await
         .unwrap();
     assert_eq!(status().await, json!({"status": "ready"}));

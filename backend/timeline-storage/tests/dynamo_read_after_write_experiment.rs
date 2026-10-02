@@ -101,7 +101,11 @@ async fn reads_straight_after_a_write_on_the_real_table() {
             .send()
             .await;
         let read_time = started.elapsed();
-        let tally = if consistent { &mut consistent_read } else { &mut default_read };
+        let tally = if consistent {
+            &mut consistent_read
+        } else {
+            &mut default_read
+        };
         tally.write_times.push(write_time);
         tally.read_times.push(read_time);
         match read {
@@ -109,7 +113,10 @@ async fn reads_straight_after_a_write_on_the_real_table() {
                 tally.reads += 1;
                 if output.item.is_none() {
                     tally.misses += 1;
-                    println!("row {i} ({}): missed", if consistent { "consistent" } else { "default" });
+                    println!(
+                        "row {i} ({}): missed",
+                        if consistent { "consistent" } else { "default" }
+                    );
                 }
             }
             Err(e) => {
@@ -139,7 +146,11 @@ async fn reads_straight_after_a_write_on_the_real_table() {
             delete_failures.push(format!("{sk}: {e:?}"));
         }
     }
-    println!("deleted {} of {} rows", written.len() - delete_failures.len(), written.len());
+    println!(
+        "deleted {} of {} rows",
+        written.len() - delete_failures.len(),
+        written.len()
+    );
 
     assert!(first_error.is_none(), "{}", first_error.unwrap_or_default());
     assert!(

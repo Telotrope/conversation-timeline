@@ -18,10 +18,7 @@ async fn main() -> Result<(), lambda_runtime::Error> {
     let table = std::env::var("TIMELINE_CONVERSATIONS_TABLE")
         .unwrap_or_else(|e| panic!("cannot start: TIMELINE_CONVERSATIONS_TABLE: {e}"));
     let sdk_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
-    let store = DynamoConversationsTable::new(
-        aws_sdk_dynamodb::Client::new(&sdk_config),
-        table,
-    );
+    let store = DynamoConversationsTable::new(aws_sdk_dynamodb::Client::new(&sdk_config), table);
     let store = &store;
     lambda_runtime::run(service_fn(move |event: LambdaEvent<Value>| async move {
         handle_failed_invocation(event.payload, store)

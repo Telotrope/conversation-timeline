@@ -65,7 +65,10 @@ pub fn build_aws_state(
 
 /// The upload-processing Lambda's stores: the same S3 and DynamoDB adapters
 /// as the API Lambda, without any login checks (migration plan §V2e, E2).
-pub fn build_processing_stores(settings: &StorageSettings, clients: AwsClients) -> ProcessingStores {
+pub fn build_processing_stores(
+    settings: &StorageSettings,
+    clients: AwsClients,
+) -> ProcessingStores {
     let conversations = Arc::new(DynamoConversationsTable::new(
         clients.dynamodb.clone(),
         settings.conversations_table.as_str(),
@@ -92,7 +95,11 @@ pub struct JwksError {
 
 impl std::fmt::Display for JwksError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "could not load Cognito's signing keys from {}: {}", self.url, self.reason)
+        write!(
+            f,
+            "could not load Cognito's signing keys from {}: {}",
+            self.url, self.reason
+        )
     }
 }
 

@@ -55,6 +55,5 @@ pub trait ConversationSummaryStore: Send + Sync {
     /// Writes (upserts) one conversation's summary — called once per
     /// conversation by the upload-processing pipeline, never by a
     /// user-facing route.
-    async fn put(&self, user_id: &UserId, summary: ConversationSummary)
-        -> Result<(), StoreError>;
+    async fn put(&self, user_id: &UserId, summary: ConversationSummary) -> Result<(), StoreError>;
 }

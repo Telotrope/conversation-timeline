@@ -169,7 +169,10 @@ fn one_conversation(uuid: &str, name: &str) -> String {
 #[tokio::test]
 async fn an_upload_has_no_automatic_flags_until_detection_is_asked_for() {
     let router = test_router();
-    let raw = format!("[{}]", one_conversation("11111111-1111-4111-8111-111111111111", "Hi"));
+    let raw = format!(
+        "[{}]",
+        one_conversation("11111111-1111-4111-8111-111111111111", "Hi")
+    );
     let token = upload(&router, &raw).await;
 
     // The whole point of the change: uploading is not consent to run a pass
@@ -186,7 +189,10 @@ async fn an_upload_has_no_automatic_flags_until_detection_is_asked_for() {
 #[tokio::test]
 async fn detection_computes_the_real_heuristic_flags_not_a_hardcoded_stand_in() {
     let router = test_router();
-    let raw = format!("[{}]", one_conversation("11111111-1111-4111-8111-111111111111", "Hi"));
+    let raw = format!(
+        "[{}]",
+        one_conversation("11111111-1111-4111-8111-111111111111", "Hi")
+    );
     let token = upload(&router, &raw).await;
 
     let result = detect(&router, &token, json!({ "offset": 0 })).await;
@@ -202,7 +208,11 @@ async fn detection_computes_the_real_heuristic_flags_not_a_hardcoded_stand_in() 
         .expect("detected human message should carry embedded auto flags");
     // Specific expected values, not merely "a record exists" -- HUMAN_TEXT is
     // chosen to trip exactly these two.
-    assert_eq!(auto["caps"], json!(true), "WRONG should trip the caps heuristic");
+    assert_eq!(
+        auto["caps"],
+        json!(true),
+        "WRONG should trip the caps heuristic"
+    );
     assert_eq!(
         auto["critical"],
         json!(true),
@@ -213,7 +223,10 @@ async fn detection_computes_the_real_heuristic_flags_not_a_hardcoded_stand_in() 
 #[tokio::test]
 async fn detection_never_gives_an_assistant_message_an_auto_flag_record() {
     let router = test_router();
-    let raw = format!("[{}]", one_conversation("11111111-1111-4111-8111-111111111111", "Hi"));
+    let raw = format!(
+        "[{}]",
+        one_conversation("11111111-1111-4111-8111-111111111111", "Hi")
+    );
     let token = upload(&router, &raw).await;
     detect(&router, &token, json!({ "offset": 0 })).await;
 

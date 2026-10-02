@@ -146,7 +146,10 @@ pub(crate) fn optional_bool(item: &Item, name: &str) -> Result<Option<bool>, Sto
 
 /// `None` when absent, as for `optional_bool`. Present but not a string is
 /// an error.
-pub(crate) fn optional_string<'a>(item: &'a Item, name: &str) -> Result<Option<&'a str>, StoreError> {
+pub(crate) fn optional_string<'a>(
+    item: &'a Item,
+    name: &str,
+) -> Result<Option<&'a str>, StoreError> {
     match item.get(name) {
         None => Ok(None),
         Some(value) => value

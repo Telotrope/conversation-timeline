@@ -48,11 +48,21 @@ impl UploadOutcomeStore for InMemoryUploadOutcomeStore {
             .cloned())
     }
 
-    async fn record_attempt(&self, user_id: &UserId, upload_id: UploadId) -> Result<usize, StoreError> {
-        let mut progress = self.progress.lock().expect("in-memory store mutex poisoned");
+    async fn record_attempt(
+        &self,
+        user_id: &UserId,
+        upload_id: UploadId,
+    ) -> Result<usize, StoreError> {
+        let mut progress = self
+            .progress
+            .lock()
+            .expect("in-memory store mutex poisoned");
         let entry = progress
             .entry((user_id.clone(), upload_id))
-            .or_insert(UploadProgress { attempts: 0, last_error: None });
+            .or_insert(UploadProgress {
+                attempts: 0,
+                last_error: None,
+            });
         entry.attempts += 1;
         Ok(entry.attempts)
     }
@@ -63,10 +73,16 @@ impl UploadOutcomeStore for InMemoryUploadOutcomeStore {
         upload_id: UploadId,
         error: String,
     ) -> Result<(), StoreError> {
-        let mut progress = self.progress.lock().expect("in-memory store mutex poisoned");
+        let mut progress = self
+            .progress
+            .lock()
+            .expect("in-memory store mutex poisoned");
         progress
             .entry((user_id.clone(), upload_id))
-            .or_insert(UploadProgress { attempts: 0, last_error: None })
+            .or_insert(UploadProgress {
+                attempts: 0,
+                last_error: None,
+            })
             .last_error = Some(error);
         Ok(())
     }

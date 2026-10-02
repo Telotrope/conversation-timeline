@@ -104,9 +104,7 @@ impl UserFlagWriter for InMemoryMessageFlagsStore {
         if overrides == FlagOverrides::default() {
             return records.get(&key).copied().ok_or(StoreError::NotFound);
         }
-        let record = records
-            .entry(key)
-            .or_insert_with(|| blank(message_id));
+        let record = records.entry(key).or_insert_with(|| blank(message_id));
         if let Some(caps) = overrides.caps {
             record.user.caps = Some(caps);
         }

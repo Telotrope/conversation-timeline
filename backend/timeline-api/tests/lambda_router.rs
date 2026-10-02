@@ -137,7 +137,10 @@ async fn reset_empties_the_stores_it_is_given() {
         .put("raw/alice/thing.json", b"hello".to_vec())
         .await
         .unwrap();
-    assert!(object_store_concrete.get("raw/alice/thing.json").await.is_ok());
+    assert!(object_store_concrete
+        .get("raw/alice/thing.json")
+        .await
+        .is_ok());
 
     let response = router
         .clone()
@@ -153,7 +156,10 @@ async fn reset_empties_the_stores_it_is_given() {
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
     assert!(
-        object_store_concrete.get("raw/alice/thing.json").await.is_err(),
+        object_store_concrete
+            .get("raw/alice/thing.json")
+            .await
+            .is_err(),
         "reset should have discarded the stored object"
     );
 }

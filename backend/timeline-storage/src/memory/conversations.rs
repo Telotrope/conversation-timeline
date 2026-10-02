@@ -60,11 +60,7 @@ impl ConversationSummaryStore for InMemoryConversationSummaryStore {
             .cloned())
     }
 
-    async fn put(
-        &self,
-        user_id: &UserId,
-        summary: ConversationSummary,
-    ) -> Result<(), StoreError> {
+    async fn put(&self, user_id: &UserId, summary: ConversationSummary) -> Result<(), StoreError> {
         self.insert(user_id.clone(), summary);
         Ok(())
     }

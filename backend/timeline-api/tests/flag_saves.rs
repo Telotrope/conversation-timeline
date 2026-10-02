@@ -60,7 +60,13 @@ fn test_router() -> Router {
 }
 
 async fn body_bytes(response: axum::response::Response) -> Vec<u8> {
-    response.into_body().collect().await.unwrap().to_bytes().to_vec()
+    response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes()
+        .to_vec()
 }
 
 async fn body_json(response: axum::response::Response) -> Value {
@@ -110,10 +116,7 @@ async fn upload_and_export(router: &Router, user: &str, raw: &str) -> (String, V
         .body(Body::empty())
         .unwrap();
     let reply_bytes = body_bytes(send(router, export).await).await;
-    eprintln!(
-        "/export reply for {user}: {} bytes",
-        reply_bytes.len()
-    );
+    eprintln!("/export reply for {user}: {} bytes", reply_bytes.len());
     let reply: Value = serde_json::from_slice(&reply_bytes).unwrap();
     let download = Request::builder()
         .uri(reply["export_url"].as_str().unwrap())
@@ -140,11 +143,23 @@ fn human_messages(raw: &str) -> Vec<(String, String)> {
     out
 }
 
-async fn patch(router: &Router, token: &str, conv: &str, msg: &str, body: Value) -> axum::response::Response {
+async fn patch(
+    router: &Router,
+    token: &str,
+    conv: &str,
+    msg: &str,
+    body: Value,
+) -> axum::response::Response {
     patch_raw(router, token, conv, msg, body.to_string()).await
 }
 
-async fn patch_raw(router: &Router, token: &str, conv: &str, msg: &str, body: String) -> axum::response::Response {
+async fn patch_raw(
+    router: &Router,
+    token: &str,
+    conv: &str,
+    msg: &str,
+    body: String,
+) -> axum::response::Response {
     let request = Request::builder()
         .method("PATCH")
         .uri(format!("/conversations/{conv}/messages/{msg}/flags"))
@@ -167,8 +182,14 @@ async fn assert_status_and_error(
     mentions: &str,
 ) {
     assert_eq!(response.status(), status);
-    let error = body_json(response).await["error"].as_str().unwrap().to_string();
-    assert!(error.contains(mentions), "error {error:?} should mention {mentions:?}");
+    let error = body_json(response).await["error"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        error.contains(mentions),
+        "error {error:?} should mention {mentions:?}"
+    );
 }
 
 #[tokio::test]
@@ -206,7 +227,10 @@ async fn the_exported_file_contains_no_handles() {
     assert!(!file.contains("flag_handles"));
     assert!(!file.contains("\"handle\""));
     for handle in reply["flag_handles"].as_object().unwrap().values() {
-        assert!(!file.contains(handle.as_str().unwrap()), "a handle leaked into the file");
+        assert!(
+            !file.contains(handle.as_str().unwrap()),
+            "a handle leaked into the file"
+        );
     }
 }
 
@@ -251,7 +275,14 @@ async fn a_handle_for_a_different_message_is_forbidden() {
     let router = test_router();
     let (token, reply, _) = upload_and_export(&router, "alice", FIXTURE).await;
     let ((conv, msg), (_, other_msg)) = two_messages_in_different_conversations(&reply);
-    let response = patch(&router, &token, &conv, &msg, json!({"caps": true, "handle": handle_of(&reply, &other_msg)})).await;
+    let response = patch(
+        &router,
+        &token,
+        &conv,
+        &msg,
+        json!({"caps": true, "handle": handle_of(&reply, &other_msg)}),
+    )
+    .await;
     assert_status_and_error(response, StatusCode::FORBIDDEN, "does not match").await;
 }
 
@@ -260,7 +291,14 @@ async fn a_real_handle_used_under_a_different_conversation_is_forbidden() {
     let router = test_router();
     let (token, reply, _) = upload_and_export(&router, "alice", FIXTURE).await;
     let ((_, msg), (other_conv, _)) = two_messages_in_different_conversations(&reply);
-    let response = patch(&router, &token, &other_conv, &msg, json!({"caps": true, "handle": handle_of(&reply, &msg)})).await;
+    let response = patch(
+        &router,
+        &token,
+        &other_conv,
+        &msg,
+        json!({"caps": true, "handle": handle_of(&reply, &msg)}),
+    )
+    .await;
     assert_status_and_error(response, StatusCode::FORBIDDEN, "does not match").await;
 }
 
@@ -270,7 +308,14 @@ async fn a_made_up_message_id_is_forbidden_even_with_a_real_handle() {
     let (token, reply, _) = upload_and_export(&router, "alice", FIXTURE).await;
     let ((conv, msg), _) = two_messages_in_different_conversations(&reply);
     let made_up = "99999999-9999-4999-8999-999999999999";
-    let response = patch(&router, &token, &conv, made_up, json!({"caps": true, "handle": handle_of(&reply, &msg)})).await;
+    let response = patch(
+        &router,
+        &token,
+        &conv,
+        made_up,
+        json!({"caps": true, "handle": handle_of(&reply, &msg)}),
+    )
+    .await;
     assert_status_and_error(response, StatusCode::FORBIDDEN, "does not match").await;
 }
 
@@ -282,7 +327,14 @@ async fn another_users_handle_is_forbidden() {
     let ((conv, msg), _) = two_messages_in_different_conversations(&alice_reply);
     // Same conversation and message ids (bob uploaded the same file), but
     // alice's handle: bob can't use it.
-    let response = patch(&router, &bob_token, &conv, &msg, json!({"caps": true, "handle": handle_of(&alice_reply, &msg)})).await;
+    let response = patch(
+        &router,
+        &bob_token,
+        &conv,
+        &msg,
+        json!({"caps": true, "handle": handle_of(&alice_reply, &msg)}),
+    )
+    .await;
     assert_status_and_error(response, StatusCode::FORBIDDEN, "does not match").await;
 }
 
@@ -294,7 +346,14 @@ async fn a_handle_with_one_character_changed_is_forbidden() {
     let mut handle = handle_of(&reply, &msg).to_string();
     let last = handle.pop().unwrap();
     handle.push(if last == 'A' { 'B' } else { 'A' });
-    let response = patch(&router, &token, &conv, &msg, json!({"caps": true, "handle": handle})).await;
+    let response = patch(
+        &router,
+        &token,
+        &conv,
+        &msg,
+        json!({"caps": true, "handle": handle}),
+    )
+    .await;
     assert_status_and_error(response, StatusCode::FORBIDDEN, "does not match").await;
 }
 
@@ -303,7 +362,14 @@ async fn a_handle_that_is_not_base64_is_forbidden_not_a_server_error() {
     let router = test_router();
     let (token, reply, _) = upload_and_export(&router, "alice", FIXTURE).await;
     let ((conv, msg), _) = two_messages_in_different_conversations(&reply);
-    let response = patch(&router, &token, &conv, &msg, json!({"caps": true, "handle": "not base64 at all!"})).await;
+    let response = patch(
+        &router,
+        &token,
+        &conv,
+        &msg,
+        json!({"caps": true, "handle": "not base64 at all!"}),
+    )
+    .await;
     assert_status_and_error(response, StatusCode::FORBIDDEN, "does not match").await;
 }
 
@@ -340,7 +406,14 @@ async fn a_misspelled_field_is_a_bad_request_naming_it() {
     let router = test_router();
     let (token, reply, _) = upload_and_export(&router, "alice", FIXTURE).await;
     let ((conv, msg), _) = two_messages_in_different_conversations(&reply);
-    let response = patch(&router, &token, &conv, &msg, json!({"cap": true, "handle": handle_of(&reply, &msg)})).await;
+    let response = patch(
+        &router,
+        &token,
+        &conv,
+        &msg,
+        json!({"cap": true, "handle": handle_of(&reply, &msg)}),
+    )
+    .await;
     assert_status_and_error(response, StatusCode::BAD_REQUEST, "unknown field `cap`").await;
 }
 
@@ -352,11 +425,21 @@ async fn a_bad_request_message_is_bounded_in_length() {
     let (token, reply, _) = upload_and_export(&router, "alice", FIXTURE).await;
     let ((conv, msg), _) = two_messages_in_different_conversations(&reply);
     let long_field = "x".repeat(5000);
-    let body = format!("{{\"{long_field}\": true, \"handle\": \"{}\"}}", handle_of(&reply, &msg));
+    let body = format!(
+        "{{\"{long_field}\": true, \"handle\": \"{}\"}}",
+        handle_of(&reply, &msg)
+    );
     let response = patch_raw(&router, &token, &conv, &msg, body).await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    let error = body_json(response).await["error"].as_str().unwrap().to_string();
-    assert!(error.chars().count() <= 301, "error is {} characters", error.chars().count());
+    let error = body_json(response).await["error"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        error.chars().count() <= 301,
+        "error is {} characters",
+        error.chars().count()
+    );
     assert!(error.ends_with('…'));
 }
 
@@ -373,7 +456,9 @@ fn a_missing_key_is_refused_with_the_variable_named() {
 
 #[test]
 fn a_short_key_is_refused_with_its_length() {
-    let err = FlagHandleKey::from_env_value(Some("too-short")).err().unwrap();
+    let err = FlagHandleKey::from_env_value(Some("too-short"))
+        .err()
+        .unwrap();
     assert_eq!(err, FlagHandleKeyError::TooShort { bytes: 9 });
     assert!(err.to_string().contains(KEY_ENV_VAR));
     assert!(err.to_string().contains("at least 32"));

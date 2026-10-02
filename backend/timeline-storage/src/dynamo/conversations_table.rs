@@ -135,7 +135,11 @@ impl UploadOutcomeStore for DynamoConversationsTable {
             .transpose()
     }
 
-    async fn record_attempt(&self, user_id: &UserId, upload_id: UploadId) -> Result<usize, StoreError> {
+    async fn record_attempt(
+        &self,
+        user_id: &UserId,
+        upload_id: UploadId,
+    ) -> Result<usize, StoreError> {
         // ADD is applied by DynamoDB itself, so two attempts can't both read
         // the old count; the new count comes back in the same reply, with
         // no separate read to miss it (plan §0b).

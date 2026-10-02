@@ -93,7 +93,10 @@ pub async fn run(client: &Client, table: &str, rows: usize) -> Report {
             .await;
         let write_time = started.elapsed();
         if let Err(e) = write {
-            error = Some(format!("row {i}: write failed: {}", DisplayErrorContext(&e)));
+            error = Some(format!(
+                "row {i}: write failed: {}",
+                DisplayErrorContext(&e)
+            ));
             break;
         }
         written.push(sk.clone());

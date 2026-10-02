@@ -24,7 +24,10 @@ macro_rules! upload_progress_contract {
         #[tokio::test]
         async fn progress_before_any_attempt_is_none() {
             let (store, _keep) = $make().await;
-            let got = store.get_progress(&progress_user("alice"), progress_upload(1)).await.unwrap();
+            let got = store
+                .get_progress(&progress_user("alice"), progress_upload(1))
+                .await
+                .unwrap();
             assert_eq!(got, None);
         }
 
@@ -36,7 +39,10 @@ macro_rules! upload_progress_contract {
             assert_eq!(store.record_attempt(&user, upload).await.unwrap(), 2);
             assert_eq!(
                 store.get_progress(&user, upload).await.unwrap(),
-                Some(UploadProgress { attempts: 2, last_error: None })
+                Some(UploadProgress {
+                    attempts: 2,
+                    last_error: None
+                })
             );
         }
 
@@ -45,15 +51,30 @@ macro_rules! upload_progress_contract {
             let (store, _keep) = $make().await;
             let (user, upload) = (progress_user("alice"), progress_upload(1));
             store.record_attempt(&user, upload).await.unwrap();
-            store.record_attempt_error(&user, upload, "first".to_string()).await.unwrap();
+            store
+                .record_attempt_error(&user, upload, "first".to_string())
+                .await
+                .unwrap();
             store.record_attempt(&user, upload).await.unwrap();
             assert_eq!(
                 store.get_progress(&user, upload).await.unwrap(),
-                Some(UploadProgress { attempts: 2, last_error: Some("first".to_string()) })
+                Some(UploadProgress {
+                    attempts: 2,
+                    last_error: Some("first".to_string())
+                })
             );
-            store.record_attempt_error(&user, upload, "second".to_string()).await.unwrap();
+            store
+                .record_attempt_error(&user, upload, "second".to_string())
+                .await
+                .unwrap();
             assert_eq!(
-                store.get_progress(&user, upload).await.unwrap().unwrap().last_error.as_deref(),
+                store
+                    .get_progress(&user, upload)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .last_error
+                    .as_deref(),
                 Some("second")
             );
         }
@@ -62,10 +83,16 @@ macro_rules! upload_progress_contract {
         async fn an_error_recorded_before_any_attempt_reads_as_zero_attempts() {
             let (store, _keep) = $make().await;
             let (user, upload) = (progress_user("alice"), progress_upload(1));
-            store.record_attempt_error(&user, upload, "early".to_string()).await.unwrap();
+            store
+                .record_attempt_error(&user, upload, "early".to_string())
+                .await
+                .unwrap();
             assert_eq!(
                 store.get_progress(&user, upload).await.unwrap(),
-                Some(UploadProgress { attempts: 0, last_error: Some("early".to_string()) })
+                Some(UploadProgress {
+                    attempts: 0,
+                    last_error: Some("early".to_string())
+                })
             );
         }
 
@@ -73,18 +100,47 @@ macro_rules! upload_progress_contract {
         async fn progress_is_kept_apart_per_user_and_upload_and_from_the_outcome() {
             let (store, _keep) = $make().await;
             let alice = progress_user("alice");
-            store.record_attempt(&alice, progress_upload(1)).await.unwrap();
-            assert_eq!(store.get_progress(&alice, progress_upload(2)).await.unwrap(), None);
-            assert_eq!(store.get_progress(&progress_user("bob"), progress_upload(1)).await.unwrap(), None);
+            store
+                .record_attempt(&alice, progress_upload(1))
+                .await
+                .unwrap();
+            assert_eq!(
+                store
+                    .get_progress(&alice, progress_upload(2))
+                    .await
+                    .unwrap(),
+                None
+            );
+            assert_eq!(
+                store
+                    .get_progress(&progress_user("bob"), progress_upload(1))
+                    .await
+                    .unwrap(),
+                None
+            );
             // An attempt is not an outcome, and an outcome leaves progress alone.
-            assert_eq!(store.get_outcome(&alice, progress_upload(1)).await.unwrap(), None);
+            assert_eq!(
+                store.get_outcome(&alice, progress_upload(1)).await.unwrap(),
+                None
+            );
             let ready = ProgressUploadOutcome::Ready {
                 conversation_ids: vec![ProgressConversationId(uuid::Uuid::from_u128(7))],
             };
-            store.record_outcome(&alice, progress_upload(1), ready.clone()).await.unwrap();
-            assert_eq!(store.get_outcome(&alice, progress_upload(1)).await.unwrap(), Some(ready));
+            store
+                .record_outcome(&alice, progress_upload(1), ready.clone())
+                .await
+                .unwrap();
             assert_eq!(
-                store.get_progress(&alice, progress_upload(1)).await.unwrap().unwrap().attempts,
+                store.get_outcome(&alice, progress_upload(1)).await.unwrap(),
+                Some(ready)
+            );
+            assert_eq!(
+                store
+                    .get_progress(&alice, progress_upload(1))
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .attempts,
                 1
             );
         }

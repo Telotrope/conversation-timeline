@@ -24,8 +24,8 @@ use timeline_core::ports::object_store::ObjectStore;
 use timeline_core::ports::uploads::{raw_object_key, UploadOutcome, UploadOutcomeStore};
 
 use crate::auth_extractor::AuthenticatedUser;
-use crate::s3_trigger::MAX_PROCESSING_ATTEMPTS;
 use crate::error::ApiError;
+use crate::s3_trigger::MAX_PROCESSING_ATTEMPTS;
 
 /// How long the presigned upload URL stays valid -- long enough for a slow
 /// connection to push a large export, short enough not to be a
@@ -76,7 +76,9 @@ pub enum UploadStatusResponse {
         last_error: Option<String>,
     },
     Ready,
-    Failed { reason: String },
+    Failed {
+        reason: String,
+    },
 }
 
 pub async fn upload_status(

@@ -50,7 +50,10 @@ fn full_env() -> HashMap<&'static str, String> {
         ("TIMELINE_UPLOADS_BUCKET", "uploads".to_string()),
         ("TIMELINE_CONVERSATIONS_TABLE", "conversations".to_string()),
         ("TIMELINE_MESSAGE_FLAGS_TABLE", "flags".to_string()),
-        ("TIMELINE_COGNITO_USER_POOL_ID", "us-east-1_TestPool".to_string()),
+        (
+            "TIMELINE_COGNITO_USER_POOL_ID",
+            "us-east-1_TestPool".to_string(),
+        ),
         ("TIMELINE_COGNITO_CLIENT_ID", "test-client".to_string()),
         ("AWS_REGION", "us-east-1".to_string()),
     ])
@@ -82,7 +85,11 @@ fn each_missing_setting_is_named() {
     for name in full_env().keys() {
         let mut env = full_env();
         env.remove(name);
-        assert_eq!(settings_from(&env), Err(MissingSettings(vec![*name])), "{name}");
+        assert_eq!(
+            settings_from(&env),
+            Err(MissingSettings(vec![*name])),
+            "{name}"
+        );
     }
 }
 
@@ -93,7 +100,10 @@ fn an_empty_or_blank_setting_counts_as_missing() {
     env.insert("AWS_REGION", "   ".to_string());
     assert_eq!(
         settings_from(&env),
-        Err(MissingSettings(vec!["TIMELINE_UPLOADS_BUCKET", "AWS_REGION"]))
+        Err(MissingSettings(vec![
+            "TIMELINE_UPLOADS_BUCKET",
+            "AWS_REGION"
+        ]))
     );
 }
 
@@ -179,7 +189,12 @@ fn token(pem: &str, sub: &str, iss: &str, client_id: &str) -> String {
         token_use: "access",
         exp: 9_999_999_999,
     };
-    encode(&header, &claims, &EncodingKey::from_rsa_pem(pem.as_bytes()).unwrap()).unwrap()
+    encode(
+        &header,
+        &claims,
+        &EncodingKey::from_rsa_pem(pem.as_bytes()).unwrap(),
+    )
+    .unwrap()
 }
 
 /// Everything one test needs: the stand-ins, the settings pointing at them,
@@ -244,7 +259,10 @@ impl World {
         let upload_id = UploadId(uuid::Uuid::new_v4());
         self.s3
             .object_store()
-            .put(&raw_object_key(&user_id, upload_id), FIXTURE.as_bytes().to_vec())
+            .put(
+                &raw_object_key(&user_id, upload_id),
+                FIXTURE.as_bytes().to_vec(),
+            )
             .await
             .unwrap();
         let table = DynamoConversationsTable::new(
@@ -276,7 +294,13 @@ impl World {
 async fn call(router: &Router, request: Request<Body>) -> (StatusCode, Vec<u8>) {
     let response = router.clone().oneshot(request).await.unwrap();
     let status = response.status();
-    let bytes = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes()
+        .to_vec();
     (status, bytes)
 }
 
@@ -318,7 +342,11 @@ async fn export_and_a_flag_save_on_one_instance_are_visible_on_another() {
     // The export URL is a presigned S3 address; fetch it as the browser would.
     let export_url = reply["export_url"].as_str().unwrap();
     let file = reqwest::get(export_url).await.unwrap();
-    assert!(file.status().is_success(), "export download: {}", file.status());
+    assert!(
+        file.status().is_success(),
+        "export download: {}",
+        file.status()
+    );
     let exported: Value = file.json().await.unwrap();
     let conversation = &exported["conversations"][0];
     let message = conversation["chat_messages"]
@@ -338,7 +366,9 @@ async fn export_and_a_flag_save_on_one_instance_are_visible_on_another() {
         .uri(format!("/conversations/{conv}/messages/{msg}/flags"))
         .header("Authorization", format!("Bearer {token}"))
         .header("content-type", "application/json")
-        .body(Body::from(json!({"angry": true, "handle": handle}).to_string()))
+        .body(Body::from(
+            json!({"angry": true, "handle": handle}).to_string(),
+        ))
         .unwrap();
     let (status, _) = call(&first, patch).await;
     assert_eq!(status, StatusCode::OK);
@@ -346,7 +376,10 @@ async fn export_and_a_flag_save_on_one_instance_are_visible_on_another() {
     let second = world.lambda_router();
     let (status, body) = call(
         &second,
-        get_with(&token, &format!("/conversations/{conv}/messages/{msg}/flags")),
+        get_with(
+            &token,
+            &format!("/conversations/{conv}/messages/{msg}/flags"),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -372,7 +405,12 @@ async fn a_token_signed_with_the_dev_keys_is_refused() {
 async fn a_token_for_another_client_or_issuer_is_refused() {
     let world = World::new().await;
     let router = world.lambda_router();
-    let other_client = token(&world.pool_pem, "alice", &world.settings.issuer(), "another-client");
+    let other_client = token(
+        &world.pool_pem,
+        "alice",
+        &world.settings.issuer(),
+        "another-client",
+    );
     let (status, _) = call(&router, get_with(&other_client, "/conversations")).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     let other_issuer = token(

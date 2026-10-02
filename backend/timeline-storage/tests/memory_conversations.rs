@@ -1,7 +1,7 @@
 //! Black-box tests for `InMemoryConversationSummaryStore`.
 
 use timeline_core::model::{ConversationId, ConversationName};
-use timeline_core::ports::conversations::{ConversationSummaryStore, ConversationSummary};
+use timeline_core::ports::conversations::{ConversationSummary, ConversationSummaryStore};
 use timeline_core::ports::ids::{UploadId, UserId};
 use timeline_storage::memory::conversations::InMemoryConversationSummaryStore;
 

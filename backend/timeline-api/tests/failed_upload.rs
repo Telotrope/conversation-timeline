@@ -53,11 +53,17 @@ async fn failure_reason(store: &InMemoryUploadOutcomeStore, n: u128) -> String {
 #[tokio::test]
 async fn each_upload_named_is_recorded_as_failed_with_the_attempts_and_the_error() {
     let store = InMemoryUploadOutcomeStore::new();
-    let (a, b) = (raw_object_key(&user(), upload(1)), raw_object_key(&user(), upload(2)));
+    let (a, b) = (
+        raw_object_key(&user(), upload(1)),
+        raw_object_key(&user(), upload(2)),
+    );
 
-    handle_failed_invocation(record_for(&[&a, &b]), &store).await.unwrap();
+    handle_failed_invocation(record_for(&[&a, &b]), &store)
+        .await
+        .unwrap();
 
-    let expected = format!("the server couldn't process the file after 3 attempts: {SAMPLE_MESSAGE}");
+    let expected =
+        format!("the server couldn't process the file after 3 attempts: {SAMPLE_MESSAGE}");
     assert_eq!(failure_reason(&store, 1).await, expected);
     assert_eq!(failure_reason(&store, 2).await, expected);
 }
@@ -66,7 +72,10 @@ async fn each_upload_named_is_recorded_as_failed_with_the_attempts_and_the_error
 async fn without_a_message_the_reason_falls_back_to_the_type_then_the_condition() {
     let key = raw_object_key(&user(), upload(1));
     let cases = [
-        (json!({"errorType": "Runtime.ExitError"}), "Runtime.ExitError"),
+        (
+            json!({"errorType": "Runtime.ExitError"}),
+            "Runtime.ExitError",
+        ),
         (json!({}), "RetriesExhausted"),
         (Value::Null, "RetriesExhausted"),
     ];
@@ -75,7 +84,9 @@ async fn without_a_message_the_reason_falls_back_to_the_type_then_the_condition(
         let mut record = record_for(&[&key]);
         record["responsePayload"] = response;
         handle_failed_invocation(record, &store).await.unwrap();
-        assert!(failure_reason(&store, 1).await.ends_with(&format!(": {expected}")));
+        assert!(failure_reason(&store, 1)
+            .await
+            .ends_with(&format!(": {expected}")));
     }
 
     let store = InMemoryUploadOutcomeStore::new();
@@ -103,54 +114,93 @@ async fn an_unusable_key_is_an_error_naming_it_and_the_other_keys_are_still_reco
     let store = InMemoryUploadOutcomeStore::new();
     let good = raw_object_key(&user(), upload(1));
 
-    let err = handle_failed_invocation(record_for(&["export/alice/x.json", "raw/%FF", &good]), &store)
-        .await
-        .unwrap_err();
+    let err = handle_failed_invocation(
+        record_for(&["export/alice/x.json", "raw/%FF", &good]),
+        &store,
+    )
+    .await
+    .unwrap_err();
 
-    assert!(matches!(&err, FailedUploadError::UnusableKey { key, .. } if key == "export/alice/x.json"));
+    assert!(
+        matches!(&err, FailedUploadError::UnusableKey { key, .. } if key == "export/alice/x.json")
+    );
     assert_eq!(
         err.to_string(),
         "object key \"export/alice/x.json\" is not a raw upload: expected raw/<user>/<upload uuid>.json"
     );
-    assert!(failure_reason(&store, 1).await.starts_with("the server couldn't process"));
+    assert!(failure_reason(&store, 1)
+        .await
+        .starts_with("the server couldn't process"));
 
     // A key that isn't valid once decoded names the raw key.
-    let err = handle_failed_invocation(record_for(&["raw/%FF"]), &store).await.unwrap_err();
-    assert!(matches!(&err, FailedUploadError::UnusableKey { key, .. } if key == "raw/%FF"), "{err}");
+    let err = handle_failed_invocation(record_for(&["raw/%FF"]), &store)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, FailedUploadError::UnusableKey { key, .. } if key == "raw/%FF"),
+        "{err}"
+    );
 }
 
 #[tokio::test]
 async fn input_that_is_not_an_invocation_record_of_an_s3_notification_is_an_error() {
     let store = InMemoryUploadOutcomeStore::new();
 
-    let err = handle_failed_invocation(json!({"Records": []}), &store).await.unwrap_err();
+    let err = handle_failed_invocation(json!({"Records": []}), &store)
+        .await
+        .unwrap_err();
     assert!(matches!(err, FailedUploadError::NotAnInvocationRecord));
-    assert_eq!(err.to_string(), "not a Lambda invocation record: there is no requestPayload");
+    assert_eq!(
+        err.to_string(),
+        "not a Lambda invocation record: there is no requestPayload"
+    );
 
     let err = handle_failed_invocation(json!({"requestPayload": {"Records": 5}}), &store)
         .await
         .unwrap_err();
     assert!(matches!(err, FailedUploadError::UnreadableNotification(_)));
-    assert!(err.to_string().starts_with("requestPayload is not a readable S3 notification: "), "{err}");
+    assert!(
+        err.to_string()
+            .starts_with("requestPayload is not a readable S3 notification: "),
+        "{err}"
+    );
 }
 
 struct OutcomesFail;
 
 #[async_trait]
 impl UploadOutcomeStore for OutcomesFail {
-    async fn record_outcome(&self, _: &UserId, _: UploadId, _: UploadOutcome) -> Result<(), StoreError> {
+    async fn record_outcome(
+        &self,
+        _: &UserId,
+        _: UploadId,
+        _: UploadOutcome,
+    ) -> Result<(), StoreError> {
         Err(StoreError::NotFound)
     }
-    async fn get_outcome(&self, _: &UserId, _: UploadId) -> Result<Option<UploadOutcome>, StoreError> {
+    async fn get_outcome(
+        &self,
+        _: &UserId,
+        _: UploadId,
+    ) -> Result<Option<UploadOutcome>, StoreError> {
         unreachable!("not read by handle_failed_invocation")
     }
     async fn record_attempt(&self, _: &UserId, _: UploadId) -> Result<usize, StoreError> {
         unreachable!("not used by handle_failed_invocation")
     }
-    async fn record_attempt_error(&self, _: &UserId, _: UploadId, _: String) -> Result<(), StoreError> {
+    async fn record_attempt_error(
+        &self,
+        _: &UserId,
+        _: UploadId,
+        _: String,
+    ) -> Result<(), StoreError> {
         unreachable!("not used by handle_failed_invocation")
     }
-    async fn get_progress(&self, _: &UserId, _: UploadId) -> Result<Option<UploadProgress>, StoreError> {
+    async fn get_progress(
+        &self,
+        _: &UserId,
+        _: UploadId,
+    ) -> Result<Option<UploadProgress>, StoreError> {
         unreachable!("not used by handle_failed_invocation")
     }
 }
@@ -158,7 +208,12 @@ impl UploadOutcomeStore for OutcomesFail {
 #[tokio::test]
 async fn a_failed_write_is_an_error_naming_the_key() {
     let key = raw_object_key(&user(), upload(1));
-    let err = handle_failed_invocation(record_for(&[&key]), &OutcomesFail).await.unwrap_err();
+    let err = handle_failed_invocation(record_for(&[&key]), &OutcomesFail)
+        .await
+        .unwrap_err();
     assert!(matches!(&err, FailedUploadError::Store { .. }));
-    assert_eq!(err.to_string(), format!("recording {key:?} as failed: item not found"));
+    assert_eq!(
+        err.to_string(),
+        format!("recording {key:?} as failed: item not found")
+    );
 }

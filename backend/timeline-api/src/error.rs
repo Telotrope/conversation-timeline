@@ -51,7 +51,10 @@ const MAX_ECHOED_CHARS: usize = 300;
 
 fn bounded(message: &str) -> String {
     if message.chars().count() > MAX_ECHOED_CHARS {
-        format!("{}…", message.chars().take(MAX_ECHOED_CHARS).collect::<String>())
+        format!(
+            "{}…",
+            message.chars().take(MAX_ECHOED_CHARS).collect::<String>()
+        )
     } else {
         message.to_string()
     }
@@ -94,7 +97,10 @@ impl IntoResponse for ApiError {
             }
             ApiError::Internal(e) => {
                 eprintln!("internal error: {e}");
-                (StatusCode::INTERNAL_SERVER_ERROR, "internal error".to_string())
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal error".to_string(),
+                )
             }
         };
         (status, Json(ErrorBody { error: message })).into_response()

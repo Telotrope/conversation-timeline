@@ -176,7 +176,9 @@ async fn patch_then_get_flags_round_trips_through_real_http_requests() {
         .uri(format!("/conversations/{conv}/messages/{msg}/flags"))
         .header("Authorization", format!("Bearer {token}"))
         .header("Content-Type", "application/json")
-        .body(Body::from(json!({"caps": true, "handle": handle}).to_string()))
+        .body(Body::from(
+            json!({"caps": true, "handle": handle}).to_string(),
+        ))
         .unwrap();
     let patch_response = router.clone().oneshot(patch_request).await.unwrap();
     assert_eq!(patch_response.status(), StatusCode::OK);

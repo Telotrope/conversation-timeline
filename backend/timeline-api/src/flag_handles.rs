@@ -60,7 +60,10 @@ impl std::fmt::Display for FlagHandleKeyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FlagHandleKeyError::Missing => {
-                write!(f, "{KEY_ENV_VAR} is not set; the flag-handle key is required")
+                write!(
+                    f,
+                    "{KEY_ENV_VAR} is not set; the flag-handle key is required"
+                )
             }
             FlagHandleKeyError::TooShort { bytes } => write!(
                 f,
@@ -96,8 +99,14 @@ impl FlagHandleKey {
         })
     }
 
-    fn mac_for(&self, user_id: &UserId, conversation_id: ConversationId, message_id: MessageId) -> HmacSha256 {
-        let mut mac = HmacSha256::new_from_slice(&self.bytes).expect("HMAC accepts keys of any length");
+    fn mac_for(
+        &self,
+        user_id: &UserId,
+        conversation_id: ConversationId,
+        message_id: MessageId,
+    ) -> HmacSha256 {
+        let mut mac =
+            HmacSha256::new_from_slice(&self.bytes).expect("HMAC accepts keys of any length");
         mac.update(LABEL);
         // Each field is preceded by its length, so two different id
         // combinations can never produce the same signed bytes -- even if a
@@ -113,8 +122,16 @@ impl FlagHandleKey {
         mac
     }
 
-    pub fn handle_for(&self, user_id: &UserId, conversation_id: ConversationId, message_id: MessageId) -> FlagHandle {
-        let tag = self.mac_for(user_id, conversation_id, message_id).finalize().into_bytes();
+    pub fn handle_for(
+        &self,
+        user_id: &UserId,
+        conversation_id: ConversationId,
+        message_id: MessageId,
+    ) -> FlagHandle {
+        let tag = self
+            .mac_for(user_id, conversation_id, message_id)
+            .finalize()
+            .into_bytes();
         FlagHandle(URL_SAFE_NO_PAD.encode(tag))
     }
 

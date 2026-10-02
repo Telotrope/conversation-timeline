@@ -29,7 +29,10 @@ fn block(name: &str) -> String {
 #[test]
 fn the_retry_count_matches_the_attempts_the_page_shows() {
     let retries = format!("MaximumRetryAttempts: {}", MAX_PROCESSING_ATTEMPTS - 1);
-    assert!(block("ProcessUploadFunction").contains(&retries), "expected {retries}");
+    assert!(
+        block("ProcessUploadFunction").contains(&retries),
+        "expected {retries}"
+    );
 }
 
 #[test]
@@ -38,7 +41,9 @@ fn a_failure_after_the_last_retry_goes_to_the_function_that_records_it() {
     assert!(processing.contains(
         "OnFailure:\n            Type: Lambda\n            Destination: !GetAtt RecordFailedUploadFunction.Arn"
     ));
-    assert!(processing.contains("- LambdaInvokePolicy:\n            FunctionName: !Ref RecordFailedUploadFunction"));
+    assert!(processing.contains(
+        "- LambdaInvokePolicy:\n            FunctionName: !Ref RecordFailedUploadFunction"
+    ));
 }
 
 #[test]

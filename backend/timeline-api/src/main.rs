@@ -88,7 +88,11 @@ fn build_local_state(flag_handle_key: FlagHandleKey) -> (AppState, DevState) {
         user_flag_writer: flags_store.clone(),
         auto_flag_writer: flags_store.clone(),
         upload_outcome_store: upload_outcome_store.clone(),
-        verifier: Arc::new(CognitoVerifier::new(jwks.clone(), DEV_ONLY_ISSUER, DEV_ONLY_CLIENT_ID)),
+        verifier: Arc::new(CognitoVerifier::new(
+            jwks.clone(),
+            DEV_ONLY_ISSUER,
+            DEV_ONLY_CLIENT_ID,
+        )),
         flag_handle_key: Arc::new(flag_handle_key),
     };
     let dev_state = DevState {

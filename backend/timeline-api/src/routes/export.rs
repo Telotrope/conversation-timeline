@@ -123,7 +123,9 @@ pub async fn export(
         .map_err(|e| integrity_error("failed to serialize the export payload", e))?;
     let export_key = format!("export/{user_id}/{}.json", uuid::Uuid::new_v4());
     object_store.put(&export_key, export_bytes).await?;
-    let export_url = object_store.presign_get(&export_key, EXPORT_URL_TTL).await?;
+    let export_url = object_store
+        .presign_get(&export_key, EXPORT_URL_TTL)
+        .await?;
 
     Ok(Json(ExportResponse {
         export_url,

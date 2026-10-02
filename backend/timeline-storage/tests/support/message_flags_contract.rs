@@ -269,13 +269,22 @@ macro_rules! message_flags_contract {
         /// Both stores must agree here: an empty update on a message with no
         /// record is NotFound and creates nothing (migration plan §V2c).
         #[tokio::test]
-        async fn an_empty_user_update_on_a_message_with_no_record_is_not_found_and_creates_nothing() {
+        async fn an_empty_user_update_on_a_message_with_no_record_is_not_found_and_creates_nothing()
+        {
             let (store, _keep) = $make().await;
             let result = store
-                .set_user_flags(&flags_user(), flags_conv(), flags_msg(), FlagsOverrides::default())
+                .set_user_flags(
+                    &flags_user(),
+                    flags_conv(),
+                    flags_msg(),
+                    FlagsOverrides::default(),
+                )
                 .await;
             assert!(
-                matches!(result, Err(timeline_core::ports::errors::StoreError::NotFound)),
+                matches!(
+                    result,
+                    Err(timeline_core::ports::errors::StoreError::NotFound)
+                ),
                 "expected NotFound, got {result:?}"
             );
             let got = FlagsReader::get(&store, &flags_user(), flags_conv(), flags_msg())

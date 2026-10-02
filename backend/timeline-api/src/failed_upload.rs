@@ -30,14 +30,20 @@ pub enum FailedUploadError {
     /// A record's object key isn't a raw upload's.
     UnusableKey { key: String, reason: String },
     /// Writing the outcome failed.
-    Store { key: String, error: timeline_core::ports::errors::StoreError },
+    Store {
+        key: String,
+        error: timeline_core::ports::errors::StoreError,
+    },
 }
 
 impl fmt::Display for FailedUploadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             FailedUploadError::NotAnInvocationRecord => {
-                write!(f, "not a Lambda invocation record: there is no requestPayload")
+                write!(
+                    f,
+                    "not a Lambda invocation record: there is no requestPayload"
+                )
             }
             FailedUploadError::UnreadableNotification(e) => {
                 write!(f, "requestPayload is not a readable S3 notification: {e}")
@@ -98,7 +104,13 @@ pub async fn handle_failed_invocation(
                     reason: "expected raw/<user>/<upload uuid>.json".to_string(),
                 })?;
             store
-                .record_outcome(&user_id, upload_id, UploadOutcome::Failed { reason: reason.clone() })
+                .record_outcome(
+                    &user_id,
+                    upload_id,
+                    UploadOutcome::Failed {
+                        reason: reason.clone(),
+                    },
+                )
                 .await
                 .map_err(|error| FailedUploadError::Store { key, error })
         }

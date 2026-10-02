@@ -11,14 +11,16 @@
 //! presigned-URL PUT lands the bytes before anything ever calls this
 //! function.
 
+use timeline_api::processing::{process_upload, ProcessingError};
 use timeline_core::model::{ConversationId, MessageId};
 use timeline_core::ports::conversations::ConversationSummaryStore;
 use timeline_core::ports::errors::ObjectStoreError;
 use timeline_core::ports::ids::{UploadId, UserId};
-use timeline_core::ports::message_flags::{AutoFlagWriter, FlagOverrides, FlagSet, MessageFlagsReader};
+use timeline_core::ports::message_flags::{
+    AutoFlagWriter, FlagOverrides, FlagSet, MessageFlagsReader,
+};
 use timeline_core::ports::object_store::ObjectStore;
 use timeline_core::ports::uploads::{raw_object_key, UploadOutcome, UploadOutcomeStore};
-use timeline_api::processing::{process_upload, ProcessingError};
 use timeline_storage::memory::conversations::InMemoryConversationSummaryStore;
 use timeline_storage::memory::message_flags::InMemoryMessageFlagsStore;
 use timeline_storage::memory::object_store::InMemoryObjectStore;
@@ -136,7 +138,11 @@ async fn processing_an_upload_writes_no_automatic_flags() {
     for message_id in [HUMAN_MSG_ID, ASSISTANT_MSG_ID] {
         let record = h
             .flags_store
-            .get(&h.user_id, conversation_id, MessageId(message_id.parse().unwrap()))
+            .get(
+                &h.user_id,
+                conversation_id,
+                MessageId(message_id.parse().unwrap()),
+            )
             .await
             .unwrap();
         assert!(
@@ -222,13 +228,27 @@ async fn reviews_embedded_in_an_upload_are_stored_as_yours() {
     h.run().await.unwrap();
 
     let (conv, human, assistant) = ids();
-    let record = h.flags_store.get(&h.user_id, conv, human).await.unwrap().unwrap();
+    let record = h
+        .flags_store
+        .get(&h.user_id, conv, human)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(
         record.user,
-        FlagOverrides { caps: Some(false), critical: Some(true), angry: Some(false) }
+        FlagOverrides {
+            caps: Some(false),
+            critical: Some(true),
+            angry: Some(false)
+        }
     );
     // Only your own messages carry reviews; one on Claude's is ignored.
-    assert!(h.flags_store.get(&h.user_id, conv, assistant).await.unwrap().is_none());
+    assert!(h
+        .flags_store
+        .get(&h.user_id, conv, assistant)
+        .await
+        .unwrap()
+        .is_none());
 }
 
 #[tokio::test]
@@ -238,7 +258,12 @@ async fn an_empty_review_is_not_stored() {
     h.run().await.unwrap();
 
     let (conv, human, _) = ids();
-    assert!(h.flags_store.get(&h.user_id, conv, human).await.unwrap().is_none());
+    assert!(h
+        .flags_store
+        .get(&h.user_id, conv, human)
+        .await
+        .unwrap()
+        .is_none());
 }
 
 #[tokio::test]
@@ -251,12 +276,33 @@ async fn detection_after_upload_keeps_the_imported_review() {
 
     let (conv, human, _) = ids();
     h.flags_store
-        .set_auto_flags(&h.user_id, conv, human, FlagSet { caps: true, critical: false, angry: true })
+        .set_auto_flags(
+            &h.user_id,
+            conv,
+            human,
+            FlagSet {
+                caps: true,
+                critical: false,
+                angry: true,
+            },
+        )
         .await
         .unwrap();
-    let record = h.flags_store.get(&h.user_id, conv, human).await.unwrap().unwrap();
+    let record = h
+        .flags_store
+        .get(&h.user_id, conv, human)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(record.user.critical, Some(true));
-    assert_eq!(record.auto, FlagSet { caps: true, critical: false, angry: true });
+    assert_eq!(
+        record.auto,
+        FlagSet {
+            caps: true,
+            critical: false,
+            angry: true
+        }
+    );
 }
 
 #[tokio::test]
@@ -264,13 +310,36 @@ async fn an_unreadable_review_fails_the_upload_and_stores_nothing() {
     let raw = upload_with_reviews(r#""yes please""#, "{}");
     let h = Harness::with_raw_bytes(raw.as_bytes()).await;
     let err = h.run().await.unwrap_err();
-    assert!(matches!(err, ProcessingError::ReviewField { .. }), "{err:?}");
+    assert!(
+        matches!(err, ProcessingError::ReviewField { .. }),
+        "{err:?}"
+    );
 
-    let outcome = h.upload_outcome_store.get_outcome(&h.user_id, h.upload_id).await.unwrap().unwrap();
-    let UploadOutcome::Failed { reason } = outcome else { panic!("expected Failed, got {outcome:?}") };
-    assert!(reason.contains(HUMAN_MSG_ID) && reason.contains("_claude_timeline_user"), "{reason}");
+    let outcome = h
+        .upload_outcome_store
+        .get_outcome(&h.user_id, h.upload_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let UploadOutcome::Failed { reason } = outcome else {
+        panic!("expected Failed, got {outcome:?}")
+    };
+    assert!(
+        reason.contains(HUMAN_MSG_ID) && reason.contains("_claude_timeline_user"),
+        "{reason}"
+    );
 
     let (conv, human, _) = ids();
-    assert!(h.flags_store.get(&h.user_id, conv, human).await.unwrap().is_none());
-    assert!(h.conversation_summary_store.list_for_user(&h.user_id).await.unwrap().is_empty());
+    assert!(h
+        .flags_store
+        .get(&h.user_id, conv, human)
+        .await
+        .unwrap()
+        .is_none());
+    assert!(h
+        .conversation_summary_store
+        .list_for_user(&h.user_id)
+        .await
+        .unwrap()
+        .is_empty());
 }
