@@ -70,7 +70,9 @@ If the setting affected coverage, the 2026-10-01 numbers would shift without any
 **Resolution:** step 4 compares per-file coverage with the recorded numbers. See
 [step 4 (line 46)](2026-10-01-smaller-debug-builds.md#L46).
 
-### C3 [OPEN]: Old copies still pile up
+### C3 [OPEN, cross-plan]: Old copies still pile up
 This shrinks each build but doesn't stop Cargo keeping outdated copies; the folder will still grow
 with every change. **Mitigation in plan:** each copy becomes much smaller. **Open:** trigger is the
 build folder passing 15 GB again, at which point a cleanup routine is worth planning.
+**2026-10-02:** the trigger fired (30 GB). Picked up by
+[2026-10-02-automatic-build-cleanup.md](../2026-10-02-automatic-build-cleanup.md).
