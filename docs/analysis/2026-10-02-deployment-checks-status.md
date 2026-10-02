@@ -6,20 +6,20 @@ where each stands on the `dev` stack, as of its last deploy (2026-10-02 16:47 UT
 run as a deliberate check unless the table says so; most evidence comes from the user's own uploads
 through the page, read afterwards from the functions' logs.
 
-**Headline: one check passed (D1), one passed in part (D3), two have partial measurements (D5, D9),
-four have not been run (D2, D4, D6, D7).**
+**Headline (updated 18:54 UTC): three checks passed (D1, D2, D7), two passed in part (D3, D4), two
+have partial measurements (D5, D9), one has not been run (D6).**
 
 ## Status of each check
 
 | Check | What it verifies | Status | Evidence |
 |---|---|---|---|
 | D1 | AWS accepts the template | **Passed** | `sam deploy` succeeded, including the 2026-10-02 deploy adding `RecordFailedUploadFunction` (the user confirmed the change list after Claude checked AWS's reason for each change) |
-| D2 | The browser's pre-flight `OPTIONS` request answered without login, from the allowed address only | **Not run** | The page's requests work from the user's address, which shows the allowed address is accepted; the refusal of other addresses has not been tried |
+| D2 | The browser's pre-flight `OPTIONS` request answered without login, from the allowed address only | **Passed** (Claude, 18:54 UTC) | `curl -X OPTIONS .../conversations` with `Origin: https://dev.tail13dce8.ts.net`: 204 with `access-control-allow-origin: https://dev.tail13dce8.ts.net`, allowed methods `GET,PATCH,POST`, headers `authorization,content-type`. With `Origin: http://example.com` and `http://localhost:8000`: 204 with no `access-control-*` headers, so a browser blocks them. The page's own requests work (earlier uploads) |
 | D3 | Real Cognito login: hosted page, code exchange, command-line script | **Page part passed; script part not run** | The user signs in through Cognito's page and uploads; `scripts/aws-dev-token.sh` has not been run |
-| D4 | The API refuses no token, a bad token, another pool's token | **Not run** | One incidental observation: a request with an expired token was refused with 401 by API Gateway (17:53 UTC) |
+| D4 | The API refuses no token, a bad token, another pool's token | **Two of three parts passed; other pool's token not run** (Claude, 18:54 UTC) | `GET /conversations` with no `Authorization` header, and with `Bearer nonsense`: both 401 `{"message":"Unauthorized"}`. Earlier, an expired token was also refused with 401 (17:53 UTC). No validly signed token from another issuer has been tried |
 | D5 | ~60 MB export processed within memory and time limits; detection pass pages each under 30 s | **Upload part measured; detection not run** | See the measurements below. No upload with the detection checkbox ticked has run on AWS, so the 30-second limit for detection pages is untested |
 | D6 | The flag-handle secret reaches the API | **Not run** | No flag save from the page on AWS has been checked |
-| D7 | Real tables' keys match the tests' assumptions | **Not run as a check** | Uploads complete and the timeline displays with its review flags, which exercises the conversations and flags tables' keys; the DynamoDB console comparison has not been done |
+| D7 | Real tables' keys match the tests' assumptions | **Passed** (Claude, 18:54 UTC) | `aws dynamodb describe-table`: `timeline-conversations-dev` and `timeline-message-flags-dev` both have `pk` (string, HASH) + `sk` (string, RANGE), no secondary indexes, the same layout the test helper creates ([dynamodb_local.rs:166](../../backend/timeline-storage/tests/support/dynamodb_local.rs#L166)). `timeline-users-dev` has `pk` only; no Rust code reads it (a search for its environment variable `TIMELINE_USERS_TABLE` finds only the template), so the tests have nothing to match there. Uploads and review flags also work against the real tables |
 | D9 | Start-up time, including downloading Cognito's keys | **Measured; no pass/fail threshold set** | See below |
 
 ## Measurements (last 24 hours of logs, read 2026-10-02)
