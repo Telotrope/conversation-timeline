@@ -89,8 +89,18 @@ Parameters:
     ConstraintDescription: must be empty or a lowercase domain name, e.g. howangryami.telotrope.ai
     Description: >
       With HostPage on: the domain the page is served at, e.g.
-      howangryami.telotrope.ai. Empty uses CloudFront's own address. Its
-      DNS records are added by hand (the hosting plan's §1a).
+      howangryami.telotrope.ai. Empty uses CloudFront's own address. Needs
+      PageCertificateArn. Its DNS record is added by hand (the hosting
+      plan's §1a).
+  PageCertificateArn:
+    Type: String
+    Default: ""
+    AllowedPattern: '^$|^arn:aws:acm:us-east-1:[0-9]{12}:certificate/[0-9a-f-]+$'
+    ConstraintDescription: must be empty or a Certificate Manager certificate's ARN in us-east-1
+    Description: >
+      With PageDomain: an issued certificate for it, made once by hand in
+      Certificate Manager in us-east-1 (the only region CloudFront accepts),
+      so redeploys and new stacks never make another (the hosting plan's C14).
   AlsoAllowLocalPage:
     Type: String
     Default: "off"
@@ -101,17 +111,21 @@ Parameters:
       production (the hosting plan's C6).
 
 Rules:
-  # CloudFront takes certificates only from us-east-1 (the hosting plan's
-  # §1a), and a domain without hosting would do nothing.
-  PageDomainNeedsHosting:
+  # A domain needs hosting and a certificate, and a certificate needs a
+  # domain (the hosting plan's §1a). PageCertificateArn's pattern keeps the
+  # certificate in us-east-1.
+  PageDomainNeedsHostingAndCertificate:
     RuleCondition: !Not [!Equals [!Ref PageDomain, ""]]
     Assertions:
       - Assert: !Equals [!Ref HostPage, "on"]
         AssertDescription: PageDomain is used only with HostPage on.
-      - Assert: !Equals [!Ref "AWS::Region", us-east-1]
-        AssertDescription: >
-          PageDomain needs the stack in us-east-1, the only region CloudFront
-          accepts certificates from.
+      - Assert: !Not [!Equals [!Ref PageCertificateArn, ""]]
+        AssertDescription: PageDomain needs PageCertificateArn, a certificate for it.
+  PageCertificateNeedsDomain:
+    RuleCondition: !Not [!Equals [!Ref PageCertificateArn, ""]]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref PageDomain, ""]]
+        AssertDescription: PageCertificateArn is used only with PageDomain.
 
 Conditions:
   # The dev stage also allows username-and-password sign-in through the
@@ -121,7 +135,12 @@ Conditions:
   RecordsActivity: !And [!Condition IsDev, !Equals [!Ref RecordActivity, "on"]]
   # The page hosting plan's §1.
   HostingPage: !Equals [!Ref HostPage, "on"]
-  HasPageDomain: !And [!Condition HostingPage, !Not [!Equals [!Ref PageDomain, ""]]]
+  # The rules make PageDomain and PageCertificateArn set together; naming
+  # both here lets cfn-lint see the certificate is never empty when used.
+  HasPageDomain: !And
+    - !Condition HostingPage
+    - !Not [!Equals [!Ref PageDomain, ""]]
+    - !Not [!Equals [!Ref PageCertificateArn, ""]]
   AllowsLocalPage: !And [!Condition HostingPage, !Equals [!Ref AlsoAllowLocalPage, "on"]]
 
 Globals:
@@ -597,15 +616,6 @@ Resources:
           QueryStringsConfig:
             QueryStringBehavior: none
 
-  # Validated by a DNS record added by hand at Porkbun while the deploy
-  # waits (the hosting plan's §1a; deployment check H8).
-  PageCertificate:
-    Type: AWS::CertificateManager::Certificate
-    Condition: HasPageDomain
-    Properties:
-      DomainName: !Ref PageDomain
-      ValidationMethod: DNS
-
   PageDistribution:
     Type: AWS::CloudFront::Distribution
     Condition: HostingPage
@@ -619,7 +629,7 @@ Resources:
         Aliases: !If [HasPageDomain, [!Ref PageDomain], !Ref "AWS::NoValue"]
         ViewerCertificate: !If
           - HasPageDomain
-          - AcmCertificateArn: !Ref PageCertificate
+          - AcmCertificateArn: !Ref PageCertificateArn
             SslSupportMethod: sni-only
             MinimumProtocolVersion: TLSv1.2_2021
           - CloudFrontDefaultCertificate: true
