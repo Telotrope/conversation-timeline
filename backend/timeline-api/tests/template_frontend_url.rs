@@ -2,7 +2,13 @@
 //! address, so a page served under a path (VS Code's forwarding puts it at
 //! `/proxy/8000/timeline.html`) can be Cognito's return address. Cognito
 //! gets the address exactly; CORS on the API and the bucket gets its origin,
-//! cut out of it by one expression written identically in both places.
+//! cut out of it by one expression written identically in every place.
+//!
+//! A stack with `HostPage=on` (docs/plans/2026-10-02-page-hosting.md §1)
+//! accepts the hosted page at `https://<host>/` instead, and `FrontendUrl`
+//! too only with `AlsoAllowLocalPage=on`. CloudFormation has no variables,
+//! so each address list is written out in full in each place; these checks
+//! keep the copies identical.
 //!
 //! Plain text checks, crude in the way the plan's C16 describes. Whether
 //! CloudFormation evaluates the expression as intended is checked only on
@@ -48,28 +54,65 @@ fn the_old_origin_parameter_is_gone() {
     assert!(!TEMPLATE.contains("FrontendOrigin"));
 }
 
+/// The hosted page's address: `PageDomain` when set, otherwise the
+/// distribution's own domain. `HOSTED_ORIGIN` is the same without the `/`.
+const HOSTED_URL: &str = "!Sub [\"https://${Host}/\", {Host: !If [HasPageDomain, !Ref PageDomain, \
+                          !GetAtt PageDistribution.DomainName]}]";
+const HOSTED_ORIGIN: &str =
+    "!Sub [\"https://${Host}\", {Host: !If [HasPageDomain, !Ref PageDomain, \
+                             !GetAtt PageDistribution.DomainName]}]";
+
+/// `key`'s value at `indent` spaces: not hosted, only `local`; hosted, only
+/// `hosted`, plus `local` with `AlsoAllowLocalPage`.
+fn address_list(indent: usize, key: &str, hosted: &str, local: &str) -> String {
+    let pad = " ".repeat(indent);
+    format!(
+        "{pad}{key}: !If\n\
+         {pad}  - HostingPage\n\
+         {pad}  - !If\n\
+         {pad}    - AllowsLocalPage\n\
+         {pad}    - - {hosted}\n\
+         {pad}      - {local}\n\
+         {pad}    - - {hosted}\n\
+         {pad}  - - {local}\n"
+    )
+}
+
+#[test]
+fn hosting_is_off_unless_asked_for() {
+    assert!(block("HostPage").contains("Default: \"off\""));
+    assert!(block("AlsoAllowLocalPage").contains("Default: \"off\""));
+}
+
 #[test]
 fn cognito_returns_to_exactly_the_page_address() {
     let client = block("UserPoolClient");
-    assert!(
-        client.contains("CallbackURLs:\n        - !Ref FrontendUrl\n"),
-        "{client}"
-    );
-    assert!(
-        client.contains("LogoutURLs:\n        - !Ref FrontendUrl\n"),
-        "{client}"
-    );
+    for key in ["CallbackURLs", "LogoutURLs"] {
+        let expected = address_list(6, key, HOSTED_URL, "!Ref FrontendUrl");
+        assert!(
+            client.contains(&expected),
+            "{key}:\n{expected}\nin:\n{client}"
+        );
+    }
 }
 
 #[test]
 fn the_api_and_the_bucket_allow_the_same_origin_cut_from_the_page_address() {
+    let api = address_list(8, "AllowOrigins", HOSTED_ORIGIN, ORIGIN);
+    assert!(block("HttpApi").contains(&api), "API:\n{api}");
+    let bucket = address_list(12, "AllowedOrigins", HOSTED_ORIGIN, ORIGIN);
     assert!(
-        block("HttpApi").contains(&format!("AllowOrigins:\n          - {ORIGIN}\n")),
-        "API"
+        block("RawUploadsBucket").contains(&bucket),
+        "bucket:\n{bucket}"
     );
-    assert!(
-        block("RawUploadsBucket").contains(&format!("AllowedOrigins:\n              - {ORIGIN}\n")),
-        "bucket"
-    );
-    assert_eq!(TEMPLATE.matches(ORIGIN).count(), 2);
+    // Two copies in each of the two lists, and none anywhere else.
+    assert_eq!(TEMPLATE.matches(ORIGIN).count(), 4);
+    assert_eq!(TEMPLATE.matches(HOSTED_ORIGIN).count(), 4);
+}
+
+#[test]
+fn the_hosted_address_is_written_identically_everywhere() {
+    // Two copies in each of Cognito's two lists, plus the PageUrl output.
+    assert_eq!(TEMPLATE.matches(HOSTED_URL).count(), 5);
+    assert!(block("PageUrl").contains(&format!("Value: {HOSTED_URL}")));
 }

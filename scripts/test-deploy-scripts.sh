@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# Tests write-deploy-config.sh and aws-dev-token.sh against a stand-in for
-# the `aws` command, which records what it was asked and answers with
-# canned output. Run manually:
+# Tests write-deploy-config.sh, aws-dev-token.sh and publish-page.sh against
+# a stand-in for the `aws` command, which records what it was asked and
+# answers with canned output. Run manually:
 #
 #   scripts/test-deploy-scripts.sh
 #
@@ -30,6 +30,9 @@ fail() { echo "  FAIL: $1" >&2; failures=$((failures + 1)); }
 # (docs/analysis/2026-10-02-deployment-checks-status.md, check D3). It records
 # the request, the file's path and its permissions, and answers with an error
 # instead of a token while $work/fail-cognito-idp exists.
+#
+# For `s3 sync`, it also keeps a copy of the first folder it is asked to
+# upload (publish-page.sh deletes its own afterward), in $work/synced.
 mkdir -p "$work/bin"
 cat > "$work/bin/aws" <<'STUB'
 #!/usr/bin/env bash
@@ -49,6 +52,9 @@ if [ "$1" = "cognito-idp" ]; then
     echo "aws: [ERROR]: An error occurred (NotAuthorizedException) when calling the InitiateAuth operation: Incorrect username or password." >&2
     exit 254
   fi
+fi
+if [ "$1" = "s3" ] && [ "$2" = "sync" ] && [ ! -e "$STUB_DIR/synced" ]; then
+  cp -r "$3" "$STUB_DIR/synced"
 fi
 cat "$STUB_DIR/answer-$1"
 STUB
@@ -157,6 +163,129 @@ rm "$work/fail-cognito-idp"
 request_file="$(cat "$work/request-path.log" 2>/dev/null || true)"
 [ -n "$request_file" ] && [ ! -e "$request_file" ] && pass "the request file is deleted after a refusal" \
   || fail "the request file was not deleted after a refusal: ${request_file:-(none recorded)}"
+
+echo "publish-page.sh"
+: > "$work/argv.log"
+: > "$work/answer-s3"
+: > "$work/answer-cloudfront"
+page_outputs='[
+  {"OutputKey": "ApiUrl", "OutputValue": "https://abc123.execute-api.us-east-1.amazonaws.com"},
+  {"OutputKey": "UserPoolClientId", "OutputValue": "4hj2k3l4m5n6o7p8q9r0s1t2u3"},
+  {"OutputKey": "CognitoDomain", "OutputValue": "https://timeline-dev-123456789012.auth.us-east-1.amazoncognito.com"},
+  {"OutputKey": "PageUrl", "OutputValue": "https://howangryami.telotrope.ai/"},
+  {"OutputKey": "PageBucketName", "OutputValue": "timeline-page-dev-123456789012"},
+  {"OutputKey": "PageDistributionId", "OutputValue": "E2QWRUHAPOMQZL"},
+  {"OutputKey": "PageDnsTarget", "OutputValue": "d111111abcdef8.cloudfront.net"}
+]'
+
+# A stack deployed without HostPage=on has no page outputs.
+echo '[{"OutputKey": "ApiUrl", "OutputValue": "https://x.example"}]' > "$work/answer-cloudformation"
+if "$REPO_ROOT/scripts/publish-page.sh" dev > "$work/out.txt" 2>&1; then
+  fail "succeeded although the stack has no page outputs"
+else
+  grep -q "deploy it with HostPage=on first" "$work/out.txt" && pass "asks for HostPage=on when the stack isn't hosting" \
+    || fail "did not ask for HostPage=on: $(cat "$work/out.txt")"
+fi
+grep -q "^s3 \|^cloudfront " "$work/argv.log" && fail "uploaded although the stack isn't hosting" \
+  || pass "uploads nothing when the stack isn't hosting"
+
+if "$REPO_ROOT/scripts/publish-page.sh" "../evil" > "$work/out.txt" 2>&1; then
+  fail "accepted a stage name with a path in it"
+else
+  pass "refuses a stage name with a path in it"
+fi
+
+echo "$page_outputs" > "$work/answer-cloudformation"
+: > "$work/argv.log"
+if "$REPO_ROOT/scripts/publish-page.sh" dev > "$work/out.txt" 2>&1; then
+  pass "succeeds with a hosting stack's outputs"
+else
+  fail "failed with a hosting stack's outputs: $(cat "$work/out.txt")"
+fi
+grep -q "Published to https://howangryami.telotrope.ai/" "$work/out.txt" && pass "prints the page's address" \
+  || fail "did not print the page's address: $(cat "$work/out.txt")"
+
+expected="$( (cd "$REPO_ROOT" && { echo index.html; echo frontend/deploy-configs/dev.json;
+  find frontend -name '*.js' -not -path 'frontend/tests/*' -not -path '*/node_modules/*'; find vendor -type f; }) | sort)"
+actual="$( (cd "$work/synced" && find . -type f | sed 's|^\./||') | sort)"
+[ "$expected" = "$actual" ] && pass "uploads exactly the page's files, timeline.html as index.html" \
+  || fail "uploaded a different file list: $(diff <(echo "$expected") <(echo "$actual"))"
+
+python3 - "$REPO_ROOT/timeline.html" "$work/synced/index.html" <<'PY' && pass "index.html is timeline.html plus one tag naming the stage" || fail "index.html is wrong"
+import sys
+source, published = (open(p, encoding="utf-8").read() for p in sys.argv[1:])
+charset = '<meta charset="UTF-8">\n'
+tag = '<meta name="timeline-deploy" content="dev">\n'
+assert published.count('name="timeline-deploy"') == 1, published[:400]
+assert published.replace(tag, "", 1) == source
+assert published.index(tag) == published.index(charset) + len(charset)
+PY
+
+if (cd "$REPO_ROOT/frontend" && node --input-type=module -e "
+  import { parseDeployConfig } from './core/deploy-config.js';
+  import fs from 'node:fs';
+  const c = parseDeployConfig(fs.readFileSync('$work/synced/frontend/deploy-configs/dev.json', 'utf8'));
+  if (c.apiBase !== 'https://abc123.execute-api.us-east-1.amazonaws.com') throw new Error(c.apiBase);
+"); then
+  pass "the uploaded settings file is the stack's, and the page accepts it"
+else
+  fail "the uploaded settings file is wrong: $(cat "$work/synced/frontend/deploy-configs/dev.json")"
+fi
+
+for expect in \
+  "--include \*\.js --content-type text/javascript; charset=utf-8" \
+  "--include \*\.json --content-type application/json" \
+  "--include \*\.html --content-type text/html; charset=utf-8" \
+  "--include \*\.md --include \*/LICENSE --include \*/LICENSE-\* --content-type text/plain; charset=utf-8"; do
+  grep -q -- "^s3 sync .* s3://timeline-page-dev-123456789012 --delete --cache-control no-cache --exclude \* $expect --only-show-errors$" "$work/argv.log" \
+    && pass "syncs with --delete, no-cache and its type: ${expect#--include }" \
+    || fail "no sync for: $expect; got: $(grep '^s3' "$work/argv.log")"
+done
+[ "$(grep -c '^s3 sync' "$work/argv.log")" = 4 ] && pass "syncs four groups, no more" \
+  || fail "sync count: $(grep -c '^s3 sync' "$work/argv.log")"
+grep -q -- "^cloudfront create-invalidation --distribution-id E2QWRUHAPOMQZL --paths /\*$" "$work/argv.log" \
+  && pass "clears the distribution's copies" \
+  || fail "wrong or missing invalidation: $(grep '^cloudfront' "$work/argv.log")"
+[ "$(tail -1 "$work/argv.log" | cut -d' ' -f1)" = cloudfront ] \
+  && pass "clears the copies only after every upload" || fail "the last AWS call was: $(tail -1 "$work/argv.log")"
+
+# The refusals that need a different repository: a copy with one change each.
+fake_repo() {
+  rm -rf "$work/repo" "$work/synced"
+  mkdir -p "$work/repo/scripts" "$work/repo/frontend"
+  cp "$REPO_ROOT/scripts/publish-page.sh" "$REPO_ROOT/scripts/write-deploy-config.sh" "$work/repo/scripts/"
+  cp -r "$REPO_ROOT/timeline.html" "$REPO_ROOT/vendor" "$work/repo/"
+  cp "$REPO_ROOT/frontend/main.js" "$work/repo/frontend/"
+  : > "$work/argv.log"
+}
+fake_repo
+touch "$work/repo/vendor/style.css"
+if "$work/repo/scripts/publish-page.sh" dev > "$work/out.txt" 2>&1; then
+  fail "published a file it has no content type for"
+else
+  grep -q "vendor/style.css" "$work/out.txt" && pass "refuses a file it has no content type for, naming it" \
+    || fail "did not name the untyped file: $(cat "$work/out.txt")"
+fi
+grep -q "^s3 " "$work/argv.log" && fail "uploaded before refusing the untyped file" \
+  || pass "uploads nothing when a file has no content type"
+
+fake_repo
+sed -i 's|<meta charset="UTF-8">|&\n<meta name="timeline-deploy" content="prod">|' "$work/repo/timeline.html"
+if "$work/repo/scripts/publish-page.sh" dev > "$work/out.txt" 2>&1; then
+  fail "published a timeline.html that already names a deployment"
+else
+  grep -q "already has a timeline-deploy tag" "$work/out.txt" && pass "refuses a timeline.html that already names a deployment" \
+    || fail "wrong refusal: $(cat "$work/out.txt")"
+fi
+
+fake_repo
+sed -i 's|<meta charset="UTF-8">|<meta charset="utf-8">|' "$work/repo/timeline.html"
+if "$work/repo/scripts/publish-page.sh" dev > "$work/out.txt" 2>&1; then
+  fail "published a timeline.html with no charset line to put the tag after"
+else
+  grep -q 'no single <meta charset="UTF-8"> line' "$work/out.txt" && pass "refuses a timeline.html with no charset line" \
+    || fail "wrong refusal: $(cat "$work/out.txt")"
+fi
 
 echo
 if [ "$failures" -eq 0 ]; then echo "All passed."; else echo "$failures failed." >&2; exit 1; fi
