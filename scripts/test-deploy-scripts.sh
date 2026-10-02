@@ -546,6 +546,56 @@ done
 [ "$(at "sts")" = 0 ] && pass "refuses an unknown environment or malformed settings before anything runs" \
   || fail "bad arguments ran something: $(cat "$work/argv.log")"
 
+echo "diagnose-upload.sh"
+up="aaaaaaaa-0000-4000-8000-000000000001"
+diagnose_answers() {
+  rm -f "$work"/answer-* "$work"/fail-*
+  echo "123456789012" > "$work/answer-sts"
+  echo "timeline-uploads-dev-123456789012" > "$work/answer-cloudformation-describe-stacks"
+  printf 'raw/sub-1/%s.json\t2026-10-02T21:30:00+00:00\t60600000\n' "$up" > "$work/answer-s3api-list-objects-v2"
+  cat > "$work/answer-dynamodb-query" <<JSON
+{"Items": [
+  {"pk": {"S": "sub-1"}, "sk": {"S": "PROGRESS#$up"}, "attempts": {"N": "3"}, "last_error": {"S": "processing failed: throttled"}},
+  {"pk": {"S": "sub-1"}, "sk": {"S": "UPLOAD#$up"}, "status": {"S": "failed"}, "error": {"S": "the server couldn't process the file after 3 attempts"}}
+], "Count": 2}
+JSON
+  echo '{"Items": [], "Count": 0}' > "$work/answer-dynamodb-scan"
+  cat > "$work/answer-logs-filter-log-events" <<JSON
+{"events": [{"timestamp": 1790000002500, "message": "{\"kind\":\"processing_run\",\"upload_id\":\"$up\",\"outcome\":\"failed\",\"error\":\"throttled\",\"ms\":900}"}]}
+JSON
+  : > "$work/argv.log"
+}
+diagnose_answers
+if "$REPO_ROOT/scripts/diagnose-upload.sh" dev "$up" > "$work/out.txt" 2>&1; then
+  grep -q "raw/sub-1/$up.json landed 2026-10-02T21:30:00+00:00, 60600000 bytes" "$work/out.txt" \
+    && pass "shows when and how big the file landed" || fail "S3: $(cat "$work/out.txt")"
+  grep -q "attempts: attempts 3, last_error processing failed: throttled" "$work/out.txt" \
+    && grep -q "outcome: error the server couldn't process the file after 3 attempts, status failed" "$work/out.txt" \
+    && pass "shows the stored outcome, attempt count and last error" || fail "DynamoDB: $(cat "$work/out.txt")"
+  grep -q "dynamodb query --table-name timeline-conversations-dev --consistent-read --key-condition-expression pk = :u" "$work/argv.log" \
+    && pass "reads the user's rows directly once the file names the user" || fail "query: $(grep dynamodb "$work/argv.log")"
+  grep -q "upload aaaaaaaa… -> failed (throttled)" "$work/out.txt" \
+    && pass "shows the processing attempts from the logs" || fail "logs: $(cat "$work/out.txt")"
+else
+  fail "failed: $(cat "$work/out.txt")"
+fi
+diagnose_answers
+echo "None" > "$work/answer-s3api-list-objects-v2"
+"$REPO_ROOT/scripts/diagnose-upload.sh" dev "$up" > "$work/out.txt" 2>&1 || true
+grep -q "never uploaded, or deleted since" "$work/out.txt" && grep -q "dynamodb scan" "$work/argv.log" \
+  && grep -q "no rows: processing never recorded" "$work/out.txt" \
+  && pass "with no file: says so, searches the whole table, says there are no rows" || fail "no file: $(cat "$work/out.txt")"
+diagnose_answers
+echo "ExpiredToken" > "$work/fail-sts-get-caller-identity"
+"$REPO_ROOT/scripts/diagnose-upload.sh" dev "$up" > "$work/out.txt" 2>&1 && fail "ran with an expired sign-in" \
+  || { grep -q "Run: aws login --profile timeline --remote" "$work/out.txt" && pass "an expired sign-in names the command to run" \
+    || fail "expired: $(cat "$work/out.txt")"; }
+for bad in "staging $up" "dev not-an-id" "dev"; do
+  # shellcheck disable=SC2086
+  "$REPO_ROOT/scripts/diagnose-upload.sh" $bad > /dev/null 2>&1 && fail "accepted: $bad" || true
+done
+pass "refuses an unknown environment or a malformed upload ID"
+
 echo "deploy_checks.py"
 python3 "$REPO_ROOT/scripts/deploy_checks.py" cors "$REPO_ROOT/scripts/fixtures/processed-httpapi-2026-10-02-fixed-cors.json" > "$work/out.txt" \
   && pass "accepts the fixed CORS block AWS produced on 2026-10-02" || fail "fixed CORS: $(cat "$work/out.txt")"

@@ -219,5 +219,17 @@ else
 fi
 rm "$work/deny"
 
+echo "activity-timeline.sh --upload"
+if "$REPO_ROOT/scripts/activity-timeline.sh" dev --upload bbbbbbbb-0000-4000-8000-000000000002 \
+   > "$work/out.txt" 2> "$work/err.txt"; then
+  grep -qF "POST /uploads" "$work/out.txt" && grep -qF "upload bbbbbbbb… -> unusable (not a JSON array)" "$work/out.txt" \
+    && pass "keeps the upload's request and its processing run" || fail "upload filter lost lines: $(cat "$work/out.txt")"
+  for unwanted in "aaaaaaaa" "POST /detect" "button#loadBtn" "evil"; do
+    if grep -qF -- "$unwanted" "$work/out.txt"; then fail "upload filter kept: $unwanted"; fi
+  done
+else
+  fail "failed with --upload: $(cat "$work/err.txt")"
+fi
+
 echo
 if [ "$failures" -eq 0 ]; then echo "All passed."; else echo "$failures failed." >&2; exit 1; fi
