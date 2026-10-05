@@ -468,9 +468,9 @@ one decides:
 
 1. **Pick the candidates by time.** When both conversations have a start date and time, compare
    only the starts: more than 24 hours apart, they can't be the same conversation. Otherwise, a
-   stored conversation is a candidate when its time range overlaps the new one's. Every stored
-   conversation that passes is a candidate (Q20 asks whether that includes stored conversations
-   that have ids).
+   stored conversation is a candidate when its time range overlaps the new one's. Only stored
+   conversations that also have no id are candidates; one with an id is never compared with a
+   conversation that lacks one (Q20).
 2. **Compare the first message.** If the new conversation's first message differs from the
    candidate's, they're different conversations, and nothing more is done with that candidate.
 3. **Same first message:** the same conversation. Its new messages are found by timeframe, as for
@@ -674,20 +674,19 @@ number written out rather than as a numbered list (which Markdown renumbers on d
   a Cancel button to leave without saving (§7d).
 - **Q18** — new messages are found by timeframe; existing messages are never compared (§8b-2).
 - **Q19** — placed by start and end, with a warning at upload (§7d, §7f).
+- **Q20** — the later rule refines the earlier one: a conversation without an id is compared only
+  with stored conversations that also lack one (§8b-2).
 - **Q12** — yes: the three items it replaces in the migration plan
   ([lines 1442, 1445 and 1451](2026-09-09-rust-aws-backend-migration.md#L1442)) are marked as
   replaced by this plan (done 2026-10-05).
 
-**Still open:**
-
-- **Q20 — Which stored conversations a conversation without an id is compared with.** Your first
-  rule (2026-10-05) said only stored conversations that also lack an id; your later one said each
-  prior conversation that overlaps in time. The plan follows the later one: every stored
-  conversation that passes the time check, with or without an id. Is that right? It matters when
-  the same conversation was first uploaded in a format with ids and later in one without.
+**Still open:** none.
 
 **Formerly open, kept for the record:**
 
+- **Q20 — Which stored conversations a conversation without an id is compared with** (answered:
+  only those without ids). The plan had asked whether every stored conversation that overlaps in
+  time is a candidate, with or without an id.
 - **Q12 — The migration plan's list** (answered: yes). The migration plan's list of work after the deployment
   checks has three items this plan does instead. Once you approve this plan, should those three be
   marked "replaced by 2026-10-05-screen-flow.md"? The three, in that plan's words, shortened:
