@@ -77,3 +77,22 @@ them; the file shows 45 of 57 lines (was 16 of 57 before this plan). Also unexpl
 coverage entries for `frontend/infra/activity-recorder.js` arrived without text (in three
 different tests); the report names them. **Open:** trigger is the user asking for the sign-in
 redirect to be measured, or a change to the sign-in code.
+
+## §3 Addendum (2026-10-05): unload-time recordings, and exemptions
+
+Found after §1 was built: the report's "scripts recorded without their text" are the recorder's
+send-on-close code (`leave`, `takeBatch`, `send` in
+[activity-recorder.js](../../frontend/infra/activity-recorder.js)), which runs as the old page
+unloads, after the fixture has saved and restarted recording, so Chrome reports it in the new
+recording without the script's text. Those lines did run.
+
+1. **Place them.** For an entry without text, the report uses the repository file's text, only when
+   the same test also recorded that file *with* text and that text equals the file on disk;
+   otherwise it is still named and left out.
+2. **Exemptions, in the source.** Lines between `// coverage-exempt-start: <reason>` and
+   `// coverage-exempt-end` are not counted; the report lists them with the reason. The user
+   exempted the sign-in redirect (2026-10-05): applied to the part of `signIn` that runs before
+   Cognito's page loads, in [login-panel.js](../../frontend/ui/login-panel.js) and
+   [cognito-login.js](../../frontend/infra/cognito-login.js). **Not** to `signOut` or to `signIn`'s
+   failure branch: those don't navigate; no test runs them, which is a test gap, not a
+   measurement one.
