@@ -862,6 +862,84 @@ Existing browser tests that drive the old load screen
 steps changed to the new pages. Per the project rules, that's changing committed tests, so the
 list of tests to change, with each change, comes to the user for approval before coding (C7).
 
+### 10b. Existing tests this plan changes (for the user's approval, C7)
+
+Gathered 2026-10-05 by searching every test for what the plan changes. To keep this list short, the
+elements that move keep their ids: the file chooser (`#loadConvFile`), the Load button (`#loadBtn`,
+now labelled Upload), the status line (`#loadStatus`), the progress bar (`#loadProgress…`), the dev
+name field (`#devLoginSub`), the sign-in line (`#cognitoLoginStatus`) and the timeline
+(`#mainContent`). And when every file in a batch fails, the status line shows the failure as it does
+today (as well as the line below the bar), so the upload-error tests keep their assertions.
+
+**Rust (backend)**
+
+- **R1 — records built by hand get the new fields.** The three tests that build a
+  `ConversationSummary` directly ([memory_conversations.rs](../../backend/timeline-storage/tests/memory_conversations.rs),
+  [dynamo_conversations_table.rs](../../backend/timeline-storage/tests/dynamo_conversations_table.rs),
+  [aws_state.rs](../../backend/timeline-api/tests/aws_state.rs)) and the shared store-contract
+  helper `summary()` ([conversation_summary_contract.rs:26](../../backend/timeline-storage/tests/support/conversation_summary_contract.rs#L26))
+  fill in the new fields; `upload_id: …` becomes `source: …`. Assertions unchanged.
+- **R2 — tests that store a file without `POST /uploads` record the upload's facts first.**
+  Processing now needs the file's name, upload time and human name, which `POST /uploads` records.
+  Tests that put a raw file in storage directly add one call recording them in their setup:
+  [processing.rs](../../backend/timeline-api/tests/processing.rs) (its `run` helper and one test),
+  [processing_errors.rs](../../backend/timeline-api/tests/processing_errors.rs),
+  [s3_trigger.rs](../../backend/timeline-api/tests/s3_trigger.rs),
+  [s3_trigger_progress.rs](../../backend/timeline-api/tests/s3_trigger_progress.rs),
+  [aws_state.rs](../../backend/timeline-api/tests/aws_state.rs),
+  [aws_failures.rs](../../backend/timeline-api/tests/aws_failures.rs),
+  [deliberate_failure.rs](../../backend/timeline-api/tests/deliberate_failure.rs),
+  [run_log_lines.rs](../../backend/timeline-api/tests/run_log_lines.rs),
+  [s3_event_logging.rs](../../backend/timeline-api/tests/s3_event_logging.rs),
+  [failed_upload.rs](../../backend/timeline-api/tests/failed_upload.rs),
+  [lambda_router.rs](../../backend/timeline-api/tests/lambda_router.rs). Assertions unchanged.
+- **R3 — `POST /uploads` is sent with a body.** Tests that send it empty send
+  `{"file_name": "conversations.json", "human_name": "…"}` instead:
+  [app.rs](../../backend/timeline-api/tests/app.rs), [dev_routes.rs](../../backend/timeline-api/tests/dev_routes.rs),
+  [export.rs](../../backend/timeline-api/tests/export.rs), [flag_saves.rs](../../backend/timeline-api/tests/flag_saves.rs),
+  [detect.rs](../../backend/timeline-api/tests/detect.rs), [upload_status.rs](../../backend/timeline-api/tests/upload_status.rs),
+  and any of [request_log.rs](../../backend/timeline-api/tests/request_log.rs) or lambda_router.rs
+  that do. Assertions unchanged.
+
+**Page unit tests**
+
+- **U1** — [activity-tab.test.js:11-16](../../frontend/tests/activity-tab.test.js#L11-L16): the fake
+  activity sink's `mainShown` becomes `screenShown`, and the expected call `['main', true]` becomes
+  `['screen', 'timeline']`.
+- **U2** — [activity-event.test.js:160](../../frontend/tests/activity-event.test.js#L160): the exact
+  list of `SHOWN_PLACES` loses `restoredNotice` and gains the new places (the per-file failure
+  lines, the Describe reminder and warnings, the modal).
+
+**Browser tests**
+
+- **B1 — the two new steps in the upload helpers.** Uploading now passes through Sign-in (type the
+  dev name, press Continue) and ends on Describe (press Done). Added to the shared helpers and to
+  the tests that upload by hand: `loadFixture` and `loadFile` in [views.spec.js](../../e2e/views.spec.js)
+  (used by most of its 51 tests) and its two tests that upload by hand (the scan's and the upload's
+  progress), [upload-flow.spec.js](../../e2e/upload-flow.spec.js) (its helper and the 2 MB test),
+  [upload-wait.spec.js](../../e2e/upload-wait.spec.js), [activity.spec.js](../../e2e/activity.spec.js)
+  (its upload helper), and the Cognito upload in [cognito-login.spec.js](../../e2e/cognito-login.spec.js)
+  (Done only; Cognito's sign-in already exists). Assertions unchanged.
+- **B2 — "the session comes back" becomes "the loading modal opens and closes".** Four tests check
+  for the "Picked up where you left off" notice, which is removed:
+  [views.spec.js:380](../../e2e/views.spec.js#L380) (reloading restores the session),
+  [views.spec.js:660](../../e2e/views.spec.js#L660) and [views.spec.js:673](../../e2e/views.spec.js#L673)
+  (opening at an analysis or conversation address), [cognito-login.spec.js:45](../../e2e/cognito-login.spec.js#L45)
+  (sign in, upload, reload). Each instead waits for the modal to appear and close, then checks the
+  timeline as it does today. The notice's Dismiss check in the first one is dropped.
+- **B3 — removed: [views.spec.js:406](../../e2e/views.spec.js#L406), "'Load a different file' stops
+  the session coming back".** The button and what it tested are removed by the plan (you can only add
+  conversations now). The new "Add conversations" tests (§10) take its place.
+- **B4 — [views.spec.js:790](../../e2e/views.spec.js#L790), "a session that cannot be fetched on reload
+  falls back to the load screen"** becomes "… shows the error in the loading modal, with Try again".
+- **B5 — [cognito-login.spec.js:100](../../e2e/cognito-login.spec.js#L100), "uploading before signing
+  in asks you to sign in"** becomes "signed out, the page shows Sign-in, and the Upload page can't be
+  reached" (opening `#upload` while signed out shows Sign-in).
+
+Not changed: the upload-error tests ([views.spec.js:742-788](../../e2e/views.spec.js#L742-L788)), the
+other sign-in tests, [hosted-page.spec.js](../../e2e/hosted-page.spec.js), and every timeline test's
+assertions.
+
 ## 11. Not in this plan
 
 Recorded, each with its own context, in
@@ -977,7 +1055,7 @@ sessionStorage. Trigger: the user reports losing answers, or the renewal item is
 ### C7 [OPEN]: Existing browser tests drive the old load screen
 Their page-driving steps (pick a file, press Load, wait for `#mainContent`) won't match the new
 pages.
-**Mitigation in plan:** [§10 (line 859)](2026-10-05-screen-flow.md#L859) commits to bringing the
+**Mitigation in plan:** the list is in §10b; [§10 (line 859)](2026-10-05-screen-flow.md#L859) commits to bringing the
 list of changes to the user before coding. **Open:** the list is written when the plan is approved.
 
 ### C8 [RESOLVED]: A conversation in two files
@@ -1058,7 +1136,7 @@ The id-less case is built with the first format that has one.
 ### C17 [RESOLVED]: Question numbers didn't match what the reader saw
 §12 wrote open questions as a Markdown numbered list starting at 1, 3, 4, 8…; Markdown renumbers
 such lists on display, so the user saw 1–5 and couldn't find Q3, Q4, Q8 or Q12.
-**Resolution:** every question is labelled "Q" with its number as text; see [§12 (line 877)](2026-10-05-screen-flow.md#L877).
+**Resolution:** every question is labelled "Q" with its number as text; see [§12 (line 955)](2026-10-05-screen-flow.md#L955).
 
 ### C18 [OPEN]: Judging new messages by timeframe misses messages inside the range
 With the user's rule (Q18), a message timed inside the stored range is assumed present. A message
