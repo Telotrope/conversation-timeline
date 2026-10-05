@@ -424,7 +424,10 @@ Resources:
           TIMELINE_LOG_S3_EVENTS: !Ref LogS3Events
           TIMELINE_FAIL_PROCESSING: !Ref FailProcessing
       Policies:
-        - S3ReadPolicy:
+        # Reads the raw upload, and writes the messages a later file adds to
+        # a conversation already stored (additions/..., plan
+        # docs/plans/2026-10-05-screen-flow.md §8b-2).
+        - S3CrudPolicy:
             BucketName: !Sub "timeline-uploads-${Stage}-${AWS::AccountId}"
         - DynamoDBCrudPolicy:
             TableName: !Ref ConversationsTable
