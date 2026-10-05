@@ -940,6 +940,48 @@ Not changed: the upload-error tests ([views.spec.js:742-788](../../e2e/views.spe
 other sign-in tests, [hosted-page.spec.js](../../e2e/hosted-page.spec.js), and every timeline test's
 assertions.
 
+## 10c. Order of work
+
+Each step ends the same way: the post-addition check (redundancy and error paths) when the step
+adds functionality, tests written for it, every test run (unit, Rust, browser), fixes until all
+pass, formatting of the code I changed, and a commit (split into small topical commits). The
+existing-test changes in §10b are made in the step that needs them.
+
+1. **One stylesheet (§9b).** Move the style block to `frontend/timeline.css`; add the named values
+   (`--error`, `--font-ui`, `--font-text`); turn every inline style into a class; status lines get
+   an `is-error` class instead of a colour; `publish-page.sh` publishes the file. No behaviour
+   changes, so every existing test must pass unchanged.
+2. **The record's new fields (§8a, §8b).** The rule-enforcing types and `clean_label`;
+   `ConversationSummary` flattened, `source` replacing `upload_id`; `guess_summary` (including the
+   one-hour guess for undated conversations); `MetadataEdit`; the in-memory and DynamoDB adapters.
+   Test changes R1.
+3. **Upload facts (§8b, §8c).** `POST /uploads` takes the file name, last-written time and human
+   name; `record_received` on the upload's row; processing reads them and writes the guessed
+   fields. Test changes R2, R3.
+4. **Recognizing earlier conversations (§8b-2).** Matching by id, adding only messages outside the
+   stored time range, addition objects, the counts and warnings, the C18 log line, and the one
+   rebuild function used by both the export and the scan (C23).
+5. **The metadata routes (§8c).** `GET /uploads`, `PUT /uploads/{id}/metadata`,
+   `PUT /conversations/{id}/metadata`; `GET /conversations` carries the new fields.
+6. **The load function split into steps (§6).** `handleLoadClick` becomes the step functions and
+   the four progress-text functions, with no change in behaviour; every existing test must pass
+   unchanged.
+7. **Pages, sign-in and the loading modal (§3, §4, §5, §6b).** `showPage`; the Sign-in page from
+   the existing sign-in code; the opening decision; the loading modal borrowing the progress bar;
+   page addresses and Back; the restored notice and "Load a different file" removed. Test changes
+   U1, B2, B3, B4, B5, and the Sign-in half of B1.
+8. **The Upload page (§6).** Several files, the combined bar, per-file failure lines, Stop,
+   `core/upload-batch.js`. The Describe half of B1 lands in step 9.
+9. **Describe, the Files tab, conversation details, placement (§7d, §7e, §7f).** The Describe page
+   in its three modes, `core/conversation-metadata.js`, the Files tab, the details line and Edit
+   details on the Conversations tab, and untimed conversations placed by start and end.
+10. **The activity log (§9).** The `screen` field, the new message places and content regions.
+    Test change U2.
+11. **Whole-suite check and report.** All tests, coverage and the file-size and silent-exception
+    ratchets; then I tell you it is done and ask you to look at it. Not done by me alone: the Back
+    check against real Cognito on the deployed site (C4), which needs a deployment and your
+    browser.
+
 ## 11. Not in this plan
 
 Recorded, each with its own context, in
@@ -1136,7 +1178,7 @@ The id-less case is built with the first format that has one.
 ### C17 [RESOLVED]: Question numbers didn't match what the reader saw
 §12 wrote open questions as a Markdown numbered list starting at 1, 3, 4, 8…; Markdown renumbers
 such lists on display, so the user saw 1–5 and couldn't find Q3, Q4, Q8 or Q12.
-**Resolution:** every question is labelled "Q" with its number as text; see [§12 (line 955)](2026-10-05-screen-flow.md#L955).
+**Resolution:** every question is labelled "Q" with its number as text; see [§12 (line 997)](2026-10-05-screen-flow.md#L997).
 
 ### C18 [OPEN]: Judging new messages by timeframe misses messages inside the range
 With the user's rule (Q18), a message timed inside the stored range is assumed present. A message
