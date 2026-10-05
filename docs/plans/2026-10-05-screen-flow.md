@@ -262,17 +262,35 @@ other pages, which reuses `signedInLabel`.
 
 **Built from the current load screen.** Its one long function, `handleLoadClick`
 ([load-flow.js:145-275](../../frontend/ui/load-flow.js#L145-L275)), already does everything for one
-file. It is split along its own steps, not rewritten:
+file. It is split into **one function per step**, each taken from its own lines, not rewritten:
 
-| Step | Today, in `handleLoadClick` | In the Upload page |
-|---|---|---|
-| Sign-in token | `ensureAuthToken` (line 160) | once per batch, unchanged |
-| Start an upload, send the file with progress | `POST /uploads`, `putWithProgress` and its label (lines 162-182) | `uploadOneFile(file, …)`, run once per file; the label becomes the combined bar's |
-| Wait for processing, with the ticking clock and attempt number | `waitForProcessing` and `showWait` (lines 194-218) | inside `uploadOneFile`; the clock line becomes that file's line below the bar |
-| Turn a failure into a message | `requestFailure`, `PageError`, and the "is the backend running?" hint (lines 262-274) | per file, into that file's failure line; unchanged wording via the page-message list |
-| Scan | `runDetectionPass` (lines 110-143, 223-227) | once per batch, unchanged |
-| Download the timeline with progress | `GET /export` and `downloadSignedExport` with its measured or unmeasured label (lines 229-252) | `downloadTimeline(token)`, shared with the loading modal (§6b) |
-| Show it | `applyExportText` (line 256) | unchanged, shared with the modal |
+| Step | Function | Taken from `handleLoadClick` | Called |
+|---|---|---|---|
+| Get a sign-in token | `ensureAuthToken` (exists) | line 160 | once per batch |
+| Start an upload | `startUpload(token, file, scan)` → upload id and address | `POST /uploads`, lines 165-167 | once per file |
+| Send the file | `sendFile(address, file, onProgress)` → a result and an abort handle | reading the file and `putWithProgress`, lines 164 and 173-182 | once per file |
+| Wait for processing | `waitUntilProcessed(token, uploadId, onAnswer, sleep)` | `waitForProcessing`, lines 194-218 | once per file |
+| Scan | `runDetectionPass(token, onProgress)` (exists) | lines 110-143, 223-227 | once per batch |
+| Download the timeline | `downloadTimeline(token, onProgress)` → the export text and flag handles | `GET /export` and `downloadSignedExport`, lines 229-252 | once per batch; also by the loading modal (§6b) |
+| Show it | `applyExportText` (exists) | line 256 | once per batch; also by the modal |
+| Turn a failure into a message | `describeLoadFailure(error)` → a page-message id and its values | lines 262-274, including the "is the backend running?" hint | wherever a step fails |
+
+Rules for every step function:
+
+- **It does one step and touches nothing on the page.** It returns its result or throws; progress
+  goes to the `onProgress` or `onAnswer` callback it is given. Today the steps write the bar's
+  width and label themselves, in the middle of the requests (for example lines 173-179 and
+  237-251), and `runDetectionPass` writes the bar directly (lines 136-138); those writes move to
+  the callers.
+- **The callers are short sequences of steps.** `uploadOneFile` is `startUpload`, `sendFile`,
+  `waitUntilProcessed`. The Upload page's handler is: token; `uploadOneFile` for each file (through
+  `core/upload-batch.js`); scan if ticked; `downloadTimeline`; move to Describe. The modal's is:
+  token; `downloadTimeline`; `applyExportText`. The bar, its labels and the failure lines are set
+  only in these callers, from the callbacks.
+- **They stay in [load-flow.js](../../frontend/ui/load-flow.js)**, whose one concern is getting
+  data onto the screen. They call the API helpers, so they can't move to `core/`, which never
+  depends on the API layer; and the file stays well under the size limit once the long function is
+  gone.
 
 The markup is the load screen's own, moved: the file chooser (gaining `multiple`), the scan checkbox
 and its text, the Load button (renamed Upload), the status line and the progress bar
@@ -282,7 +300,8 @@ combined bar feeds `makeRateEstimator` the sum across files (the same function, 
 numbers).
 
 New: the list of chosen files, the per-file failure lines, Stop, and `core/upload-batch.js`, which
-runs `uploadOneFile` for several files at once and adds up their progress. For Stop, only `putWithProgress` changes: it already handles an aborted send
+runs `uploadOneFile` for several files at once and adds up their progress. For Stop, besides the step
+split, only `putWithProgress` changes: it already handles an aborted send
 ([api-client.js:286](../../frontend/infra/api-client.js#L286)) but gives the caller no way to abort, so it
 returns an abort handle too. `waitForProcessing` needs no change: its `sleep` is passed in
 ([upload-wait.js:30](../../frontend/core/upload-wait.js#L30)), so Stop hands it a `sleep` that
@@ -630,7 +649,7 @@ New modules under [frontend/](../../frontend/), one job each:
 | `core/upload-batch.js` | Several files' sends and waits at once: the combined progress, each file's outcome, Stop. No page access; given the send and wait functions. |
 | `ui/navigation/pages.js` | `showPage(name)`: shows one page and hides the rest, beside [tabs.js](../../frontend/ui/navigation/tabs.js)'s `switchTab`, which it mirrors. Replaces the screen-switching now split between [main.js:31-43](../../frontend/main.js#L31-L43) and `applyExportText`. Page addresses (§4) extend [router.js](../../frontend/ui/router.js) and [location.js](../../frontend/ui/navigation/location.js), not beside them. |
 | (changed) [ui/login-panel.js](../../frontend/ui/login-panel.js) | The Sign-in page (§5); its code stays here. |
-| (changed) [ui/load-flow.js](../../frontend/ui/load-flow.js) | `handleLoadClick` split into `uploadOneFile` and `downloadTimeline` (§6); `tryRestoreSession` becomes the modal's `openTimeline` (§6b). |
+| (changed) [ui/load-flow.js](../../frontend/ui/load-flow.js) | `handleLoadClick` split into one function per step (§6); `tryRestoreSession` becomes the modal's `openTimeline` (§6b). |
 | `ui/describe-form.js` | The Describe page (§7d). |
 | `ui/widgets/loading-modal.js` | Opens and closes the modal, moving the existing bar and status line into it (§6b). |
 | `ui/views/files.js` | The Files tab (§7e), next to the other tabs' views. |
@@ -752,7 +771,7 @@ the upload pieces. Each new piece, what already exists, and the decision:
 | "Sign-in ran out" | `ensureAuthToken` already throws a `PageError` of kind `not_logged_in` ([api-client.js:202](../../frontend/infra/api-client.js#L202)); `errorKindOf` reads it | **Reuse**: `showPage("signIn")` on that kind; no new detection. |
 | The loading modal's work and bar | `tryRestoreSession`; the load screen's download with progress; the one progress bar and its functions | **Reuse** (§6b); only the box and backdrop are new. |
 | Sign-in page | `initLogin`, `signIn`, `signOut`, `ensureAuthToken`'s dev login, the start of `tryRestoreSession` | **Move** (§5). |
-| Upload page | `handleLoadClick`, split along its steps | **Split, not rewrite** (§6). |
+| Upload page | `handleLoadClick`, split into one function per step | **Split, not rewrite** (§6). |
 | Showing one page at a time | `switchTab` shows one tab at a time | **Mirror it** in `showPage`. |
 | The page-flow model (§3) | — | **Not built as code**: a specification; the arcs live in the handlers. |
 | Route ownership checks | `flags.rs` turns a missing summary into `ApiError::NotFound` ([flags.rs:48](../../backend/timeline-api/src/routes/flags.rs#L48)); `AuthenticatedUser`; `ApiError::BadRequest` | **Reuse** the same pattern for both metadata routes. |
@@ -920,7 +939,7 @@ The server never learns a file's name today; only the browser knows it. With the
 that the original file name is part of each conversation's metadata, the server must know it
 before processing.
 **Resolution:** `POST /uploads` takes the file name and the human's name, recorded on the upload's
-row and read by processing; see [§8b (line 517)](2026-10-05-screen-flow.md#L517) and [§8c (line 616)](2026-10-05-screen-flow.md#L616).
+row and read by processing; see [§8b (line 537)](2026-10-05-screen-flow.md#L537) and [§8c (line 636)](2026-10-05-screen-flow.md#L636).
 
 ### C4 [OPEN]: Back across real Cognito's pages is unmeasured
 The stand-in Cognito skips the login form, so the browser tests can't show what Back does on
@@ -946,7 +965,7 @@ sessionStorage. Trigger: the user reports losing answers, or the renewal item is
 ### C7 [OPEN]: Existing browser tests drive the old load screen
 Their page-driving steps (pick a file, press Load, wait for `#mainContent`) won't match the new
 pages.
-**Mitigation in plan:** [§10 (line 827)](2026-10-05-screen-flow.md#L827) commits to bringing the
+**Mitigation in plan:** [§10 (line 847)](2026-10-05-screen-flow.md#L847) commits to bringing the
 list of changes to the user before coding. **Open:** the list is written when the plan is approved.
 
 ### C8 [RESOLVED]: A conversation in two files
@@ -957,13 +976,13 @@ this showed a third problem, present today: the export rebuilds a conversation o
 file that held it, so an older file uploaded after a newer one hides the newer messages.
 **Resolution:** the user decided (2026-10-05) that an earlier conversation is recognized and keeps
 its details, and new messages in it are added, judged by timeframe: only messages outside the
-stored time range are added, and stored messages are never compared one by one (Q18); see [§8b-2 (line 530)](2026-10-05-screen-flow.md#L530).
+stored time range are added, and stored messages are never compared one by one (Q18); see [§8b-2 (line 550)](2026-10-05-screen-flow.md#L550).
 
 ### C9 [RESOLVED]: Free text from the form reaches the page, the server's storage and logs
 Names and file names come from the user and are shown back on the page.
 **Resolution:** trimmed, cleaned of control and invisible characters and limited in length when the
-request is read ([§8a (line 435)](2026-10-05-screen-flow.md#L435)); shown on the page only as text,
-never as markup; kept out of the activity log ([§9 (line 651)](2026-10-05-screen-flow.md#L651)).
+request is read ([§8a (line 455)](2026-10-05-screen-flow.md#L455)); shown on the page only as text,
+never as markup; kept out of the activity log ([§9 (line 671)](2026-10-05-screen-flow.md#L671)).
 
 ### C10 [RESOLVED]: The first diagram was not a diagram of pages
 The first draft's diagram mixed the five pages with brief checks, sending, and every failure as
@@ -978,15 +997,15 @@ carrying its original file name and upload date so a whole file can still be edi
 (2026-10-05, Q13) editable one conversation at a time from the Conversations tab.
 **Resolution:** metadata is a field of each conversation's summary row, with a `SourceFile` part;
 file-level edits change only the fields you changed, on every conversation from that file, and a
-conversation can be edited alone (`MetadataEdit`, [§8a (line 435)](2026-10-05-screen-flow.md#L435)); see [§7a (line 313)](2026-10-05-screen-flow.md#L313)
-and [§8b (line 517)](2026-10-05-screen-flow.md#L517).
+conversation can be edited alone (`MetadataEdit`, [§8a (line 455)](2026-10-05-screen-flow.md#L455)); see [§7a (line 332)](2026-10-05-screen-flow.md#L332)
+and [§8b (line 537)](2026-10-05-screen-flow.md#L537).
 
 ### C12 [RESOLVED]: An unfinished Describe left files without details
 The first draft sent the next visit back to Describe for undescribed files. The user decided
 instead that guesses are made at upload and the next visit opens the Timeline.
-**Resolution:** the guess is written during processing ([§7b (line 331)](2026-10-05-screen-flow.md#L331));
+**Resolution:** the guess is written during processing ([§7b (line 350)](2026-10-05-screen-flow.md#L350));
 the "opens the page → Describe" arc is gone ([§3 (line 60)](2026-10-05-screen-flow.md#L60)); Describe
-is reached later from the Files tab ([§7e (line 412)](2026-10-05-screen-flow.md#L412)).
+is reached later from the Files tab ([§7e (line 432)](2026-10-05-screen-flow.md#L432)).
 
 ### C13 [OPEN]: Where the human's default name comes from
 The server knows you by Cognito's user id, and I have not checked whether the access token the
@@ -999,7 +1018,7 @@ first deployment of this work (look at a decoded access token).
 
 ### C14 [RESOLVED]: A file of hundreds of conversations makes a long Describe page
 Each section lists its file's conversations with their dates and times; one file can hold hundreds.
-**Resolution:** the list starts collapsed; see [§7d (line 376)](2026-10-05-screen-flow.md#L376).
+**Resolution:** the list starts collapsed; see [§7d (line 396)](2026-10-05-screen-flow.md#L396).
 
 ### C15 [OPEN]: Placing untimed conversations can't be shown end to end yet
 The user wants a conversation whose messages have no times placed by its start and end. No file
@@ -1010,7 +1029,7 @@ a browser test through an upload.
 The same holds for the upload's warning about conversations with times on only some messages
 (Q19): processing can't meet one today, so it is tested by handing processing's counting function a
 conversation directly.
-**Mitigation in plan:** the rule lives in blocks.js and is unit-tested there ([§7f (line 421)](2026-10-05-screen-flow.md#L421)).
+**Mitigation in plan:** the rule lives in blocks.js and is unit-tested there ([§7f (line 441)](2026-10-05-screen-flow.md#L441)).
 **Open:** the first plan that reads a format without message times adds the browser test. Trigger:
 that plan.
 
@@ -1021,13 +1040,13 @@ repeated full exports of one account (the project's own was 64.7 MB) multiplied 
 one is compared with that one only, and that conversations without ids are compared only when
 neither side has an id and their time ranges overlap. The id comparison uses the stored
 conversation's summary row (its time range), and the messages a later file adds are saved on their own at upload, so the export
-reads the first file plus small addition objects; see [§8b-2 (line 530)](2026-10-05-screen-flow.md#L530).
+reads the first file plus small addition objects; see [§8b-2 (line 550)](2026-10-05-screen-flow.md#L550).
 The id-less case is built with the first format that has one.
 
 ### C17 [RESOLVED]: Question numbers didn't match what the reader saw
 §12 wrote open questions as a Markdown numbered list starting at 1, 3, 4, 8…; Markdown renumbers
 such lists on display, so the user saw 1–5 and couldn't find Q3, Q4, Q8 or Q12.
-**Resolution:** every question is labelled "Q" with its number as text; see [§12 (line 845)](2026-10-05-screen-flow.md#L845).
+**Resolution:** every question is labelled "Q" with its number as text; see [§12 (line 865)](2026-10-05-screen-flow.md#L865).
 
 ### C18 [OPEN]: Judging new messages by timeframe misses messages inside the range
 With the user's rule (Q18), a message timed inside the stored range is assumed present. A message
@@ -1044,7 +1063,7 @@ existing code the plan would otherwise have duplicated: the message registry and
 content regions, the page's text cleaning, the `not_logged_in` error, the route ownership pattern,
 the storage read helpers, the injected `sleep` that makes Stop need no change to the wait, and the
 synthetic export builder for tests.
-**Resolution:** the audit table and its decisions; see [§9a (line 734)](2026-10-05-screen-flow.md#L734).
+**Resolution:** the audit table and its decisions; see [§9a (line 754)](2026-10-05-screen-flow.md#L754).
 
 ### C20 [RESOLVED]: The plan built the page-flow model as code, and didn't show how the old pages are reused
 The plan proposed a state-machine module, which the user pointed out makes no sense: the diagram
@@ -1054,14 +1073,14 @@ expected the modal to reuse the load screen's progress bar, the Upload page the 
 Sign-in page the sign-in logic.
 **Resolution:** no state-machine module; arcs live in handlers calling `showPage` ([§3 (line 60)](2026-10-05-screen-flow.md#L60)).
 Step-by-step reuse tables for the Sign-in page ([§5 (line 204)](2026-10-05-screen-flow.md#L204)), the
-Upload page ([§6 (line 238)](2026-10-05-screen-flow.md#L238)) and the modal ([§6b (line 291)](2026-10-05-screen-flow.md#L291)),
+Upload page ([§6 (line 238)](2026-10-05-screen-flow.md#L238)) and the modal ([§6b (line 310)](2026-10-05-screen-flow.md#L310)),
 whose bar is the existing bar, moved.
 
 ### C21 [RESOLVED]: Styling was not planned, and the plan misstated the page's colours
 The plan said nothing about where the new pages' styling would live, and claimed the page has
 "orange accents" without looking; it has a green accent. The user wants one stylesheet every page
 uses.
-**Resolution:** [§9b (line 653)](2026-10-05-screen-flow.md#L653): the style block becomes one file,
+**Resolution:** [§9b (line 673)](2026-10-05-screen-flow.md#L673): the style block becomes one file,
 repeats become named values, JavaScript sets classes not colours, new pages reuse existing classes;
 the user kept the palette and fonts (Q22) and asked for every inline style to move (Q21).
 
@@ -1071,12 +1090,19 @@ The plan added a `ConversationMetadata` type as one field of `ConversationSummar
 the record, so the extra layer did nothing; the user asked whether the fields should go on the
 record directly.
 **Resolution:** they do; `SourceFile` replaces `upload_id`; the small rule-enforcing types stay; see
-[§8a (line 435)](2026-10-05-screen-flow.md#L435).
+[§8a (line 455)](2026-10-05-screen-flow.md#L455).
 
 ### C23 [RESOLVED]: The scan would never see messages added by a later file
 The plan changed how the export rebuilds a conversation (first file plus addition objects), but the
 scan for critical, angry and ALL-CAPS messages also re-reads files through `upload_id`
 ([detect.rs:95](../../backend/timeline-api/src/routes/detect.rs#L95)), and the plan left it alone.
 Found while answering the user's question about `ConversationSummary`.
-**Resolution:** one rebuild function with both callers; see [§8b-2 (line 530)](2026-10-05-screen-flow.md#L530).
+**Resolution:** one rebuild function with both callers; see [§8b-2 (line 550)](2026-10-05-screen-flow.md#L550).
+
+### C24 [RESOLVED]: The load function's split still bundled steps
+The Upload page's reuse table put starting an upload, sending the file and waiting for processing in
+one `uploadOneFile`, and left the steps writing to the progress bar themselves. The user asked for
+one function per step, for readability.
+**Resolution:** eight step functions, none touching the page, and callers that are short sequences
+of them; see [§6 (line 238)](2026-10-05-screen-flow.md#L238).
 
