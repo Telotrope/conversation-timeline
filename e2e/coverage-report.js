@@ -1,10 +1,18 @@
 // Merges the per-test coverage files fixtures.js wrote and prints, per
 // script file, which lines and named functions never ran in any test.
 // Every program file under frontend/ is listed, including any no test
-// loaded (shown as never loaded, 0%). Scripts reported without their text,
-// and scripts that aren't repository files (a page a test made up), are
-// named at the top and left out
+// loaded (shown as never loaded, 0%). Scripts that aren't repository files
+// (a page a test made up) are named at the top and left out
 // (docs/plans/2026-10-02-browser-coverage-every-test.md).
+//
+// A script reported without its text (code that ran as the old page
+// unloaded, after the test's recording was saved and restarted; the plan's
+// §3) is given the repository file's text, only when the same test also
+// recorded that file with text equal to the file on disk; otherwise it is
+// named at the top and left out.
+//
+// Lines between `// coverage-exempt-start: <reason>` and
+// `// coverage-exempt-end` are not counted, and are listed with the reason.
 //
 // Usage: node coverage-report.js <COVERAGE_DIR> <repo root>
 //
@@ -36,12 +44,28 @@ function repositoryPath(url) {
   return rel && fs.existsSync(full) && fs.statSync(full).isFile() ? rel : null;
 }
 
+const placedWithoutText = [];
 for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.json'))) {
   const { test: testName, entries } = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
+  // This test's recorded text for each repository file, where it equals the
+  // file on disk.
+  const textOnDisk = new Map();
+  for (const entry of entries) {
+    const rel = typeof entry.source === 'string' ? repositoryPath(entry.url) : null;
+    if (rel && fs.readFileSync(path.join(repoRoot, rel), 'utf8') === entry.source) {
+      textOnDisk.set(rel, entry.source);
+    }
+  }
   for (const entry of entries) {
     if (typeof entry.source !== 'string') {
-      withoutText.push(`${entry.url} (in ${testName})`);
-      continue;
+      const rel = repositoryPath(entry.url);
+      if (rel && textOnDisk.has(rel)) {
+        entry.source = textOnDisk.get(rel);
+        placedWithoutText.push(`${rel} (in ${testName})`);
+      } else {
+        withoutText.push(`${entry.url} (in ${testName})`);
+        continue;
+      }
     }
     const key = repositoryPath(entry.url);
     if (!key) {
@@ -113,15 +137,27 @@ for (const [key, m] of [...merged.entries()].sort()) {
   let code = 0;
   const missed = [];
   let inBlockComment = false;
+  let exemptReason = null;
+  const exempt = []; // [first line, last line, reason]
+  const exemptLines = new Set();
   lines.forEach((text, i) => {
     const trimmed = text.trim();
     const firstChar = offset + text.length - text.trimStart().length;
     offset += text.length + 1;
+    const lineNo = firstLine + i + 1;
+    const start = trimmed.match(/^\/\/ coverage-exempt-start: (.+)$/);
+    if (start) { exemptReason = start[1]; exempt.push([lineNo + 1, lineNo + 1, exemptReason]); return; }
+    if (trimmed === '// coverage-exempt-end') { exemptReason = null; return; }
     if (inBlockComment) { if (trimmed.includes('*/')) inBlockComment = false; return; }
     if (trimmed.startsWith('/*')) { if (!trimmed.includes('*/')) inBlockComment = true; return; }
     if (!trimmed || trimmed.startsWith('//')) return;
+    if (exemptReason !== null) {
+      exempt[exempt.length - 1][1] = lineNo;
+      exemptLines.add(lineNo);
+      return;
+    }
     code += 1;
-    if (!m.covered[firstChar]) missed.push(firstLine + i + 1);
+    if (!m.covered[firstChar]) missed.push(lineNo);
   });
 
   const neverCalled = [...m.functions.entries()]
@@ -129,8 +165,10 @@ for (const [key, m] of [...merged.entries()].sort()) {
     .map(([key]) => {
       const [name, start] = key.split('@');
       const line = firstLine + m.source.slice(0, Number(start)).split('\n').length;
-      return `${name} (line ${line})`;
-    });
+      return { name, line };
+    })
+    .filter(({ line }) => !exemptLines.has(line))
+    .map(({ name, line }) => `${name} (line ${line})`);
 
   totalCode += code;
   totalRun += code - missed.length;
@@ -146,11 +184,15 @@ for (const [key, m] of [...merged.entries()].sort()) {
   out.push(`${code - missed.length} of ${code} code lines ran (${((code - missed.length) / code * 100).toFixed(1)}%).`);
   out.push(`Named functions never called: ${neverCalled.length ? neverCalled.join(', ') : 'none'}.`);
   out.push(`Lines never run: ${spans.length ? spans.map(([a, b]) => (a === b ? `${a}` : `${a}-${b}`)).join(', ') : 'none'}.`);
+  if (exempt.length) {
+    out.push(`Exempt, not counted: ${exempt.map(([a, b, why]) => `${a === b ? a : `${a}-${b}`} (${why})`).join('; ')}.`);
+  }
   out.push('');
 }
 
 console.log(`# Coverage: ${totalRun} of ${totalCode} code lines ran (${(totalRun / totalCode * 100).toFixed(1)}%)\n`);
 console.log(`Program files under frontend/ never loaded by any test: ${neverLoaded.size ? [...neverLoaded].join(', ') : 'none'}.`);
-console.log(`Scripts recorded without their text (left out): ${withoutText.length ? withoutText.join('; ') : 'none'}.`);
+console.log(`Scripts recorded without their text, placed from the file on disk: ${placedWithoutText.length ? placedWithoutText.join('; ') : 'none'}.`);
+console.log(`Scripts recorded without their text, left out: ${withoutText.length ? withoutText.join('; ') : 'none'}.`);
 console.log(`Scripts that are not repository files (left out): ${notRepositoryFiles.size ? [...notRepositoryFiles].join(', ') : 'none'}.\n`);
 console.log(out.join('\n'));
