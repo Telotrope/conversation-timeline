@@ -64,11 +64,45 @@ export const PAGE_MESSAGES = Object.freeze({
     text: () => 'Downloaded conversations-with-flags.json — load this file directly next time.', isError: false,
   },
 
-  // The notice that a previous session was picked up again. `sub` is the
-  // name it was loaded under (with a real sign-in, the email address).
-  restored: {
-    text: ({ sub }) => `Picked up where you left off — the export you last loaded as "${sub}". Use "Load a different file…" to start fresh.`,
+  // The Sign-in page's own line, under the sign-in.
+  'signIn.ran_out': { text: () => 'Your sign-in ran out; sign in again.', isError: true },
+  'signIn.check_failed': {
+    text: ({ detail }) => `Could not reach the server to find your conversations: ${detail}`,
+    isError: true, record: failure,
+  },
+
+  // The Upload page: when files fail or are stopped, and Back while sending.
+  'load.none_succeeded': {
+    text: ({ count }) => `None of the ${count} files could be uploaded; the reasons are below.`,
+    isError: true, record: ['count'],
+  },
+  'load.stopped_none': {
+    text: () => 'Stopped before any file was processed. A file whose bytes had already reached the server is processed anyway and appears in the Files tab.',
     isError: false,
+  },
+  'load.back_refused': { text: () => 'Your files are still being sent; press Stop to stop.', isError: true },
+  // One line per file below the bar. The file's name is shown, never
+  // recorded.
+  'load.file_failed': {
+    text: ({ file, detail }) => `${file}: ${detail}`, isError: true, record: failure,
+  },
+  'load.file_stopped': {
+    text: ({ file }) => `${file}: stopped. If its bytes had already reached the server, it is processed anyway and appears in the Files tab with guessed details.`,
+    isError: false,
+  },
+
+  // The Describe page.
+  'describe.invalid': { text: () => 'Some answers need fixing first; they are marked.', isError: true },
+  'describe.save_failed': { text: ({ detail }) => `Could not save: ${detail}`, isError: true, record: failure },
+  'describe.load_failed': {
+    text: ({ detail }) => `Could not read your files' details: ${detail}`, isError: true, record: failure,
+  },
+  'describe.back_refused': {
+    text: () => 'Press Done to save, or Cancel to leave without saving.', isError: true,
+  },
+  'describe.reminder': {
+    text: ({ count }) => `${count} file${count === 1 ? '' : 's'} from this batch ${count === 1 ? 'is' : 'are'} not here:`,
+    isError: true, record: ['count'],
   },
 
   // The sign-in line, with a deployment's sign-in.

@@ -357,3 +357,46 @@ export async function patchFlagsToBackend(msg, values){
     };
   }
 }
+
+// --- Conversation metadata (plan docs/plans/2026-10-05-screen-flow.md §8c) ---
+
+async function jsonOrFailure(what, res){
+  if(!res.ok) throw await requestFailure(what, res);
+  return res.json();
+}
+
+// GET /conversations: every conversation's record, metadata included.
+// Empty when the user has uploaded nothing, which is how the page decides
+// between the Upload page and the timeline.
+export async function fetchConversationRecords(token){
+  return jsonOrFailure('reading your conversations', await apiFetch('/conversations', { token }));
+}
+
+// GET /uploads: the user's files, newest first, for the Files tab and the
+// Describe page.
+export async function fetchUploads(token){
+  return jsonOrFailure('reading your files', await apiFetch('/uploads', { token }));
+}
+
+function putJson(path, token, body){
+  return apiFetch(path, {
+    method: 'PUT',
+    token,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+// PUT /uploads/{id}/metadata: an edit for every conversation that first
+// came in that file. Resolves to the changed records.
+export async function saveFileMetadata(token, uploadId, edit){
+  return jsonOrFailure('saving the file\'s details',
+    await putJson(`/uploads/${encodeURIComponent(uploadId)}/metadata`, token, edit));
+}
+
+// PUT /conversations/{id}/metadata: an edit for one conversation. Resolves
+// to its changed record.
+export async function saveConversationMetadata(token, conversationId, edit){
+  return jsonOrFailure('saving the conversation\'s details',
+    await putJson(`/conversations/${encodeURIComponent(conversationId)}/metadata`, token, edit));
+}

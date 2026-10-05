@@ -34,6 +34,26 @@ export function localDaysTouched(block){
   return pieces;
 }
 
+// A conversation whose messages have no times, or only some of them, is one
+// session from its start to its end as its record gives them (plan
+// docs/plans/2026-10-05-screen-flow.md §7f): where the user put it, or the
+// upload's guess. One with no messages at all, or no record, isn't drawn.
+function placedBySpan(conv, idx){
+  if(conv.total_messages === 0 || conv.untimed === 0) return null;
+  const record = state.records.get(conv.id);
+  if(!record) return null;
+  const start = new Date(record.span.start);
+  const end = new Date(record.span.end);
+  return {
+    conv: idx,
+    date: localDateKey(start),
+    start: start.toISOString(),
+    end: end.toISOString(),
+    duration_sec: Math.round((end - start) / 1000),
+    count: conv.total_messages,
+  };
+}
+
 // A session's `date` is the local day it started on.
 export function buildBlocks(){
   const byConv = new Map();
@@ -43,25 +63,38 @@ export function buildBlocks(){
   });
 
   const blocks = [];
+  const bySpan = new Set();
+  state.conversations.forEach((c, idx) => {
+    const block = placedBySpan(c, idx);
+    if(block){ blocks.push(block); bySpan.add(idx); }
+  });
   byConv.forEach((dates, conv) => {
-    dates.sort((a,b)=>a-b);
-    let runStart = 0;
-    for(let i=1; i<=dates.length; i++){
-      const gapSec = i < dates.length ? (dates[i]-dates[i-1])/1000 : Infinity;
-      if(gapSec >= GAP_THRESHOLD_SEC){
-        const start = dates[runStart];
-        const end = dates[i-1];
-        blocks.push({
-          conv,
-          date: localDateKey(start),
-          start: start.toISOString(),
-          end: end.toISOString(),
-          duration_sec: Math.round((end-start)/1000),
-          count: i - runStart,
-        });
-        runStart = i;
-      }
-    }
+    if(!bySpan.has(conv)) blocks.push(...sessionsOf(dates, conv));
   });
   return blocks;
+}
+
+// One conversation's message times as sessions: a pause of
+// GAP_THRESHOLD_SEC or more starts a new one.
+function sessionsOf(dates, conv){
+  dates.sort((a,b)=>a-b);
+  const sessions = [];
+  let runStart = 0;
+  for(let i=1; i<=dates.length; i++){
+    const gapSec = i < dates.length ? (dates[i]-dates[i-1])/1000 : Infinity;
+    if(gapSec >= GAP_THRESHOLD_SEC){
+      const start = dates[runStart];
+      const end = dates[i-1];
+      sessions.push({
+        conv,
+        date: localDateKey(start),
+        start: start.toISOString(),
+        end: end.toISOString(),
+        duration_sec: Math.round((end-start)/1000),
+        count: i - runStart,
+      });
+      runStart = i;
+    }
+  }
+  return sessions;
 }

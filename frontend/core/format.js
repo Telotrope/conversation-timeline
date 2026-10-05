@@ -40,3 +40,11 @@ export function formatMonthHeading(dateStr){
   const d = new Date(dateStr + 'T00:00:00');
   return d.toLocaleDateString(undefined, {month:'long', year:'numeric'});
 }
+
+// A date and time from an ISO string, in the browser's time zone, for
+// listing files and conversation spans: "Oct 5, 2026, 2:30 PM".
+export function formatDateTime(iso){
+  return new Date(iso).toLocaleString(undefined, {
+    month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit',
+  });
+}

@@ -2,12 +2,35 @@
 // transcript of the one you open, with links from its sessions and flags
 // into the review tab.
 
-import { formatClock, formatDayHeading, formatDuration } from '../../core/format.js';
+import { describeMedium, describeOrigin, describeParticipants } from '../../core/conversation-metadata.js';
+import { formatClock, formatDateTime, formatDayHeading, formatDuration } from '../../core/format.js';
 import { localDaysTouched } from '../../core/blocks.js';
 import { state } from '../../core/state.js';
 import { rememberLocation } from '../navigation/location.js';
 import { escapeHtml } from '../render/markup.js';
 import { jumpToReview } from './review.js';
+
+let EDIT_CONVERSATION = () => {};
+
+// Edit details on the open conversation opens the Describe page for it,
+// through the handler main.js sets (views don't import the page flow).
+export function setConversationEditHandler(fn){
+  EDIT_CONVERSATION = fn;
+}
+
+// The open conversation's details, from its record (plan
+// docs/plans/2026-10-05-screen-flow.md §7e): kind, who took part, start and
+// end, and whether these are still guessed. Empty without a record.
+function detailsLine(conv){
+  const r = state.records.get(conv.id);
+  if(!r) return '';
+  return `<div class="conv-details">
+    <span>${escapeHtml(describeMedium(r.medium))} · ${escapeHtml(describeParticipants(r.participants))}</span>
+    <span>${formatDateTime(r.span.start)} – ${formatDateTime(r.span.end)}</span>
+    <span>${describeOrigin(r.details_origin)} · from ${escapeHtml(r.source.file_name)}</span>
+    <button type="button" id="editConversationBtn" class="btn-secondary btn-small">Edit details</button>
+  </div>`;
+}
 
 // --- Conversation list & detail ---
 // How many distinct local days these sessions touch. Several sessions on
@@ -84,6 +107,7 @@ export function selectConversation(idx){
 
   document.getElementById('convDetail').innerHTML = `
     <h3>${escapeHtml(conv.name)}</h3>
+    ${detailsLine(conv)}
     <div class="summary">${conv.total_messages} messages total · active across ${dayCount} ${dayCount===1?'day':'days'} · ${formatDuration(totalSec)} of combined active time</div>
     ${critNote}
     <table class="sessions">
@@ -123,6 +147,9 @@ export function selectConversation(idx){
       });
     });
   });
+
+  const edit = document.getElementById('editConversationBtn');
+  if(edit) edit.addEventListener('click', () => EDIT_CONVERSATION(conv.id));
 
   // "Chat message review" link: jump to Review showing the whole conversation, unrestricted by time
   document.getElementById('chatReviewLink').addEventListener('click', (e)=>{

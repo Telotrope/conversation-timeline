@@ -24,12 +24,14 @@ import { ERROR_KINDS } from './page-error.js';
 
 export const TEXT_CAP = 80;
 
-// The parts of the page whose text comes from your conversations: the review
-// table, the calendar's timeline, the conversation list and transcript, the
-// analysis results, and the two banners that can name a conversation or the
-// signed-in account.
+// The parts of the page whose text comes from your conversations or that
+// name people: the review table, the calendar's timeline, the conversation
+// list and transcript, the analysis results, the review filter's banner,
+// the signed-in account, file names (chosen, failed, in the Files tab and
+// on the Describe page), and the names typed on the Describe page.
 const CONTENT_REGIONS =
-  '#reviewTable, #calendarBody, #convItems, #convDetail, #analyticsMain, #reviewFilterBanner, #restoredNotice';
+  '#reviewTable, #calendarBody, #convItems, #convDetail, #analyticsMain, #reviewFilterBanner, '
+  + '#accountName, #chosenFiles, #fileFailures, #describeReminder, #describeBody, #filesBody';
 
 // The element a click is really "on": the nearest control or item above the
 // exact thing under the pointer (often a <span> inside a button).
@@ -185,7 +187,10 @@ export function viewEvent(view, via){
 }
 
 // The places the page shows a message; see the activity contract.
-export const SHOWN_PLACES = Object.freeze(['loadStatus', 'saveStatus', 'loadProgress', 'restoredNotice', 'signIn']);
+export const SHOWN_PLACES = Object.freeze([
+  'loadStatus', 'saveStatus', 'loadProgress', 'signIn', 'signInStatus', 'fileFailures', 'describeStatus',
+  'describeReminder',
+]);
 
 // A message the page showed, by its identifier (ui/widgets/page-messages.js).
 // facts: the message's live values; only numbers (`count`, `attempt`,

@@ -38,6 +38,11 @@ export function parseUploadedConversations(rawText){
   const { conversations: data, alreadyProcessed } = unwrapUploadedJSON(parsedJSON);
 
   const conversations = [];
+  // Beside `conversations` rather than in it: each conversation's id, which
+  // joins it to its record from GET /conversations, and how many of its
+  // messages have no time, which decides how it is placed (core/blocks.js).
+  const conversationIds = [];
+  const untimedCounts = [];
   const messages = [];
   const humanMessages = [];
   const embeddedOverrides = {};
@@ -45,6 +50,8 @@ export function parseUploadedConversations(rawText){
   data.forEach((c, idx) => {
     const msgs = c.chat_messages || [];
     conversations.push({ name: c.name || '(untitled)', total_messages: msgs.length });
+    conversationIds.push(c.uuid || null);
+    untimedCounts.push(msgs.filter((m) => !m.created_at).length);
     msgs.forEach((m, rawIndex) => {
       const ts = m.created_at;
       if(!ts) return;
@@ -90,5 +97,8 @@ export function parseUploadedConversations(rawText){
     });
   });
 
-  return { conversations, messages, humanMessages, embeddedOverrides, rawData: data, alreadyProcessed };
+  return {
+    conversations, conversationIds, untimedCounts, messages, humanMessages, embeddedOverrides, rawData: data,
+    alreadyProcessed,
+  };
 }

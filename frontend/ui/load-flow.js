@@ -1,109 +1,68 @@
-// Getting data onto the screen: upload the file you pick, optionally run the
-// backend's flag detection page by page with progress, download the processed
-// export, hand it to core/export-format.js, and draw every view. On page load
-// it also reopens your last session if the backend still has it, then opens
-// the view named in the web address.
+// Getting data onto the screen (plan docs/plans/2026-10-05-screen-flow.md §6,
+// §6b): the Upload page, which sends one or more files, waits for the server
+// to process them and optionally runs the scan; the step functions it and
+// the loading modal are built from; and drawing the downloaded timeline.
+//
+// Which page shows next is ui/page-flow.js's decision. The Upload page
+// reports to it through the `flow` main.js connects (connectUploadPage);
+// nothing here imports it, since modules at this level don't import each
+// other (frontend/tests/structure.test.js).
 
 import { buildBlocks } from '../core/blocks.js';
 import { parseUploadedConversations } from '../core/export-format.js';
 import { attachFlags } from '../core/flags.js';
+import { formatBytes } from '../core/format.js';
 import { state } from '../core/state.js';
 import { errorKindOf, errorStatusOf, PageError } from '../core/page-error.js';
-import { noteMainShown } from '../core/activity-sink.js';
-import { API_BASE, apiFetch, clearAuthToken, downloadSignedExport, ensureAuthToken, fetchUploadStatus, putWithProgress, requestFailure, serverUrl, signedInLabel, usesRealLogin } from '../infra/api-client.js';
+import { startBatch } from '../core/upload-batch.js';
+import { API_BASE, apiFetch, downloadSignedExport, ensureAuthToken, fetchConversationRecords, fetchUploadStatus, putWithProgress, requestFailure, serverUrl, signedInLabel, usesRealLogin } from '../infra/api-client.js';
 import { waitForProcessing } from '../core/upload-wait.js';
-import { applyLocationHash } from './router.js';
 import { renderCalendar } from './views/calendar.js';
 import { renderConvList } from './views/conversations.js';
+import { renderFiles } from './views/files.js';
 import { renderSubtitle } from './views/header.js';
 import { renderReviewTable } from './views/review.js';
-import { failLoadProgress, hideLoadProgress, makeRateEstimator, setLoadProgressIndeterminate, setLoadProgressMeasured, setLoadStatus, setSaveStatus, showDownloadProgress, showLoadProgress, showRestoredNotice, showScanProgress, showSendProgress, showWaitProgress } from './widgets/status-indicators.js';
+import { addFileLine, clearFileLines, failLoadProgress, hideLoadProgress, makeRateEstimator, setLoadProgressIndeterminate, setLoadProgressMeasured, setLoadStatus, setSaveStatus, showDownloadProgress, showLoadProgress, showScanProgress, showSendProgress, showWaitProgress } from './widgets/status-indicators.js';
 
-// Applies an already-downloaded export, plus the flag handles from the same
-// GET /export reply: parses it, replaces the page's state, and shows the
-// timeline. Returns false if the export held no
-// conversations, leaving the caller to report that however suits it.
-//
-// Shared by the upload path and the restore-on-load path below, so a
-// restored session goes through exactly the same rendering as a fresh
-// upload rather than a parallel copy that can drift.
-function applyExportText(text, flagHandles){
+// Draws an already-downloaded export, with the flag handles from the same
+// GET /export reply and the conversations' records: parses it, replaces the
+// page's state and draws every view. Returns false if the export held no
+// conversations, leaving the caller to report that however suits it. Which
+// page is shown is the caller's business.
+export function applyExportText(text, flagHandles, records, uploads){
   const parsed = parseUploadedConversations(text);
   if(parsed.conversations.length === 0) return false;
-
-  state.conversations = parsed.conversations;
+  state.records = new Map(records.map((r) => [r.conversation_id, r]));
+  state.uploads = uploads;
+  state.conversations = parsed.conversations.map((c, i) => ({
+    ...c, id: parsed.conversationIds[i], untimed: parsed.untimedCounts[i],
+  }));
   state.messages = parsed.messages;
   state.humanMessages = parsed.humanMessages;
   state.humanById = new Map(state.humanMessages.map(m => [m.id, m]));
-  state.blocks = buildBlocks();
   state.rawData = parsed.rawData;
   state.flagHandles = flagHandles;
-
   // Your confirmed flags come from whatever the server's export embedded
   // (overrides you PATCHed to the backend earlier -- see
   // patchFlagsToBackend). There's no other recovery mechanism; see the
   // migration plan's V2a.
   state.overrides = { ...parsed.embeddedOverrides };
   const embeddedCount = Object.keys(parsed.embeddedOverrides).length;
-
-  attachFlags();
-  if(embeddedCount > 0){
-    setSaveStatus('flags.loaded', { count: embeddedCount });
-  }
-
-  document.getElementById('loadScreen').hidden = true;
-  document.getElementById('mainContent').hidden = false;
-  noteMainShown(true);
-
-  renderSubtitle();
-  renderCalendar();
-  renderConvList();
-  renderReviewTable();
+  redrawTimeline();
+  if(embeddedCount > 0) setSaveStatus('flags.loaded', { count: embeddedCount });
   return true;
 }
 
-// Picks up the last session on load, so a reload or a Back press past the
-// first entry doesn't cost you the whole upload again. The backend still
-// holds the processed export; all this needs is the name it was uploaded
-// under.
-//
-// Announced rather than silent: a page that quietly opens with old data
-// leaves you unsure whether you're looking at this file or the last one.
-// Everything about it is best-effort -- no remembered name, a server that
-// was restarted (its storage is in-memory), or anything else unexpected
-// just means the normal load screen, which is the correct fallback and not
-// an error worth shouting about.
-//
-// With a real sign-in, the remembered name is your account: being signed in
-// is enough to try.
-export async function tryRestoreSession(){
-  let sub = null;
-  if(usesRealLogin()){
-    sub = await signedInLabel();
-    if(!sub) return;
-  } else {
-    try{ sub = localStorage.getItem('timeline_dev_sub'); } catch(e){ return; }
-    if(!sub) return;
-    document.getElementById('devLoginSub').value = sub;
-  }
-  try{
-    const token = await ensureAuthToken(document.getElementById('devLoginSub').value.trim());
-    const exportRes = await apiFetch('/export', { token });
-    if(!exportRes.ok) return;
-    const { export_url, flag_handles } = await exportRes.json();
-    const { res: downloadRes, text } = await downloadSignedExport(serverUrl(export_url), () => {});
-    if(!downloadRes.ok) return;
-    if(!applyExportText(text, flag_handles)) return;
-
-    showRestoredNotice(sub);
-    applyLocationHash();
-  } catch(e){
-    // The server being gone or unreachable is the ordinary case here, not a
-    // fault: it just means there is nothing to restore. Logged rather than
-    // swallowed so a genuinely surprising failure is still visible.
-    console.info('No previous session restored:', e.message);
-    clearAuthToken();
-  }
+// Rebuilds the sessions (a changed start or end moves a conversation whose
+// messages have no times) and draws every view.
+export function redrawTimeline(){
+  state.blocks = buildBlocks();
+  attachFlags();
+  renderSubtitle();
+  renderCalendar();
+  renderConvList(document.getElementById('convSearch').value);
+  renderReviewTable();
+  renderFiles();
 }
 
 // --- One function per step of getting a file onto the screen ---
@@ -239,60 +198,198 @@ export function downloadWithBar(token){
   });
 }
 
-export async function handleLoadClick(){
-  const convFile = document.getElementById('loadConvFile').files[0];
-  const runDetection = document.getElementById('autoDetectCheckbox').checked;
-  if(!convFile){
+// --- The Upload page ---
+
+// The files chosen so far. Kept here rather than read from the file input,
+// whose list can't have a file taken out of it.
+let CHOSEN = [];
+let FLOW = null;
+let BATCH = null;
+
+// flow: { hasData(), dataArrived(), toSignIn(messageId), afterUpload(result) }, from
+// ui/page-flow.js through main.js.
+export function connectUploadPage(flow){
+  FLOW = flow;
+}
+
+// Whether files are being sent or processed now.
+export function uploading(){
+  return BATCH !== null;
+}
+
+// Empties the page for a new batch: no files, no messages, no bar. "Back to
+// timeline" shows only when there is a timeline to go back to.
+export function resetUploadPage(hasData){
+  CHOSEN = [];
+  document.getElementById('loadConvFile').value = '';
+  showChosenFiles();
+  setLoadStatus(null);
+  hideLoadProgress();
+  clearFileLines();
+  showUploadButtons(false, hasData);
+}
+
+function showUploadButtons(sending, hasData){
+  document.getElementById('loadBtn').hidden = sending;
+  document.getElementById('stopBtn').hidden = !sending;
+  document.getElementById('uploadBackBtn').hidden = sending || !hasData;
+}
+
+// The file input's choice joins the list, which shows each file's name and
+// size with a Remove button.
+export function chooseFiles(){
+  CHOSEN = CHOSEN.concat(Array.from(document.getElementById('loadConvFile').files));
+  showChosenFiles();
+}
+
+function showChosenFiles(){
+  const list = document.getElementById('chosenFiles');
+  list.replaceChildren(...CHOSEN.map((file, i) => {
+    const li = document.createElement('li');
+    const name = document.createElement('span');
+    name.textContent = file.name;
+    const size = document.createElement('span');
+    size.className = 'size';
+    size.textContent = formatBytes(file.size);
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'btn-secondary btn-small';
+    remove.textContent = 'Remove';
+    remove.addEventListener('click', () => { CHOSEN.splice(i, 1); showChosenFiles(); });
+    li.append(name, size, remove);
+    return li;
+  }));
+}
+
+export function stopUpload(){
+  if(BATCH) BATCH.stop();
+}
+
+// Upload pressed: sign-in token, every file at once, the scan if ticked,
+// then on to Describe (through the flow) with what was processed.
+export async function handleUploadClick(){
+  const files = CHOSEN.slice();
+  const scan = document.getElementById('autoDetectCheckbox').checked;
+  if(!files.length){
     setLoadStatus('load.choose_file');
     hideLoadProgress();
     return;
   }
+  clearFileLines();
+  showLoadProgress();
+  const token = await signInForUpload();
+  if(!token) return;
+  showUploadButtons(true, false);
+  const result = await sendBatch(token, files, scan);
+  if(result.processed.length > 0) FLOW.dataArrived();
+  showUploadButtons(false, FLOW.hasData());
+  if(result.processed.length === 0) return reportNothingProcessed(files, result);
+  if(await finishBatch(token, scan)) FLOW.afterUpload({ token, files, ...result });
+}
+
+async function signInForUpload(){
+  setLoadStatus('load.signing_in');
+  setLoadProgressIndeterminate('progress.signing_in');
   try{
-    showLoadProgress();
-    setLoadStatus('load.signing_in');
-    setLoadProgressIndeterminate('progress.signing_in');
-    const token = await ensureAuthToken(document.getElementById('devLoginSub').value.trim());
-    setLoadStatus('load.sending');
-    setLoadProgressIndeterminate('progress.reading_file');
-    const sendEta = makeRateEstimator(3000);
-    const waitStarted = { at: 0 };
-    let lastAnswer = null;
-    const showWait = () => { if(lastAnswer) showWaitProgress(lastAnswer, Date.now() - waitStarted.at); };
-    const clock = setInterval(showWait, 1000);
-    try{
-      await uploadOneFile(token, convFile, runDetection, await humanName(), {
-        sent: (loaded, total) => { setLoadProgressMeasured(); showSendProgress(loaded, total, sendEta(loaded, total)); },
-        sendingDone: () => {
-          waitStarted.at = Date.now();
-          setLoadStatus('load.processing');
-          setLoadProgressIndeterminate('progress.processing');
-        },
-        answer: (answer) => { lastAnswer = answer; showWait(); },
-        registerAbort: () => {},
-        sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-      });
-    } finally {
-      clearInterval(clock);
-    }
-    // Only if asked. Detection reads every message you sent, and nothing
-    // here has measured how long that takes, so it is never implied by the
-    // act of uploading.
-    if(runDetection){
+    return await ensureAuthToken(document.getElementById('devLoginSub').value.trim());
+  } catch(err){
+    return failUpload(err);
+  }
+}
+
+// A failure the whole batch shares, on the status line; an expired
+// sign-in goes back to the Sign-in page instead.
+function failUpload(err){
+  console.error(err);
+  if(errorKindOf(err) === 'not_logged_in' && usesRealLogin()){
+    FLOW.toSignIn('signIn.ran_out');
+    return null;
+  }
+  failLoadProgress();
+  setLoadStatus(...describeLoadFailure(err));
+  return null;
+}
+
+// Sends and waits for every file at once; one bar for the bytes sent across
+// all of them, then the wait for the server. Resolves to the batch's result.
+async function sendBatch(token, files, scan){
+  setLoadStatus('load.sending');
+  setLoadProgressIndeterminate('progress.reading_file');
+  const human = await humanName();
+  const eta = makeRateEstimator(3000);
+  const wait = waitingDisplay(files.length);
+  BATCH = startBatch(files, (file, ctx) => uploadOneFile(token, file, scan, human, {
+    sent: ctx.sent, sendingDone: () => { ctx.sendingDone(); wait.oneSent(); },
+    answer: wait.answer, registerAbort: ctx.registerAbort, sleep: ctx.sleep,
+  }), {
+    progress: (loaded, total) => { setLoadProgressMeasured(); showSendProgress(loaded, total, eta(loaded, total)); },
+    failed: (index, error) => { wait.oneSent(); addFileLine('load.file_failed', failureLine(files[index], error)); },
+  });
+  try{
+    const result = await BATCH.done;
+    result.stopped.forEach((i) => addFileLine('load.file_stopped', { file: files[i].name }));
+    return result;
+  } finally {
+    BATCH = null;
+    wait.stop();
+  }
+}
+
+// The wait for the server, once every file's bytes are sent: a moving bar
+// and a clock, with the latest answer's attempt and error.
+function waitingDisplay(count){
+  let left = count;
+  let started = 0;
+  let last = null;
+  const show = () => { if(last) showWaitProgress(last, Date.now() - started); };
+  const clock = setInterval(show, 1000);
+  return {
+    oneSent: () => {
+      left -= 1;
+      if(left !== 0) return;
+      started = Date.now();
+      setLoadStatus('load.processing');
+      setLoadProgressIndeterminate('progress.processing');
+    },
+    answer: (answer) => { last = answer; show(); },
+    stop: () => clearInterval(clock),
+  };
+}
+
+function failureLine(file, error){
+  const [, values] = describeLoadFailure(error);
+  return { ...values, file: file.name };
+}
+
+// Nothing processed: every file failed, or Stop came first. One file's
+// failure reads as it always has; several are summed up, their reasons
+// listed below the bar.
+function reportNothingProcessed(files, result){
+  failLoadProgress();
+  if(result.failed.length === 0) setLoadStatus('load.stopped_none');
+  else if(files.length === 1) setLoadStatus(...describeLoadFailure(result.failed[0].error));
+  else setLoadStatus('load.none_succeeded', { count: files.length });
+}
+
+// The scan, if ticked, then a check that the user has any conversations at
+// all: a file of none leaves nothing to describe or show. Resolves to
+// whether to go on to Describe.
+async function finishBatch(token, scan){
+  try{
+    if(scan){
       setLoadStatus('load.scanning');
       await runDetectionPass(token, showScanProgress);
-      setLoadProgressIndeterminate('progress.processing');
     }
-    const { text, flagHandles } = await downloadWithBar(token);
-    setLoadProgressIndeterminate('progress.preparing');
-    if(!applyExportText(text, flagHandles)){
+    if((await fetchConversationRecords(token)).length === 0){
       setLoadStatus('load.no_conversations');
       failLoadProgress();
-      return;
+      return false;
     }
-    hideLoadProgress();
   } catch(err){
-    console.error(err);
-    failLoadProgress();
-    setLoadStatus(...describeLoadFailure(err));
+    failUpload(err);
+    return false;
   }
+  hideLoadProgress();
+  setLoadStatus(null);
+  return true;
 }

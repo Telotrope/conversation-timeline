@@ -4,7 +4,14 @@
 // exports, but it can change the fields of an exported object.
 
 export const state = {
+  // Each conversation: { name, total_messages, id, untimed }. `id` joins it
+  // to its record in `records`; `untimed` counts its messages with no time.
   conversations: [],
+  // Each conversation's record from GET /conversations (its metadata), by
+  // id; and the user's files from GET /uploads, newest first (plan
+  // docs/plans/2026-10-05-screen-flow.md §8c).
+  records: new Map(),
+  uploads: [],
   rawData: null, // the parsed conversations.json array, kept as-is so we can re-export it annotated
   messages: [],
   humanMessages: [],

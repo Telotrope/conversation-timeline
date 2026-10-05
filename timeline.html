@@ -13,25 +13,44 @@
 </head>
 <body>
 <div class="wrap">
-  <div id="loadScreen">
+  <!-- Five pages share this one document, shown one at a time by
+       ui/navigation/pages.js (plan docs/plans/2026-10-05-screen-flow.md §3, §9c). -->
+  <section id="signInPage" class="page page-narrow" hidden>
     <header>
-      <h1>A record of our conversations</h1>
-      <p class="sub">This page reads your exported Claude conversation data directly in your browser — nothing is uploaded anywhere. Choose your <code>conversations.json</code> export below — this can be a fresh export from Claude, or a file this page previously saved for you (with your flags already in it).</p>
+      <h1>A record of your conversations with AI</h1>
+      <p class="sub">Upload the conversation exports from your AI assistant, say who was talking and how, and see your conversations laid out by day: when you talked, for how long, and the moments that went badly. You can mark messages that were critical, angry or shouted, and download your files back with your marks in them. Your files are stored in your account so you can come back to them.</p>
     </header>
     <div class="load-panel">
-      <div class="load-field">
-        <label for="loadConvFile">Conversations export <span class="req">(required)</span></label>
-        <input type="file" id="loadConvFile" accept="application/json">
-      </div>
       <div class="load-field" id="devLoginField">
-        <label for="devLoginSub">Dev login name <span class="req">(required — local development only; a deployment signs in with Cognito)</span></label>
+        <label for="devLoginSub">Dev login name <span class="req">(local development only; a deployment signs in with Cognito)</span></label>
         <input type="text" id="devLoginSub" placeholder="e.g. alice" value="alice">
+        <button type="button" id="devLoginBtn" class="btn-primary btn-spaced">Continue</button>
       </div>
       <div class="load-field" id="cognitoLoginField" hidden>
-        <label>Your account</label>
         <p class="load-status" id="cognitoLoginStatus">Checking whether you're signed in…</p>
         <button type="button" id="cognitoSignInBtn" class="btn-primary" hidden>Sign in</button>
         <button type="button" id="cognitoSignOutBtn" class="btn-secondary" hidden>Sign out</button>
+      </div>
+      <p class="load-status" id="signInStatus"></p>
+      <button type="button" id="checkAgainBtn" class="btn-secondary" hidden>Try again</button>
+    </div>
+  </section>
+
+  <div id="accountBar" class="account-bar" hidden>
+    <span>Signed in as <span id="accountName"></span></span>
+    <button type="button" id="accountSignOutBtn" class="btn-secondary btn-small">Sign out</button>
+  </div>
+
+  <section id="uploadPage" class="page page-narrow" hidden>
+    <header>
+      <h1>Add your conversations</h1>
+      <p class="sub">Choose one or more conversation exports (<code>conversations.json</code>). Conversations you have uploaded before are recognised, and only their new messages are added.</p>
+    </header>
+    <div class="load-panel">
+      <div class="load-field">
+        <label for="loadConvFile">Conversation files</label>
+        <input type="file" id="loadConvFile" accept="application/json" multiple>
+        <ul id="chosenFiles" class="file-list"></ul>
       </div>
       <div class="load-field load-checkbox-field">
         <label>
@@ -48,20 +67,38 @@
           </span>
         </label>
       </div>
-      <button id="loadBtn" class="btn-primary">Load</button>
-      <p class="load-status" id="loadStatus"></p>
-      <div id="loadProgress" hidden>
-        <div class="progress-track"><div class="progress-fill" id="loadProgressFill"></div></div>
-        <div class="progress-label" id="loadProgressLabel"></div>
+      <div class="button-row">
+        <button id="loadBtn" class="btn-primary">Upload</button>
+        <button type="button" id="stopBtn" class="btn-secondary" hidden>Stop</button>
+        <button type="button" id="uploadBackBtn" class="btn-secondary" hidden>Back to timeline</button>
       </div>
+      <!-- The status line and bar; the loading modal borrows them while it is open. -->
+      <div id="loadProgressGroup">
+        <p class="load-status" id="loadStatus"></p>
+        <div id="loadProgress" hidden>
+          <div class="progress-track"><div class="progress-fill" id="loadProgressFill"></div></div>
+          <div class="progress-label" id="loadProgressLabel"></div>
+        </div>
+      </div>
+      <ul id="fileFailures" class="file-lines"></ul>
     </div>
-  </div>
+  </section>
+
+  <section id="describePage" class="page" hidden>
+    <header>
+      <h1 id="describeTitle">Describe your files</h1>
+      <p class="sub">Who took part, how the conversations were held, and how they were transcribed. The answers start as a guess; change anything that's wrong, then press Done.</p>
+    </header>
+    <div id="describeReminder" class="filter-banner reminder" hidden></div>
+    <div id="describeBody"></div>
+    <div class="button-row">
+      <button type="button" id="describeSaveBtn" class="btn-primary">Done</button>
+      <button type="button" id="describeLeaveBtn" class="btn-secondary">Cancel</button>
+    </div>
+    <p class="load-status" id="describeStatus"></p>
+  </section>
 
   <div id="mainContent" hidden>
-  <div class="filter-banner" id="restoredNotice" hidden>
-    <span id="restoredNoticeText"></span>
-    <button id="restoredNoticeDismiss" class="btn-secondary btn-small">Dismiss</button>
-  </div>
   <header>
     <h1>A record of our conversations</h1>
     <p class="sub" id="subtitle">Loading…</p>
@@ -72,7 +109,7 @@
       <span class="tag"><span class="flag-icon caps">A</span> Contains an ALL-CAPS word</span>
     </div>
     <p class="hint under-key">Critical and angry are judgment calls; ALL-CAPS is mechanical. All three can be corrected by hand in the "Review &amp; flags" tab — this view reflects your overrides.</p>
-    <button id="loadDifferentBtn" class="btn-secondary btn-spaced">Load a different file…</button>
+    <button type="button" id="addConversationsBtn" class="btn-secondary btn-spaced">Add conversations…</button>
   </header>
 
   <div class="global-toggles">
@@ -87,6 +124,7 @@
     <button data-tab="conversations">Conversations</button>
     <button data-tab="review">Review &amp; flags</button>
     <button data-tab="analytics">Analytics</button>
+    <button data-tab="files">Files</button>
   </nav>
 
   <div class="view active" id="view-calendar">
@@ -152,10 +190,28 @@
     </div>
   </div>
 
+  <div class="view" id="view-files">
+    <p class="hint before-table">Every file you have uploaded. A file's details apply to the conversations that first came in it; Edit details changes them for all of those at once.</p>
+    <div id="filesBody"></div>
+  </div>
+
   <footer>
     Your conversation export is uploaded to your timeline backend, which stores it and computes
     the automatic tags. Your confirmed flags are saved there too.
   </footer>
+  </div>
+</div>
+
+<!-- The loading modal: in front of the timeline while it downloads
+     (ui/widgets/loading-modal.js). It borrows #loadProgressGroup. -->
+<div id="loadingModal" class="modal-backdrop" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="loadingModalTitle">
+    <h2 id="loadingModalTitle">Loading your timeline</h2>
+    <div id="loadingModalSlot"></div>
+    <div class="button-row" id="loadingModalActions" hidden>
+      <button type="button" id="loadingRetryBtn" class="btn-primary">Try again</button>
+      <button type="button" id="loadingSignOutBtn" class="btn-secondary">Sign out</button>
+    </div>
   </div>
 </div>
 

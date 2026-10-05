@@ -1,6 +1,8 @@
-// The page's progress and status lines: the load screen's message and
-// progress bar with its time-remaining estimate, the notice that a previous
-// session was restored, and the "Saved." / "Could not save" line.
+// The page's progress and status lines: the progress bar with its
+// time-remaining estimate and the status line above it (on the Upload page,
+// or borrowed by the loading modal), the per-file lines below the bar, the
+// Sign-in and Describe pages' own lines, and the "Saved." / "Could not
+// save" line.
 
 import { formatBytes, formatEta } from '../../core/format.js';
 import { waitMessageId } from '../../core/upload-wait.js';
@@ -16,17 +18,73 @@ function recordShown(where, id, entry, values){
   recordActivity(shownEvent(where, id, entry.isError, recordedValues(entry, values)));
 }
 
-// id null clears the line, which shows nothing and isn't recorded.
-export function setLoadStatus(id, values = {}){
-  const el = document.getElementById('loadStatus');
+// Shows message `id` on the status line `elementId`, red when it reports an
+// error, and records it as shown at `where`. id null clears the line, which
+// shows nothing and isn't recorded.
+function setLine(elementId, where, id, values){
+  const el = document.getElementById(elementId);
   if(id === null){
     el.textContent = '';
+    el.classList.remove('is-error');
     return;
   }
   const entry = pageMessage(id);
   el.textContent = entry.text(values);
   el.classList.toggle('is-error', entry.isError);
-  recordShown('loadStatus', id, entry, values);
+  recordShown(where, id, entry, values);
+}
+
+// The status line above the progress bar.
+export function setLoadStatus(id, values = {}){
+  setLine('loadStatus', 'loadStatus', id, values);
+}
+
+// The Sign-in page's own line: a sign-in that ran out, or the server
+// unreachable while checking for your conversations.
+export function setSignInStatus(id, values = {}){
+  setLine('signInStatus', 'signInStatus', id, values);
+}
+
+// The Describe page's line, beside Done.
+export function setDescribeStatus(id, values = {}){
+  setLine('describeStatus', 'describeStatus', id, values);
+}
+
+// One line per file below the Upload page's bar, for a file that failed
+// or was stopped. clearFileLines empties the list.
+export function addFileLine(id, values = {}){
+  const entry = pageMessage(id);
+  const li = document.createElement('li');
+  li.textContent = entry.text(values);
+  li.classList.toggle('is-error', entry.isError);
+  document.getElementById('fileFailures').appendChild(li);
+  recordShown('fileFailures', id, entry, values);
+}
+
+export function clearFileLines(){
+  document.getElementById('fileFailures').replaceChildren();
+}
+
+// The Describe page's reminder of the batch's files that aren't there,
+// each with why: [{ file, reason }]. Empty hides it.
+export function showDescribeReminder(items){
+  const box = document.getElementById('describeReminder');
+  box.hidden = items.length === 0;
+  if(items.length === 0){
+    box.replaceChildren();
+    return;
+  }
+  const entry = pageMessage('describe.reminder');
+  const intro = document.createElement('span');
+  intro.textContent = entry.text({ count: items.length });
+  const list = document.createElement('ul');
+  list.append(...items.map(({ file, reason }) => {
+    const li = document.createElement('li');
+    li.textContent = `${file}: ${reason}`;
+    return li;
+  }));
+  box.replaceChildren(intro, list);
+  recordShown('describeReminder', 'describe.reminder', entry, { count: items.length });
 }
 
 // --- Load-screen progress ---
@@ -160,15 +218,6 @@ export function makeRateEstimator(windowMs){
     if(elapsed < 1 || moved <= 0) return '';
     return formatEta((total - loaded) / (moved / elapsed));
   };
-}
-
-export function showRestoredNotice(sub){
-  const notice = document.getElementById('restoredNotice');
-  const entry = pageMessage('restored');
-  document.getElementById('restoredNoticeText').textContent = entry.text({ sub });
-  notice.hidden = false;
-  recordShown('restoredNotice', 'restored', entry);
-  document.getElementById('restoredNoticeDismiss').onclick = () => { notice.hidden = true; };
 }
 
 // An error message here only marks the activity record; the line looks the
