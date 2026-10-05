@@ -110,8 +110,8 @@ and the file it came from. Each was put off by the user's decision unless noted.
 6. **Guessing metadata from a file's contents.** When a file is uploaded, every conversation gets
    metadata at once, so nothing is left blank if the user never edits it. In the screen-flow plan
    that first version is fixed defaults: one human named with the signed-in account, plus Claude;
-   typed; start and end from the earliest and latest message (or, with no message times, the
-   file's last-written time, else the upload time). The user wants real guesses read
+   typed; start and end from the earliest and latest message (or, with no message times, ending
+   at the file's last-written time, else the upload time, and starting an hour earlier). The user wants real guesses read
    from the file (who spoke, whether it was voice, which transcriber), which the user then approves
    or corrects on the same Describe page. The defaults are made by one function, `guess_summary`,
    so this work replaces only its guesses. Each conversation already records whether its

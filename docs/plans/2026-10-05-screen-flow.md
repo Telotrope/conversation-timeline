@@ -342,8 +342,9 @@ defaults, made in one function so that the later guessing plan replaces only tha
 - **Start and end:** the times of the conversation's earliest and latest messages. Every message in
   a Claude file has its own time (`created_at`, which
   [model.rs:163](../../backend/timeline-core/src/model.rs#L163) requires). **With no message times**
-  (the user, 2026-10-05): both are the time the file was last written, if the browser reports it,
-  or else the upload time. The browser reports a chosen file's last-written time (`File.lastModified`),
+  (the user, 2026-10-05): the conversation ends at the time the file was last written, if the
+  browser reports it, or else at the upload time, and starts one hour before that, so no
+  conversation is zero length. The browser reports a chosen file's last-written time (`File.lastModified`),
   and the page sends it with `POST /uploads` (§8c). For a file downloaded from an assistant, that
   is usually when it was downloaded, not when its conversations happened; it is still a better
   first guess than nothing, and it is marked guessed. So every conversation always has a start and
@@ -776,8 +777,8 @@ the upload pieces. Each new piece, what already exists, and the decision:
   with some timed and some untimed messages is placed by its start and end (§7f, C15).
 - **Rust, through the public API:**
   - `guess_summary` on the fixture: participants, Typed, earliest and latest message times; for a
-    conversation with no message times, the file's last-written time when given, else the upload
-    time.
+    conversation with no message times, an end at the file's last-written time when given, else at
+    the upload time, and a start one hour earlier.
   - Processing writes metadata on every new conversation.
   - Re-uploading: the same file again adds nothing and writes no addition objects; a later file's
     added messages are saved as addition objects and the export reads those, not the later file; a later file with new messages in a known
