@@ -653,10 +653,9 @@ already repeats itself in three ways:
    instead of a colour, the way the progress bar already does (`.progress-fill.is-error`). Showing
    and hiding pages uses a class too, as `switchTab` already does for tabs (`.view.active`), so
    `showPage` mirrors it.
-4. **No inline styles in markup this plan writes or moves.** The load screen's fields move to the
-   Sign-in and Upload pages, and their inline styles become classes on the way. The 7 inline styles
-   left in the Timeline's own markup (lines 746-818) are converted too only if the user agrees
-   (Q21).
+4. **No inline styles anywhere** (the user, Q21): every `style="…"` in the markup becomes a class
+   in the stylesheet, including the seven in the Timeline's own markup (lines 746-818), and the
+   load screen's as they move to the Sign-in and Upload pages.
 5. **New pieces reuse existing classes**: `.load-panel` and `.load-field` for every form (Sign-in,
    Upload, Describe), `.btn-primary`/`.btn-secondary` for buttons, `.filter-banner` for the
    reminders and warnings, the `.progress-*` classes for the bar, `.hint` and `.note` for
@@ -666,7 +665,7 @@ already repeats itself in three ways:
 **A correction.** Earlier drafts said the new pages would follow the page's "orange accents". That
 was wrong: I had not looked. The page's accent is a green (`--accent: #3C6E64`) with an amber, and
 its fonts are Spectral and Inter. The project's instructions ask for orange as the brand colour and
-no Inter. This plan doesn't change the palette or fonts; Q22 asks whether it should.
+no Inter; the user decided (Q22) to leave the accent and fonts as they are for now.
 
 ### 9c. One document, five pages
 
@@ -845,19 +844,13 @@ number written out rather than as a numbered list (which Markdown renumbers on d
 - **Q19** — placed by start and end, with a warning at upload (§7d, §7f).
 - **Q20** — the later rule refines the earlier one: a conversation without an id is compared only
   with stored conversations that also lack one (§8b-2).
+- **Q21** — all styling goes in the stylesheet, the Timeline's inline styles included (§9b).
+- **Q22** — the green accent and the Inter font stay for now (§9b).
 - **Q12** — yes: the three items it replaces in the migration plan
   ([lines 1442, 1445 and 1451](2026-09-09-rust-aws-backend-migration.md#L1442)) are marked as
   replaced by this plan (done 2026-10-05).
 
-**Still open:**
-
-- **Q21 — The Timeline's own inline styles.** Seven `style="…"` attributes remain in the
-  Timeline's markup (timeline.html lines 746-818: margins on hints and buttons, and `display:none`
-  on two banners). This plan converts the inline styles in markup it moves. Convert these seven to
-  classes as well, in this plan, so no styling lives outside the stylesheet?
-- **Q22 — Palette and fonts.** The page uses a green accent and the Inter font; the project's
-  instructions ask for orange as the brand colour and no Inter. Change them in this plan (one
-  stylesheet makes it a change to a few named values), in a separate plan, or leave them?
+**Still open:** none.
 
 **Formerly open, kept for the record:**
 
@@ -923,7 +916,7 @@ sessionStorage. Trigger: the user reports losing answers, or the renewal item is
 ### C7 [OPEN]: Existing browser tests drive the old load screen
 Their page-driving steps (pick a file, press Load, wait for `#mainContent`) won't match the new
 pages.
-**Mitigation in plan:** [§10 (line 797)](2026-10-05-screen-flow.md#L797) commits to bringing the
+**Mitigation in plan:** [§10 (line 796)](2026-10-05-screen-flow.md#L796) commits to bringing the
 list of changes to the user before coding. **Open:** the list is written when the plan is approved.
 
 ### C8 [RESOLVED]: A conversation in two files
@@ -1004,7 +997,7 @@ The id-less case is built with the first format that has one.
 ### C17 [RESOLVED]: Question numbers didn't match what the reader saw
 §12 wrote open questions as a Markdown numbered list starting at 1, 3, 4, 8…; Markdown renumbers
 such lists on display, so the user saw 1–5 and couldn't find Q3, Q4, Q8 or Q12.
-**Resolution:** every question is labelled "Q" with its number as text; see [§12 (line 817)](2026-10-05-screen-flow.md#L817).
+**Resolution:** every question is labelled "Q" with its number as text; see [§12 (line 816)](2026-10-05-screen-flow.md#L816).
 
 ### C18 [OPEN]: Judging new messages by timeframe misses messages inside the range
 With the user's rule (Q18), a message timed inside the stored range is assumed present. A message
@@ -1021,7 +1014,7 @@ existing code the plan would otherwise have duplicated: the message registry and
 content regions, the page's text cleaning, the `not_logged_in` error, the route ownership pattern,
 the storage read helpers, the injected `sleep` that makes Stop need no change to the wait, and the
 synthetic export builder for tests.
-**Resolution:** the audit table and its decisions; see [§9a (line 706)](2026-10-05-screen-flow.md#L706).
+**Resolution:** the audit table and its decisions; see [§9a (line 705)](2026-10-05-screen-flow.md#L705).
 
 ### C20 [RESOLVED]: The plan built the page-flow model as code, and didn't show how the old pages are reused
 The plan proposed a state-machine module, which the user pointed out makes no sense: the diagram
@@ -1040,5 +1033,5 @@ The plan said nothing about where the new pages' styling would live, and claimed
 uses.
 **Resolution:** [§9b (line 624)](2026-10-05-screen-flow.md#L624): the style block becomes one file,
 repeats become named values, JavaScript sets classes not colours, new pages reuse existing classes;
-the palette question is Q22.
+the user kept the palette and fonts (Q22) and asked for every inline style to move (Q21).
 
