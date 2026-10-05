@@ -1,6 +1,6 @@
 # Screen flow: sign-in, upload, conversation details, timeline
 
-**Status:** proposed 2026-10-05, revised the same day with the user's answers; not approved. Open
+**Status:** proposed 2026-10-05, revised twice the same day with the user's answers; not approved. Open
 questions are in §12.
 
 **What this replaces.** Three items in the migration plan's list of work after the deployment
@@ -89,7 +89,7 @@ stateDiagram-v2
     Loading --> Timeline: waits [download finishes]
 
     Timeline --> Upload: presses Add conversations
-    Timeline --> Describe: presses Edit details on a file in the Files tab
+    Timeline --> Describe: presses Edit details on a file (Files tab) or a conversation (Conversations tab)
 
     Upload --> SignIn: signs out [or sign-in ran out]
     Describe --> SignIn: signs out [or sign-in ran out]
@@ -113,10 +113,14 @@ The same arcs as a table, which is also the list the unit tests check (§10):
 | Timeline + loading modal | waits [download finishes] | Timeline |
 | Timeline | presses Add conversations | Upload |
 | Timeline | presses Edit details on a file in the Files tab | Describe, for that file |
+| Timeline | presses Edit details on the open conversation in the Conversations tab | Describe, for that conversation |
 | Upload, Describe, Timeline | signs out, or the sign-in runs out | Sign-in |
 
 The next visit never opens on Describe. A file you uploaded and never described keeps its guessed
-details (§7) until you change them from the Files tab.
+details (§7) until you change them from the Files tab or the Conversations tab.
+
+Describe → Timeline returns to where you came from: the Calendar after an upload, the Files tab or
+the open conversation otherwise.
 
 Failures don't change the page; they show on the page you're on, with what you can do next:
 
@@ -144,8 +148,10 @@ Notes:
    behind it and filled in when the download finishes.
 4. **Describe → Timeline usually skips the modal.** After an upload, the download starts as soon
    as the files are done (and the scan, if ticked, has run), in the background while you look over
-   the details. Coming from the Files tab, the timeline is already loaded. Saving details doesn't
-   change messages, so it needs no new download; the Files tab re-reads its list (§8c).
+   the details. Coming from the Files or Conversations tab, the timeline is already loaded. Saving
+   details doesn't change messages, so it needs no new download; the page re-reads the metadata
+   (§8c) and redraws, since an edited start or end time can move a conversation that has no
+   message times (§7f).
 5. **The sign-in running out.** Cognito's sign-in lasts an hour
    ([cognito-login.js:10-12](../../frontend/infra/cognito-login.js#L10-L12)). Any request that
    fails with "sign in first" moves to Sign-in with the message "Your sign-in ran out; sign in
@@ -164,7 +170,7 @@ Each page gets an address, so a reload reopens the right place and Back behaves 
 |---|---|---|
 | Sign-in | `#signin` | replaces the current entry |
 | Upload | `#upload` | **new entry** when reached from Timeline's "Add conversations"; otherwise replaces |
-| Describe | `#describe` after an upload; `#describe/<file id>` from the Files tab | replaces after an upload; **new entry** from the Files tab |
+| Describe | `#describe` after an upload; `#describe/file/<id>` from the Files tab; `#describe/conversation/<id>` from the Conversations tab | replaces after an upload; **new entry** from either tab |
 | Timeline | today's `#calendar`, `#conversations/3` and so on, plus `#files` | replaces on arrival; tab clicks add entries as today |
 | Timeline + loading modal | the Timeline's address | the modal adds nothing |
 
@@ -174,15 +180,15 @@ Consequences:
   Back to it shows the Calendar instead of doing nothing (§2's first finding).
 - **Back from Upload, reached through "Add conversations", returns to the Timeline**, as long as
   nothing is being sent.
-- **Back from Describe, reached through the Files tab, returns to the Files tab** without saving
-  (the same as "Back to timeline").
+- **Back from Describe, reached through the Files or Conversations tab, returns to that tab**
+  without saving (the same as "Back to timeline").
 - **Back while files are sending, or on Describe after an upload, is refused** (Q8): the page puts
   the page's address back and shows "Your files are still being sent; press Stop to stop" or
   "Press Done to go to your timeline". A page can't stop the browser's Back; it can only undo it
   after the fact, so this is the nearest equivalent.
 - **The address can't skip the checks.** Opening `…#upload` while signed out shows Sign-in;
-  opening `…#describe` with no batch in progress shows the Timeline; `…#describe/<file id>` for a
-  file that isn't yours shows the Files tab. The address says where you'd like to be; the state
+  opening `…#describe` with no batch in progress shows the Timeline; `…#describe/file/<id>` or
+  `…#describe/conversation/<id>` for something that isn't yours shows the Timeline. The address says where you'd like to be; the state
   machine decides where you are.
 - **Back across a Cognito sign-in still reopens the page.** A page can't remove history entries
   made before it. The sign-in library can open Cognito by replacing the current entry instead of
@@ -193,7 +199,7 @@ Consequences:
 
 ## 5. The Sign-in page
 
-- A heading and a short explanation of what the app does. Draft wording, for the user to change
+- A heading and a short explanation of what the app does. The user accepted this wording for now
   (Q1):
 
   > **A record of your conversations with AI.** Upload the conversation exports from your AI
@@ -228,7 +234,7 @@ Consequences:
     reminder at the top; or stays on Upload if none was processed.
   - **What Stop can't undo:** a file whose bytes reached the server is processed there whether or
     not the page waits (on AWS, the file landing in storage starts processing by itself). It then
-    appears in the Files tab with guessed details. The stopped-file reminder says so (Q14).
+    appears in the Files tab with guessed details. The stopped-file reminder says so. Stop never deletes anything (Q14).
 - After the last file finishes: if the scan box is ticked, the scan runs once over all your
   conversations (it already covers every conversation you have, not only new ones —
   [detect.rs:80](../../backend/timeline-api/src/routes/detect.rs#L80); C5); then the export
@@ -247,43 +253,40 @@ numbers); `putWithProgress` and `waitForProcessing` each gain a way to be cancel
 
 ### 7a. Metadata lives on each conversation
 
-Each conversation carries its own metadata. The file-level fields are the same on every
-conversation from one file, so editing a file's details means changing all of its conversations at
-once.
+Each conversation carries its own metadata, and can be edited on its own (from the Conversations
+tab) or together with the rest of its file (from the Files tab, or right after an upload).
 
 | Field | Values | Set by |
 |---|---|---|
-| **Source file** | the original file name, and the date and time it was uploaded | the upload; never edited |
-| **Participants** | a list of: Human (with a name, typed freely), Claude, ChatGPT, Gemini, Other AI (with a name). More than two allowed. | guessed at upload; edited per file |
-| **Kind of conversation** | **Typed**; **Virtual voice** — held in an online meeting room such as Zoom or Meet, each person recorded by the microphone on their own computer; **Live voice** — held in a shared physical space, recorded by a single microphone or written down by a person rather than a machine | guessed at upload; edited per file |
-| **Transcription** | only for the two voice kinds; one of the list in §7c | guessed at upload; edited per file |
-| **Date and time** | when the conversation started, in your browser's time zone on screen, stored with its offset from UTC | guessed at upload; edited per conversation (Q15) |
-| **Guessed or confirmed** | whether the file-level fields are still the upload's guess or have been saved by you | set when you press Done |
+| **Source file** | the original file name, and the date and time it was uploaded: the first file the conversation appeared in (§8b) | the upload; never edited |
+| **Participants** | a list of: Human (with a name, typed freely), Claude, ChatGPT, Gemini, Other AI (with a name). More than two allowed. | guessed at upload; edited per file or per conversation |
+| **Kind of conversation** | **Typed**; **Virtual voice** — held in an online meeting room such as Zoom or Meet, each person recorded by the microphone on their own computer; **Live voice** — held in a shared physical space, recorded by a single microphone or written down by a person rather than a machine | guessed at upload; edited per file or per conversation |
+| **Transcription** | only for the two voice kinds; one of the list in §7c | guessed at upload; edited per file or per conversation |
+| **Start and end** | when the conversation started and ended, shown in your browser's time zone, stored with their offset from UTC | guessed at upload; edited per conversation only |
+| **Guessed or confirmed** | kept separately for the details (participants, kind, transcription) and for the start and end, so a later upload can tell whether it may update a guess (§8b) | set when you save |
 
-All conversations in one file share one set of answers for participants, kind and transcription.
 The kind of conversation tells a reader the circumstances, and so which errors to expect in the
 text: crosstalk and a missing speaker in live voice, per-person audio but meeting-software
 transcription errors in virtual voice.
 
 ### 7b. The guess made at upload
 
-Every conversation gets metadata as soon as its file is processed, so a file is never left
-without details if you leave Describe without changing anything. In this plan the "guess" is
-fixed defaults, made in one function so that the later guessing plan replaces only that
-function:
+Every new conversation gets metadata as soon as its file is processed, so nothing is left without
+details if you leave Describe without changing anything. In this plan the "guess" is fixed
+defaults, made in one function so that the later guessing plan replaces only that function:
 
 - **Participants:** one Human named with your sign-in (your email when deployed, your dev login
   name locally), and Claude. The server reads only Claude's export format today
   ([format.rs:1-3](../../backend/timeline-core/src/format.rs#L1-L3)), and every file used so far
   has one human and one assistant.
-- **Kind:** Typed.
-- **Transcription:** none (Typed has none).
-- **Date and time:** the time of the conversation's earliest message. Every message in the file
-  has its own time (`created_at`, which [model.rs:163](../../backend/timeline-core/src/model.rs#L163)
-  requires). A conversation with no messages gets none, and Describe asks for one.
-- **Guessed or confirmed:** guessed.
+- **Kind:** Typed. **Transcription:** none (Typed has none).
+- **Start and end:** the times of the conversation's earliest and latest messages. Every message in
+  a Claude file has its own time (`created_at`, which
+  [model.rs:163](../../backend/timeline-core/src/model.rs#L163) requires). A conversation with no
+  messages gets neither.
+- **Guessed or confirmed:** guessed, for both.
 
-### 7c. Transcription services (answer to Q10)
+### 7c. Transcription services
 
 Suggested list, from my general knowledge, not checked against each vendor's current documentation:
 
@@ -303,37 +306,62 @@ Suggested list, from my general knowledge, not checked against each vendor's cur
 | Don't know | |
 | Other | typed freely |
 
-You asked whether the meeting providers share transcribers. I don't know which speech engine each
-uses, and I have not looked it up; if it matters for expected errors, it is a question for the
-guessing plan, which can record the engine separately from the service.
+Whether the meeting providers share speech engines is unknown to me and not looked up; if it
+matters for expected errors, the guessing plan can record the engine separately from the service.
 
 ### 7d. The page
 
-- **After an upload:** one section per processed file in the batch, headed by file name, upload
-  time and conversation count. With more than one file, the files start as one form, headed "These
-  N files", with a checkbox **"Describe each file separately"**; ticking it splits the form into
-  one per file, each starting from the answers already given; unticking it asks before throwing
-  away the differences. With one file, there is no checkbox. At the top, the reminder of files that
-  failed or were stopped (§6).
-- **From the Files tab:** one file's section.
-- **Each section:** participant rows (add, remove, choose kind, type a name); the kind of
-  conversation as three choices with the one-line explanations from §7a; the transcription list,
-  shown only for the voice kinds; and a list of the file's conversations, each with its name and
-  date and time, editable. The list starts collapsed under "Dates and times of N conversations",
-  since one file can hold hundreds (C14).
-- **Done** saves every section (§8c) and moves to the Timeline: the Calendar after an upload, the
-  Files tab when you came from there. The guesses already pass the rules, so Done is never blocked
-  until you change something into a rule-breaking answer (an empty participant list, a voice kind
-  with no transcription choice, a Human or Other AI with no name); the field is marked and Done
-  waits. A failed save keeps every answer on screen and shows the error.
-- **Back to timeline** (only when coming from the Files tab) leaves without saving.
+Describe opens on one of three subjects:
 
-### 7e. The Files tab
+| Opened from | Subject | Shows |
+|---|---|---|
+| Upload, after files finish | the batch's processed files | one section per file, or one for all (below) |
+| Files tab, Edit details | one file | that file's section |
+| Conversations tab, Edit details | one conversation | that conversation's details, start and end |
 
-A new tab on the Timeline, listing every file you have uploaded, newest first: file name, upload
-date and time, number of conversations, kind of conversation, participants, and "guessed" or
-"confirmed". Each row has **Edit details**, which opens Describe for that file. Q13 asks whether a
-tab is the right place.
+- **A file's section** is headed by file name, upload time, and counts: conversations first seen
+  in this file, and conversations already present from an earlier file (with how many of those
+  gained new messages; §8b). It holds participant rows (add, remove, choose kind, type a name), the
+  kind of conversation as three choices with the explanations from §7a, and the transcription list,
+  shown only for the voice kinds. Start and end are not edited here: they differ by conversation,
+  and the file's section lists its conversations only by name and time range, each with a link to
+  edit it on its own; the list starts collapsed, since one file can hold hundreds (C14).
+- **Several files after an upload** start as one form, headed "These N files", with a checkbox
+  **"Describe each file separately"**; ticking it splits the form into one per file, each starting
+  from the answers already given; unticking it asks before throwing away the differences. With one
+  file, there is no checkbox. At the top, the reminder of files that failed or were stopped (§6).
+- **When a file's conversations don't agree** (some were edited one by one), a field shows
+  "Varies — leave as is" until you change it. Saving a file changes only the fields you changed,
+  so editing the kind of a whole file doesn't undo someone's per-conversation participant edits.
+- **A conversation's page** has the same three fields plus start and end. Its heading names the
+  file it came from.
+- **Done** saves (§8c) and goes back to where you came from (§3). The guesses already pass the
+  rules, so Done is never blocked until you change something into a rule-breaking answer (an empty
+  participant list, a voice kind with no transcription choice, a Human or Other AI with no name, an
+  end before the start, a start without an end or the reverse); the field is marked and Done waits.
+  A failed save keeps every answer on screen and shows the error.
+- **Back to timeline** (when coming from a tab) leaves without saving.
+
+### 7e. Where editing starts on the Timeline
+
+- **A new Files tab** lists every uploaded file, newest first: file name, upload date and time,
+  number of conversations, kind of conversation and participants (or "varies"), and "guessed" or
+  "confirmed". Each row has **Edit details**, opening Describe for that file.
+- **The Conversations tab** gains, above the open conversation's transcript, a line with its kind,
+  participants, start and end, and its own **Edit details** button, opening Describe for that
+  conversation.
+
+### 7f. Where a conversation sits on the timeline
+
+- **Messages with times** place the conversation, as today: sessions are built from message times
+  in [blocks.js](../../frontend/core/blocks.js).
+- **A conversation whose messages have no times** is drawn as one session from its start to its
+  end, and moves when you edit them. With no start and end either, it is listed in the
+  Conversations tab but not drawn on the Calendar, and its line there says "No date — edit details
+  to place it".
+- **Some messages with times and some without:** placed by its start and end (Q19).
+- No file the server reads today has messages without times, so the second and third rules can
+  only be shown by tests that hand the page such conversations directly (C15).
 
 ## 8. Server changes
 
@@ -347,8 +375,13 @@ pub struct ConversationMetadata {
     pub source: SourceFile,                 // never changed after upload
     pub participants: Participants,         // a list that can't be empty
     pub medium: ConversationMedium,
-    pub started_at: Option<DateTime<FixedOffset>>,
-    pub origin: MetadataOrigin,             // Guessed | Confirmed
+    pub details_origin: MetadataOrigin,     // Guessed | Confirmed: participants, medium
+    pub span: Option<ConversationSpan>,     // None: no messages and no times entered
+    pub span_origin: MetadataOrigin,
+}
+pub struct ConversationSpan {               // built only when start <= end
+    start: DateTime<FixedOffset>,
+    end: DateTime<FixedOffset>,
 }
 pub struct SourceFile {
     pub upload_id: UploadId,
@@ -377,7 +410,9 @@ pub enum TranscriptionService {
 trimmed, stripped of control and invisible characters (zero-width, right-to-left override, NUL),
 and limited to 200 characters when the request is read; an empty one is refused. These are
 **newtypes** (a type that wraps one value so the compiler won't accept, say, a file name where a
-person's name belongs).
+person's name belongs). `ConversationSpan` can only be built through a constructor that refuses an
+end before the start, and start and end come as a pair, so "a start without an end" can't be
+stored.
 
 "Typed has no transcription service" is enforced by the shape of `ConversationMedium`, not by a
 check. Each named transcription service is kept, rather than folded into `Other`, because the
@@ -386,6 +421,11 @@ be so, they fold into `Other` (the project's catchall rule).
 
 The guess in §7b is one function, `guess_metadata(conversation, &UploadFacts) ->
 ConversationMetadata`, in a new `timeline-core/src/conversation_metadata.rs` next to these types.
+
+An edit is its own type, `MetadataEdit`, with every field optional: `None` means "leave as is".
+That is what lets a file-wide save change only the fields you changed (§7d), and the same type
+serves a single conversation. A file-wide edit can't carry a start and end; the route refuses one
+that tries (§8c).
 
 ### 8b. Where they're kept
 
@@ -400,19 +440,53 @@ the name to give the human) are written by `POST /uploads` onto the per-upload r
 ([uploads.rs:8-12](../../backend/timeline-core/src/ports/uploads.rs#L8-L12)), through a new
 `record_received` method, and read back by the processing step, which runs separately on AWS.
 
-**A conversation already in an earlier file** keeps its metadata, including its source file
-(C8, Q16). A later Claude export usually contains every earlier conversation too, so without this
-rule a new upload would replace your confirmed details with fresh guesses. Describe says how many
-of a file's conversations were already in an earlier file, and that their details are kept.
+### 8b-2. Recognizing conversations you uploaded before
+
+A later Claude export usually contains every earlier conversation again, often with new messages
+added since. The user decided (2026-10-05) that such a conversation is recognized, not added a
+second time, and any new messages in it are added.
+
+**How it's recognized:** by the conversation's id (the `uuid` every conversation in a Claude file
+carries, [model.rs:170](../../backend/timeline-core/src/model.rs#L170)). Messages are matched by
+their own ids.
+
+**What happens today, from reading the code:** the summary row is overwritten by conversation id
+([conversations.rs:20-24](../../backend/timeline-core/src/ports/conversations.rs#L20-L24)), and its
+`upload_id` then points only at the newest file
+([processing.rs:257-262](../../backend/timeline-api/src/processing.rs#L257-L262)). The export
+rebuilds the conversation from that one file
+([export.rs:71-80](../../backend/timeline-api/src/routes/export.rs#L71-L80)). So the conversation
+isn't duplicated, but its messages are whatever the newest file holds: if you upload an older
+export after a newer one, the newer messages disappear from your timeline. This plan fixes that.
+
+**The change:**
+
+- The summary row keeps every file that held the conversation (`upload_ids`, replacing the single
+  `upload_id`), in upload order.
+- The export rebuilds the conversation by taking the union of its messages across those files,
+  matched by message id; when two files hold the same message id, the copy from the most recently
+  uploaded file wins (Q18). Messages are put in time order, then the existing retried-message
+  clean-up, `dedup_chat_messages` ([dedup.rs:28](../../backend/timeline-core/src/dedup.rs#L28)), is
+  run over the merged list, since a retry can straddle two files. It's the same function the upload
+  already runs on each file; nothing new is written for this step.
+- **Metadata:** the conversation keeps its metadata and its source file (the first file it came
+  in). If the new file brings messages earlier than its start or later than its end, and the start
+  and end are still guessed, they widen to cover them; once you've confirmed them, they're left as
+  you set them.
+- Your reviews and flags are kept by message id already, so they carry over untouched.
+- **Processing reports the timeframes:** for each file, how many conversations were new, how many
+  were already present, and how many of those gained messages, with the earliest and latest new
+  message time. Describe shows these counts in each file's heading (§7d).
 
 ### 8c. Routes
 
 | Route | Does |
 |---|---|
 | `POST /uploads` | Now takes `{ "file_name": …, "human_name": … }` and records them with the upload time (C3). |
-| `GET /uploads` | Lists your files, built from the conversations' metadata: upload id, file name, upload time, conversation count, the file-level fields, guessed or confirmed. The Files tab and Describe read it. |
-| `GET /uploads/{upload_id}/conversations` | One file's conversations: id, name, date and time. Describe's conversation list reads it. |
-| `PUT /uploads/{upload_id}/metadata` | Saves a file's details: the file-level fields for all of its conversations, plus any changed dates and times by conversation id; marks them confirmed. Refuses a file that isn't yours (404), a conversation id not in that file (400), and a body that breaks the rules (400, naming the field). |
+| `GET /conversations` | Existing; each conversation now comes with its metadata. The page reads it with the export, for the Conversations tab, the Files tab and placement (§7f). |
+| `GET /uploads` | Lists your files, built from the conversations' metadata (a conversation counts toward its source file): upload id, file name, upload time, counts from §8b-2, the file-level fields or "varies", guessed or confirmed. The Files tab and Describe read it. |
+| `PUT /uploads/{upload_id}/metadata` | Applies one `MetadataEdit` to every conversation whose source is that file; only the fields given change; marks those fields confirmed. Refuses a file that isn't yours (404), an edit carrying a start and end (400), and one that breaks the rules (400, naming the field). |
+| `PUT /conversations/{conversation_id}/metadata` | Applies one `MetadataEdit` to one conversation, start and end included. Refuses a conversation that isn't yours (404) and one that breaks the rules (400, naming the field). |
 
 ## 9. Page layout and modules
 
@@ -429,6 +503,8 @@ New modules under [frontend/](../../frontend/), one job each:
 | `ui/screens/describe-screen.js` | §7d. |
 | `ui/screens/loading-modal.js` | The modal, its bar and its error state. Takes the restore half of load-flow.js. |
 | `ui/views/files.js` | The Files tab (§7e), next to the other tabs' views. |
+| (changed) [core/blocks.js](../../frontend/core/blocks.js) | Places a conversation without message times by its start and end (§7f). |
+| (changed) [ui/views/conversations.js](../../frontend/ui/views/conversations.js) | The details line and Edit details button (§7e). |
 | `infra/metadata-client.js` | Calls to the routes in §8c, through the existing `apiFetch`. |
 
 [load-flow.js](../../frontend/ui/load-flow.js) keeps only what both the upload and the modal share
@@ -450,16 +526,28 @@ never recorded, only which fields changed, matching how sign-in emails are kept 
 - **Unit, `screen-flow.js`:** every row of §3's arc table, plus every event a page must ignore
   (Upload pressed again while files are sending, for example).
 - **Unit, `conversation-metadata.js`:** each rule in §7d, both ways; same-for-all copied to every
-  file; separate answers kept apart; dates and times round-trip with their offset.
+  file; separate answers kept apart; "varies" fields left out of a file-wide save; start and end
+  round-trip with their offset.
 - **Unit, `upload-batch.js`:** combined progress across files; one failure leaves the others
   running; Stop cancels sends and waits and reports which files were processed, failed or stopped.
-- **Rust, through the public API:** `guess_metadata` on the fixture (participants, Typed, earliest
-  message time; none for an empty conversation); processing writes metadata on every conversation;
-  a re-upload keeps an existing conversation's metadata; each route in §8c, including each
-  refusal and another user's file; names over 200 characters, control characters and invisible
-  characters handled as in §8a; in-memory and DynamoDB adapters through the same port tests
-  (DynamoDB against the real service, as
-  [dynamo_conversations_table.rs](../../backend/timeline-storage/tests/dynamo_conversations_table.rs) does).
+- **Unit, `blocks.js`:** a conversation without message times becomes one session from its start
+  to its end, and moves when they change; one without times or a start and end is not drawn; one
+  with some timed and some untimed messages is placed by its start and end (§7f, C15).
+- **Rust, through the public API:**
+  - `guess_metadata` on the fixture: participants, Typed, earliest and latest message times;
+    nothing for an empty conversation.
+  - Processing writes metadata on every new conversation.
+  - Re-uploading: the same file again adds nothing; a later file with new messages in a known
+    conversation adds them, keeps the metadata and source file, widens a guessed start and end and
+    leaves a confirmed one alone; an older file uploaded after a newer one loses no messages; the
+    same message id in two files gives the later file's copy; a retried message straddling two files
+    is cleaned up; the counts in §8b-2 are right.
+  - Each route in §8c, including each refusal and another user's file or conversation; a file-wide
+    edit changes only the fields it carries.
+  - Names over 200 characters, control characters and invisible characters handled as in §8a; an
+    end before a start refused.
+  - In-memory and DynamoDB adapters through the same port tests (DynamoDB against the real
+    service, as [dynamo_conversations_table.rs](../../backend/timeline-storage/tests/dynamo_conversations_table.rs) does).
 - **Browser (Playwright, against the local backend and Cognito stand-in):**
   - Signed out → Sign-in with the explanation; sign in with no data → Upload; sign in with data
     → Timeline behind the modal → modal closes.
@@ -471,9 +559,14 @@ never recorded, only which fields changed, matching how sign-in emails are kept 
     named as stopped.
   - Leaving Describe by reloading: the files are in the Files tab, marked guessed; the next visit
     opens the Timeline, not Describe.
-  - Files tab → Edit details → change the kind to Virtual voice, choose Zoom, change one date →
-    Done → Files tab shows confirmed and the new values; Back from Describe instead leaves them
-    unchanged.
+  - Files tab → Edit details → change the kind to Virtual voice, choose Zoom → Done → the Files tab
+    shows confirmed and the new values; Back from Describe instead leaves them unchanged.
+  - Conversations tab → Edit details → change participants and the end time → Done → the open
+    conversation shows them; the Files tab shows "varies" for that file's participants; a file-wide
+    kind change afterwards leaves that conversation's participants as edited.
+  - Uploading a second file that repeats a known conversation with extra messages: Describe's
+    heading counts it as already present with new messages; the Conversations tab shows the
+    conversation once, with the extra messages.
   - Add conversations from the Timeline → Upload; Back → Timeline; after adding, the Timeline holds
     the old and new conversations.
   - Back: the first Timeline entry shows the Calendar; Back on Describe after an upload is refused
@@ -481,7 +574,8 @@ never recorded, only which fields changed, matching how sign-in emails are kept 
   - A download failure in the modal shows the error; Try again succeeds.
   - Expired sign-in during the Timeline → Sign-in with the "ran out" message.
 - **Not tested here:** real Cognito's own pages under Back (C4) — checked by hand on the deployed
-  site, and recorded in an analysis.
+  site, and recorded in an analysis. Placement of untimed conversations through the whole page
+  (C15).
 
 Existing browser tests that drive the old load screen
 ([views.spec.js](../../e2e/views.spec.js), [cognito-login.spec.js](../../e2e/cognito-login.spec.js),
@@ -496,65 +590,75 @@ list of tests to change, with each change, comes to the user for approval before
   defaults (§7b).
 - **Reading other export formats** (ChatGPT, Gemini, voice transcripts, files naming several
   humans). Later plans; the participant kinds exist so that their metadata has somewhere to go.
-- **Using the edited date and time on the Calendar.** The Calendar keeps placing conversations by
-  their messages' times (Q15).
-- **Writing metadata into the downloaded file**, so re-uploading a saved file keeps it (Q17).
-- **Deleting data or replacing a file.**
+- **Writing metadata into the downloaded file** (the user, 2026-10-05: not needed for now).
+- **Deleting data, or files Stop couldn't recall** (the user, 2026-10-05: a separate delete
+  feature, later).
 - **Quiet renewal of an expired sign-in** (the migration plan's own item).
 
 ## 12. Questions for the user
 
-Answered on 2026-10-05, and folded in above: Q2 (a name typed freely; the sign-in name for the one
-human, §7b), Q5 (failures noted below the bar, Stop at any time, Describe shows the rest with a
-reminder, §6), Q6 (editing later, from the Files tab, §7e), Q7 (guesses are made at upload; the
-next visit doesn't return to Describe, §3), Q9 (what the two voice kinds mean, §7a), Q10
-(suggested list in §7c, for you to trim), Q11 (page flow only; other formats later, §11).
+Questions keep their numbers for the whole life of the plan, so they are labelled "Q" with the
+number written out rather than as a numbered list (which Markdown renumbers on display).
 
-Still open:
+**Answered on 2026-10-05**, and folded in above:
 
-1. **Sign-in explanation (§5):** is the draft wording right, or do you want to write it?
-3. **Must every file have at least one human?** At least one AI? Or is any non-empty participant
-   list fine?
-4. **Progress with several files:** one combined bar (proposed), or one bar per file?
-8. **Back on Describe after an upload, or while sending:** refuse it with a message (proposed), or
-   let Back act as Stop?
-12. **The migration plan's three items** at lines 1442, 1445 and 1451: mark them as replaced by this
-    plan once you approve it?
-13. **The Files list as a Timeline tab** (proposed), or a button that opens a separate list?
-14. **Stop and files the server already has:** Stop can't recall a file whose bytes arrived; it is
-    processed anyway and shows up with guessed details (§6). Acceptable, or should Stop also delete
-    those files' conversations (which would need a delete route this plan doesn't otherwise add)?
-15. **Date and time:** per conversation (proposed), or one per file? Start time only, or start and
-    end? Should an edited time move the conversation on the Calendar now, or later (proposed:
-    later, §11)?
-16. **A conversation already in an earlier file:** keep its existing details and source file
-    (proposed, §8b), or take the new file's guesses?
-17. **Metadata in the downloaded file:** add it now, so a saved file carries it back in, or later
-    (proposed: later)?
+- **Q1** — the sign-in wording is fine for now (§5).
+- **Q2** — a human's name is typed freely; the sign-in name fills in the one human (§7b).
+- **Q5** — failures are noted below the bar; Stop at any time; Describe shows the rest with a
+  reminder (§6).
+- **Q6, Q13** — editing later from a Files tab on the Timeline, and per conversation from the
+  Conversations tab (§7d, §7e).
+- **Q7** — guesses are made at upload; the next visit doesn't return to Describe (§3).
+- **Q9** — what the two voice kinds mean (§7a).
+- **Q10** — the suggested list in §7c, for you to trim.
+- **Q11** — page flow only; other formats later (§11).
+- **Q14** — Stop doesn't delete anything; deleting is a later feature (§11).
+- **Q15** — start and end per conversation; placed by message times when they exist, otherwise
+  by start and end, which edits move (§7f).
+- **Q16** — an earlier conversation is recognized, keeps its details, and gains new messages
+  (§8b-2).
+- **Q17** — no metadata in the downloaded file for now (§11).
+
+**Still open:**
+
+- **Q3 — Rules for the participant list.** Must every conversation have at least one human? At
+  least one AI? Or is any non-empty list fine (the current proposal)?
+- **Q4 — Progress bar for several files.** One combined bar for all files, with failures listed
+  below it (proposed), or one bar per file?
+- **Q8 — Back while files are sending, or on Describe right after an upload.** Refuse it with a
+  message (proposed: "Your files are still being sent; press Stop to stop", "Press Done to go to
+  your timeline"), or treat Back as Stop?
+- **Q12 — The migration plan's list.** Once you approve this plan, mark the three items it
+  replaces in the migration plan (lines 1442, 1445 and 1451) as replaced by it?
+- **Q18 — The same message in two files.** When two files hold a message with the same id, keep
+  the copy from the most recently uploaded file (proposed)? Usually the copies are identical;
+  they'd differ only if the assistant's export changed a message.
+- **Q19 — Some messages timed, some not.** Place such a conversation by its start and end
+  (proposed), or by the messages that have times?
 
 ## Self-critique log
 
 ### C1 [RESOLVED]: First draft fetched the full export to decide which page to show
 Asking `GET /export` (as restore does today) makes the server rebuild and store a full export just
 to learn "is there any data?", and then the page downloads it again for the Timeline.
-**Resolution:** opening the page asks `GET /conversations` instead; see [§3, note 2 (line 138)](2026-10-05-screen-flow.md#L138).
+**Resolution:** opening the page asks `GET /conversations` instead; see [§3, note 2 (line 142)](2026-10-05-screen-flow.md#L142).
 
 ### C2 [RESOLVED]: First draft made Describe wait for the download
 Moving to the Timeline only after Done, then starting the download, puts the whole download wait
 after the user has finished typing.
-**Resolution:** the download starts in the background when processing ends; see [§3, note 4 (line 145)](2026-10-05-screen-flow.md#L145).
+**Resolution:** the download starts in the background when processing ends; see [§3, note 4 (line 149)](2026-10-05-screen-flow.md#L149).
 
 ### C3 [RESOLVED]: File names would be lost on a reload
 The server never learns a file's name today; only the browser knows it. With the user's decision
 that the original file name is part of each conversation's metadata, the server must know it
 before processing.
 **Resolution:** `POST /uploads` takes the file name and the human's name, recorded on the upload's
-row and read by processing; see [§8b (line 403)](2026-10-05-screen-flow.md#L403) and [§8c (line 412)](2026-10-05-screen-flow.md#L412).
+row and read by processing; see [§8b (line 430)](2026-10-05-screen-flow.md#L430) and [§8c (line 485)](2026-10-05-screen-flow.md#L485).
 
 ### C4 [OPEN]: Back across real Cognito's pages is unmeasured
 The stand-in Cognito skips the login form, so the browser tests can't show what Back does on
 Cognito's own page after sign-in, or whether `redirectMethod: "replace"` helps.
-**Mitigation in plan:** [§4 (line 187)](2026-10-05-screen-flow.md#L187) proposes the option and
+**Mitigation in plan:** [§4 (line 193)](2026-10-05-screen-flow.md#L193) proposes the option and
 marks it untried. **Open:** checked by hand on the deployed site after the first deployment of this
 work, and written up in an analysis.
 
@@ -568,30 +672,31 @@ files takes over a minute in the activity records, or the user reports it as slo
 ### C6 [OPEN]: An expired sign-in on Describe loses typed answers
 Moving to Sign-in means leaving for Cognito, and unsaved answers go with the page. Since the
 user's revision, nothing is lost beyond the edits: the guesses are already stored.
-**Mitigation in plan:** the "ran out" message ([§3, note 5 (line 149)](2026-10-05-screen-flow.md#L149)).
+**Mitigation in plan:** the "ran out" message ([§3, note 5 (line 155)](2026-10-05-screen-flow.md#L155)).
 **Open:** solved by the migration plan's quiet-renewal item; if that slips, keep the answers in
 sessionStorage. Trigger: the user reports losing answers, or the renewal item is deferred.
 
 ### C7 [OPEN]: Existing browser tests drive the old load screen
 Their page-driving steps (pick a file, press Load, wait for `#mainContent`) won't match the new
 pages.
-**Mitigation in plan:** [§10 (line 486)](2026-10-05-screen-flow.md#L486) commits to bringing the
+**Mitigation in plan:** [§10 (line 580)](2026-10-05-screen-flow.md#L580) commits to bringing the
 list of changes to the user before coding. **Open:** the list is written when the plan is approved.
 
-### C8 [RESOLVED, gated]: A conversation in two files
-A later Claude export usually contains every earlier conversation too. Conversation summaries are
-overwritten by conversation id ([conversations.rs:20-24](../../backend/timeline-core/src/ports/conversations.rs#L20-L24)).
-In the first draft, metadata belonged to the upload, so each conversation silently took the last
-file's description. With metadata on the conversation (the user's revision), a re-upload would
-instead replace confirmed details with fresh guesses.
-**Resolution:** an existing conversation keeps its metadata and source file, and Describe says how
-many were already present; see [§8b (line 403)](2026-10-05-screen-flow.md#L403). Gated on Q16.
+### C8 [RESOLVED]: A conversation in two files
+A later Claude export usually contains every earlier conversation too. In the first draft, metadata
+belonged to the upload, so each conversation silently took the last file's description; in the
+second, a re-upload would have replaced confirmed details with fresh guesses. Reading the code for
+this showed a third problem, present today: the export rebuilds a conversation only from the newest
+file that held it, so an older file uploaded after a newer one hides the newer messages.
+**Resolution:** the user decided (2026-10-05) that an earlier conversation is recognized and keeps
+its details, and new messages in it are added. Recognition by conversation id, messages merged by
+message id across every file that held it; see [§8b-2 (line 443)](2026-10-05-screen-flow.md#L443).
 
 ### C9 [RESOLVED]: Free text from the form reaches the page, the server's storage and logs
 Names and file names come from the user and are shown back on the page.
 **Resolution:** trimmed, cleaned of control and invisible characters and limited in length when the
-request is read ([§8a (line 378)](2026-10-05-screen-flow.md#L378)); shown on the page only as text,
-never as markup; kept out of the activity log ([§9 (line 446)](2026-10-05-screen-flow.md#L446)).
+request is read ([§8a (line 368)](2026-10-05-screen-flow.md#L368)); shown on the page only as text,
+never as markup; kept out of the activity log ([§9 (line 522)](2026-10-05-screen-flow.md#L522)).
 
 ### C10 [RESOLVED]: The first diagram was not a diagram of pages
 The first draft's diagram mixed the five pages with brief checks, sending, and every failure as
@@ -602,17 +707,19 @@ condition; failures are a separate table of what each page shows, not states. Se
 
 ### C11 [RESOLVED]: Metadata belonged to the upload, not the conversation
 The first draft stored one description per upload. The user wants metadata on each conversation,
-carrying its original file name and upload date so a whole file can still be edited at once.
+carrying its original file name and upload date so a whole file can still be edited at once, and
+(2026-10-05, Q13) editable one conversation at a time from the Conversations tab.
 **Resolution:** metadata is a field of each conversation's summary row, with a `SourceFile` part;
-file-level edits write every conversation from that file; see [§7a (line 248)](2026-10-05-screen-flow.md#L248)
-and [§8b (line 403)](2026-10-05-screen-flow.md#L403).
+file-level edits change only the fields you changed, on every conversation from that file, and a
+conversation can be edited alone (`MetadataEdit`, [§8a (line 368)](2026-10-05-screen-flow.md#L368)); see [§7a (line 254)](2026-10-05-screen-flow.md#L254)
+and [§8b (line 430)](2026-10-05-screen-flow.md#L430).
 
 ### C12 [RESOLVED]: An unfinished Describe left files without details
 The first draft sent the next visit back to Describe for undescribed files. The user decided
 instead that guesses are made at upload and the next visit opens the Timeline.
-**Resolution:** the guess is written during processing ([§7b (line 268)](2026-10-05-screen-flow.md#L268));
+**Resolution:** the guess is written during processing ([§7b (line 272)](2026-10-05-screen-flow.md#L272));
 the "opens the page → Describe" arc is gone ([§3 (line 60)](2026-10-05-screen-flow.md#L60)); Describe
-is reached later from the Files tab ([§7e (line 331)](2026-10-05-screen-flow.md#L331)).
+is reached later from the Files tab ([§7e (line 345)](2026-10-05-screen-flow.md#L345)).
 
 ### C13 [OPEN]: Where the human's default name comes from
 The server knows you by Cognito's user id, and I have not checked whether the access token the
@@ -625,4 +732,29 @@ first deployment of this work (look at a decoded access token).
 
 ### C14 [RESOLVED]: A file of hundreds of conversations makes a long Describe page
 Each section lists its file's conversations with their dates and times; one file can hold hundreds.
-**Resolution:** the list starts collapsed; see [§7d (line 319)](2026-10-05-screen-flow.md#L319).
+**Resolution:** the list starts collapsed; see [§7d (line 312)](2026-10-05-screen-flow.md#L312).
+
+### C15 [OPEN]: Placing untimed conversations can't be shown end to end yet
+The user wants a conversation whose messages have no times placed by its start and end. No file
+the server reads today has untimed messages: the parser requires a time on every message
+([model.rs:163](../../backend/timeline-core/src/model.rs#L163)). So the rule can be proven only by
+unit tests that hand [blocks.js](../../frontend/core/blocks.js) such conversations directly, not by
+a browser test through an upload.
+**Mitigation in plan:** the rule lives in blocks.js and is unit-tested there ([§7f (line 354)](2026-10-05-screen-flow.md#L354)).
+**Open:** the first plan that reads a format without message times adds the browser test. Trigger:
+that plan.
+
+### C16 [OPEN]: The export re-reads every file that held each conversation
+Merging messages across files (§8b-2) means `GET /export` parses every file that holds any of your
+conversations. Today it parses only the newest holder of each. With repeated full exports of one
+account (the project's own was 64.7 MB), five uploads would mean reading about five times as much
+per export.
+**Mitigation in plan:** none. **Open:** if the export's time in the activity records grows past
+the time it takes today by more than half, store the merged conversation once at upload instead of
+merging at every export. Trigger: that measurement after the first deployment of this work.
+
+### C17 [RESOLVED]: Question numbers didn't match what the reader saw
+§12 wrote open questions as a Markdown numbered list starting at 1, 3, 4, 8…; Markdown renumbers
+such lists on display, so the user saw 1–5 and couldn't find Q3, Q4, Q8 or Q12.
+**Resolution:** every question is labelled "Q" with its number as text; see [§12 (line 598)](2026-10-05-screen-flow.md#L598).
+
