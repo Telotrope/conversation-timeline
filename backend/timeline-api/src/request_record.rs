@@ -1,6 +1,6 @@
 //! What one request (or one processing run) did, collected while it runs and
 //! written as a single log line when it ends
-//! (docs/plans/2026-10-02-activity-instrumentation.md §3).
+//! (docs/plans/completed/2026-10-02-activity-instrumentation.md §3).
 //!
 //! The record lives in a task-local slot for exactly the duration of
 //! [`recording`]. Code anywhere underneath -- a route handler, the login

@@ -8,7 +8,7 @@
 //! doesn't record storage errors as failures (`s3_trigger`'s module doc).
 //!
 //! Each upload it handles gets one `upload_marked_failed` log line
-//! ([`upload_marked_failed_line`]; docs/plans/2026-10-02-activity-instrumentation.md §3).
+//! ([`upload_marked_failed_line`]; docs/plans/completed/2026-10-02-activity-instrumentation.md §3).
 //!
 //! The input is AWS's invocation record: the original S3 notification as
 //! `requestPayload`, and the function's error as `responsePayload`. The

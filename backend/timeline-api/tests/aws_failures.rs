@@ -1,6 +1,6 @@
 //! Final AWS failures counted apart from retries, through the real storage
 //! adapters and the public `aws_call_counter::counting_subscriber`
-//! (docs/plans/2026-10-02-activity-instrumentation.md §3, critique C16).
+//! (docs/plans/completed/2026-10-02-activity-instrumentation.md §3, critique C16).
 //!
 //! Proves the mechanism `timeline_storage::aws_failure` describes: each
 //! adapter reports an SDK error that reached it, naming the operation, and

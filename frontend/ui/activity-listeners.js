@@ -1,5 +1,5 @@
 // The listeners that notice what you do on the page, for the activity log
-// (plan docs/plans/2026-10-02-activity-instrumentation.md §4). One listener
+// (plan docs/plans/completed/2026-10-02-activity-instrumentation.md §4). One listener
 // per kind of action, in the capture phase on the window or document, so
 // they run just before the page's own handlers and never change what those
 // handlers do.

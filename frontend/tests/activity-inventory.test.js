@@ -1,4 +1,4 @@
-// The handler inventory (plan docs/plans/2026-10-02-activity-instrumentation.md
+// The handler inventory (plan docs/plans/completed/2026-10-02-activity-instrumentation.md
 // §4 and §8): every kind of event the page's code listens for must be one the
 // activity recorder covers, so the recorder can't silently fall behind the
 // page. Reads every `addEventListener('<kind>'` and `.on<kind> =` in the

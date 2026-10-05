@@ -1,5 +1,5 @@
 // The activity recorder's sending rules (plan
-// docs/plans/2026-10-02-activity-instrumentation.md §4, "When events are
+// docs/plans/completed/2026-10-02-activity-instrumentation.md §4, "When events are
 // sent"), with a fake clock, a fake request tracker and a fake sender.
 
 import { test } from 'node:test';

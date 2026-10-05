@@ -1,6 +1,6 @@
 //! Counting each request's AWS calls, through the public
 //! `aws_call_counter::counting_subscriber` and `request_record::recording`
-//! (docs/plans/2026-10-02-activity-instrumentation.md §3, critique C5).
+//! (docs/plans/completed/2026-10-02-activity-instrumentation.md §3, critique C5).
 //!
 //! Proves the mechanism `aws_call_counter` describes against the real AWS
 //! SDK: its per-operation spans (`DynamoDB.PutItem`) are counted as calls,

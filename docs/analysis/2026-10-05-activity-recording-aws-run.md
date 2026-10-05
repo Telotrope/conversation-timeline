@@ -1,6 +1,6 @@
 # Activity recording on AWS: the end-to-end run, 2026-10-05
 
-The [activity plan](../plans/2026-10-02-activity-instrumentation.md)'s §8 "On AWS" run: deployment
+The [activity plan](../plans/completed/2026-10-02-activity-instrumentation.md)'s §8 "On AWS" run: deployment
 checks D4, D5 (detection off, then on) and D6 done on the `dev` stack, then read back with
 `scripts/activity-timeline.sh dev`. Its test of done: Claude can state, from that output alone,
 the refused requests and why, which upload had detection on, every detection page's time, which

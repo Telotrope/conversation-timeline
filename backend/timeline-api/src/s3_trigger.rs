@@ -19,7 +19,7 @@
 //!   the separate `record_failed_upload` function records `Failed` (§2).
 //!
 //! Every record's run ends with one `processing_run` log line
-//! ([`processing_run_line`]; docs/plans/2026-10-02-activity-instrumentation.md
+//! ([`processing_run_line`]; docs/plans/completed/2026-10-02-activity-instrumentation.md
 //! §3): the key, user and upload, the outcome, how long it took, what
 //! processing read and stored, and the AWS calls it made.
 //!

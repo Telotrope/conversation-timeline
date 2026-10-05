@@ -1,6 +1,6 @@
 //! The activity-recording Lambda: answers `POST /activity`, the page's
 //! record of what the user did (the template's `ActivityFunction`;
-//! docs/plans/2026-10-02-activity-instrumentation.md §5). Wiring only; the
+//! docs/plans/completed/2026-10-02-activity-instrumentation.md §5). Wiring only; the
 //! handler is `timeline_api::routes::activity`, tested in `tests/activity.rs`.
 //!
 //! Its own function, not the API's, so a report never occupies an API copy

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Prints one timeline of what the page did, what reached the API and what
 # our Lambda functions did, from the stage's CloudWatch log groups (plan
-# docs/plans/2026-10-02-activity-instrumentation.md §7).
+# docs/plans/completed/2026-10-02-activity-instrumentation.md §7).
 #
 # Usage: scripts/activity-timeline.sh <stage> [--since 30m|2h|1d] [--session <id>]
 #

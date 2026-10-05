@@ -36,7 +36,7 @@ function checkedAddress(value, field){
 // naming the first field that's missing or wrong.
 //
 // recordActivity (optional): whether the page records your activity (plan
-// docs/plans/2026-10-02-activity-instrumentation.md §4). Absent means off.
+// docs/plans/completed/2026-10-02-activity-instrumentation.md §4). Absent means off.
 // pageVersion (optional): the page code's version (its commit, from `git
 // describe`), carried on every activity record; absent means unknown.
 // Each is returned only when the file has it, so a settings file without

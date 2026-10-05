@@ -1,6 +1,6 @@
 # Why recording a click sometimes takes over 1 ms
 
-The activity plan ([plan](../plans/2026-10-02-activity-instrumentation.md)) limits the time recording
+The activity plan ([plan](../plans/completed/2026-10-02-activity-instrumentation.md)) limits the time recording
 adds to each click to 1 ms. The browser test `e2e/activity.spec.js` ("recording a click on the review
 table takes under 1 ms") times the recorder over 1,000 clicks fired back to back on the review table.
 It fails intermittently. These are the measurements made on 2026-10-02 to find out why. All runs are

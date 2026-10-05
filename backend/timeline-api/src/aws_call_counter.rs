@@ -1,5 +1,5 @@
 //! Counts each request's calls to AWS, for its log line
-//! (docs/plans/2026-10-02-activity-instrumentation.md §3, critique C5).
+//! (docs/plans/completed/2026-10-02-activity-instrumentation.md §3, critique C5).
 //!
 //! The AWS SDK opens a `tracing` span for every operation it performs,
 //! named after the service and operation (`DynamoDB.PutItem`, `S3.GetObject`;

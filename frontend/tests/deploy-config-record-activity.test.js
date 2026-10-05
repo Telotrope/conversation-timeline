@@ -1,5 +1,5 @@
 // The deployment settings' optional recordActivity switch (plan
-// docs/plans/2026-10-02-activity-instrumentation.md §4, "Turning it on and
+// docs/plans/completed/2026-10-02-activity-instrumentation.md §4, "Turning it on and
 // off"). Kept apart from deploy-config.test.js, which predates it.
 
 import { test } from 'node:test';

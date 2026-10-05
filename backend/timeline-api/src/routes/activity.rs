@@ -1,6 +1,6 @@
 //! `POST /activity` -- the page's record of what the user did, written to
 //! the log one line per event
-//! (docs/plans/2026-10-02-activity-instrumentation.md §5).
+//! (docs/plans/completed/2026-10-02-activity-instrumentation.md §5).
 //!
 //! On AWS this route runs in its own Lambda function (`bin/record_activity.rs`),
 //! never in the API's, so a report arriving while one of the user's requests

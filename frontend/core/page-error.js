@@ -2,7 +2,7 @@
 // the page; the kind (and HTTP status, when there is one) is what the
 // activity log records, never the message: a server's or browser's error
 // message can repeat parts of the request (plan
-// docs/plans/2026-10-02-activity-instrumentation.md §4, C17).
+// docs/plans/completed/2026-10-02-activity-instrumentation.md §4, C17).
 
 // Every kind of failure the activity log can name. 'other' catches the
 // rest; a kind earns its own name only when it is told apart somewhere.

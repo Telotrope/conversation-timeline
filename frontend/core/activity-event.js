@@ -1,5 +1,5 @@
 // Builds the records of what you did on the page, for the activity log
-// (plan docs/plans/2026-10-02-activity-instrumentation.md §4). Pure: it
+// (plan docs/plans/completed/2026-10-02-activity-instrumentation.md §4). Pure: it
 // reads only the element or values it is handed, never the page itself.
 //
 // No wording from the page goes into a record (§4, C17): not button text,

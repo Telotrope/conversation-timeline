@@ -64,7 +64,7 @@ Parameters:
     AllowedValues: ["off", "on"]
     Description: >
       "on" makes the page record what the user does and send it to
-      POST /activity (docs/plans/2026-10-02-activity-instrumentation.md §4).
+      POST /activity (docs/plans/completed/2026-10-02-activity-instrumentation.md §4).
       Takes effect only on the dev stage; every other stage is off.
   LogRetentionDays:
     Type: Number
@@ -153,7 +153,7 @@ Globals:
 Resources:
   # --- Logs ------------------------------------------------------------------
   # One group per function plus API Gateway's request log, each kept for
-  # LogRetentionDays (docs/plans/2026-10-02-activity-instrumentation.md §6).
+  # LogRetentionDays (docs/plans/completed/2026-10-02-activity-instrumentation.md §6).
   # New names: the groups Lambda created on first use keep the 2026-10-02
   # deployment checks' records and are left alone.
 

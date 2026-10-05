@@ -1,6 +1,6 @@
 //! `aws_call_counter::install`, as the Lambda binaries call it at start-up:
 //! afterwards, AWS calls made anywhere in the process are counted
-//! (docs/plans/2026-10-02-activity-instrumentation.md §3). In its own test
+//! (docs/plans/completed/2026-10-02-activity-instrumentation.md §3). In its own test
 //! file because installing is once per process.
 
 #[path = "../../timeline-storage/tests/support/dynamodb_local.rs"]

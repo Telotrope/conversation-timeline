@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Prints one timeline of a stage's recorded activity (plan
-docs/plans/2026-10-02-activity-instrumentation.md, section 7).
+docs/plans/completed/2026-10-02-activity-instrumentation.md, section 7).
 
 Reads the stage's five CloudWatch log groups through the `aws` command,
 turns each log line into one timeline entry, joins API Gateway's access-log

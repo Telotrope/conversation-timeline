@@ -1,5 +1,5 @@
 // Every message the page's status lines show, by a fixed identifier (plan
-// docs/plans/2026-10-02-activity-instrumentation.md §4, C17). The activity
+// docs/plans/completed/2026-10-02-activity-instrumentation.md §4, C17). The activity
 // log records the identifier, never the wording; the wording lives only
 // here, so the two can't drift apart. Callers name a message by its
 // identifier and hand in its live values; the status setters

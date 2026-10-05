@@ -1,5 +1,5 @@
 // The deployment settings' optional pageVersion (plan
-// docs/plans/2026-10-02-activity-instrumentation.md §4, "Page version").
+// docs/plans/completed/2026-10-02-activity-instrumentation.md §4, "Page version").
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

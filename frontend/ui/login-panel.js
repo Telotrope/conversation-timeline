@@ -19,7 +19,7 @@ let LOGIN = null;
 // id: the sign-in line's message (ui/widgets/page-messages.js), shown with
 // its values and recorded for the activity log by identifier only: the
 // line can show the email address (plan
-// docs/plans/2026-10-02-activity-instrumentation.md §4, C8 and C17).
+// docs/plans/completed/2026-10-02-activity-instrumentation.md §4, C8 and C17).
 function show(signedIn, id, values = {}){
   const entry = pageMessage(id);
   const status = document.getElementById('cognitoLoginStatus');

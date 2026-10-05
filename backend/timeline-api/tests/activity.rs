@@ -1,6 +1,6 @@
 //! `POST /activity`, through real requests to the activity router wrapped by
 //! the request log, as `bin/record_activity.rs` runs it
-//! (docs/plans/2026-10-02-activity-instrumentation.md §5). Every check the
+//! (docs/plans/completed/2026-10-02-activity-instrumentation.md §5). Every check the
 //! route makes on the page's batch is shown refusing with 400 and naming
 //! the problem; an accepted batch becomes one `page_event` line per event,
 //! carrying the request's ids and the signed-in user.

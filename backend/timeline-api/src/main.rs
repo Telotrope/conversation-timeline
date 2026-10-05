@@ -173,7 +173,7 @@ async fn main() {
         let router = build_router(app_state)
             .merge(build_activity_router(activity_state))
             .merge(build_dev_router(dev_state));
-        // Every request logged, as on AWS (docs/plans/2026-10-02-activity-instrumentation.md §3).
+        // Every request logged, as on AWS (docs/plans/completed/2026-10-02-activity-instrumentation.md §3).
         let router = with_request_log(router, stdout_sink()).layer(CorsLayer::permissive());
         run_locally(router).await;
     }

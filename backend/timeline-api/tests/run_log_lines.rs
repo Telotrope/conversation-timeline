@@ -1,7 +1,7 @@
 //! The log lines written by the two functions that aren't the API: one
 //! `processing_run` line per S3 record the processing function handles, and
 //! one `upload_marked_failed` line per upload the failure recorder marks
-//! (docs/plans/2026-10-02-activity-instrumentation.md §3). Also the
+//! (docs/plans/completed/2026-10-02-activity-instrumentation.md §3). Also the
 //! activity function's own settings, `LoginSettings`.
 //!
 //! Proves, through the public handlers the Lambda binaries run: the run line

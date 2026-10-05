@@ -1,4 +1,4 @@
-// The page's activity log (docs/plans/2026-10-02-activity-instrumentation.md
+// The page's activity log (docs/plans/completed/2026-10-02-activity-instrumentation.md
 // §4, §8 and §10), in a real browser against the real local backend:
 //
 // - what recording costs each click, measured on the review table, with the
@@ -247,7 +247,7 @@ test('at a quiet moment a batch is sent while the page stays open', async ({ pag
   // The recorder sends only once no request has been in flight for 3 s
   // (QUIET_MS); a click after that is the first thing recorded at a quiet
   // moment, and it starts a send (plan
-  // docs/plans/2026-10-02-activity-instrumentation.md §4).
+  // docs/plans/completed/2026-10-02-activity-instrumentation.md §4).
   await page.waitForTimeout(3500);
   await page.click('button[data-tab="analytics"]');
 

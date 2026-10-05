@@ -175,7 +175,7 @@ pub struct AwsSettings {
 }
 
 /// The Cognito settings alone: all the activity-recording Lambda needs to
-/// check logins (docs/plans/2026-10-02-activity-instrumentation.md §5).
+/// check logins (docs/plans/completed/2026-10-02-activity-instrumentation.md §5).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoginSettings {
     pub user_pool_id: UserPoolId,

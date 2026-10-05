@@ -49,7 +49,7 @@ export function serverUrl(url){
 // One id per page load, sent with every request to our API as
 // x-timeline-session and kept with every activity record, so the page's
 // records and the server's log lines of one visit can be put together (plan
-// docs/plans/2026-10-02-activity-instrumentation.md §1). Never sent to S3.
+// docs/plans/completed/2026-10-02-activity-instrumentation.md §1). Never sent to S3.
 //
 // crypto.randomUUID exists only on secure pages (https, or this machine);
 // elsewhere a version-4 UUID is built from crypto.getRandomValues, which

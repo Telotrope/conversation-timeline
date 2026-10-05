@@ -1,5 +1,5 @@
 // Where the page's modules hand their activity records (plan
-// docs/plans/2026-10-02-activity-instrumentation.md §4). A port: the
+// docs/plans/completed/2026-10-02-activity-instrumentation.md §4). A port: the
 // modules that notice something (the status lines, the router, the request
 // helper) call these functions without knowing who, if anyone, is
 // listening; the activity recorder (infra/activity-recorder.js) is connected

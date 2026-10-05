@@ -1,6 +1,6 @@
 //! Reports each AWS call that failed for good -- after the SDK's own retries
 //! -- as a `tracing` event naming the operation
-//! (docs/plans/2026-10-02-activity-instrumentation.md §3, critique C16).
+//! (docs/plans/completed/2026-10-02-activity-instrumentation.md §3, critique C16).
 //!
 //! The SDK has no reliable "gave up" signal of its own: its "halting" debug
 //! message also fires on attempts it then retries. The adapters here are

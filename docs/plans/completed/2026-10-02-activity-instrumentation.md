@@ -3,7 +3,7 @@
 ## Context
 
 During the 2026-10-02 deployment checks
-([analysis](../analysis/2026-10-02-deployment-checks-status.md)), the logs could not say what the
+([analysis](../../analysis/2026-10-02-deployment-checks-status.md)), the logs could not say what the
 user did. The API function logs only Lambda's own start/end/`REPORT` lines, with no route, method
 or result; API Gateway's request logging is off; the page records nothing. So Claude could not
 tell whether detection ran (D5), which request was a flag save (D6), or why processing ran twice,
@@ -45,7 +45,7 @@ Not chosen; revisit if the page's record is ever in doubt.
 
 ## §2 Source A: API Gateway access log
 
-In [infra/template.yaml](../../infra/template.yaml), on `HttpApi`: `AccessLogSettings` with
+In [infra/template.yaml](../../../infra/template.yaml), on `HttpApi`: `AccessLogSettings` with
 `DestinationArn` pointing at a new `AWS::Logs::LogGroup` (`ApiAccessLogGroup`) and a JSON `Format`
 of `$context.requestId`, `$context.requestTime`, `$context.httpMethod`, `$context.routeKey`,
 `$context.path`, `$context.status`, `$context.responseLatency`, `$context.integrationLatency`,
@@ -56,12 +56,12 @@ identify the user's machine and add nothing the checks need.
 
 **Libraries:** `tracing` (MIT), `tracing-subscriber` (MIT) with its `json` feature, and
 `tower-http`'s `trace` feature (MIT; `tower-http` is already a dependency,
-[timeline-api/Cargo.toml:20](../../backend/timeline-api/Cargo.toml#L20)). `lambda_runtime`
+[timeline-api/Cargo.toml:20](../../../backend/timeline-api/Cargo.toml#L20)). `lambda_runtime`
 (already used) offers a ready-made subscriber setup for Lambda (`lambda_runtime::tracing`), to be
 checked first; if it suits, use it rather than configuring `tracing-subscriber` by hand.
 
 1. **One line per API request**, from a `tower-http` `TraceLayer` on the router in
-   [app.rs](../../backend/timeline-api/src/app.rs): `kind: "api_request"`, method, route
+   [app.rs](../../../backend/timeline-api/src/app.rs): `kind: "api_request"`, method, route
    template (`/conversations/{id}/messages/{id}/flags`, not the raw path), status, duration,
    user (Cognito `sub`), session ID, API Gateway request ID.
 2. **Facts specific to a request**, added to that line by the route itself:
@@ -81,17 +81,17 @@ checked first; if it suits, use it rather than configuring `tracing-subscriber` 
    (`{"DynamoDB.PutItem": 1}`). The SDK has no reliable "gave up" signal of its own (its
    "halting" debug message also fires on attempts that are then retried), so each place our
    storage adapters receive an SDK error
-   ([timeline-storage/src/dynamo/](../../backend/timeline-storage/src/dynamo/),
-   [s3.rs](../../backend/timeline-storage/src/s3.rs)) reports it as a `tracing` event naming the
+   ([timeline-storage/src/dynamo/](../../../backend/timeline-storage/src/dynamo),
+   [s3.rs](../../../backend/timeline-storage/src/s3.rs)) reports it as a `tracing` event naming the
    operation, which the counter adds to the current record. The error's text goes in the
    request's line as `aws_errors` (first 3, capped at 200 characters each).
    **Request lines come from a small middleware of our own** (`request_log.rs`), not
    `tower-http`'s `TraceLayer`: the per-route facts and the call counts are a structured record
    per request, which `TraceLayer`'s span fields don't carry cleanly.
 4. **One line per processing run** in
-   [s3_trigger.rs](../../backend/timeline-api/src/s3_trigger.rs): upload ID, attempt number,
+   [s3_trigger.rs](../../../backend/timeline-api/src/s3_trigger.rs): upload ID, attempt number,
    size, conversations and messages stored, time per stage, outcome, AWS call counts. The failure
-   recorder ([failed_upload.rs](../../backend/timeline-api/src/failed_upload.rs)) logs one line
+   recorder ([failed_upload.rs](../../../backend/timeline-api/src/failed_upload.rs)) logs one line
    per upload it marks failed.
 5. The existing `eprintln!` lines stay as they are, now with the request's ID beside them where a
    request is in progress; converting them is not part of this plan.
@@ -99,7 +99,7 @@ checked first; if it suits, use it rather than configuring `tracing-subscriber` 
 ## §4 Source C: the page
 
 **New modules:**
-- [frontend/core/activity-event.js](../../frontend/core/) (pure, no browser access): builds an
+- [frontend/core/activity-event.js](../../../frontend/core) (pure, no browser access): builds an
   event from what happened. Describes an element by its tag and stable attributes only: `id`,
   `name`, and the `data-*` attributes the page uses (`data-id`, the message ID on review rows;
   `data-tab`; `data-analysis`). **No wording from the page** (the user's direction, 2026-10-02):
@@ -108,9 +108,9 @@ checked first; if it suits, use it rather than configuring `tracing-subscriber` 
   review table or the timeline, an element is described by message ID and column only.
 - **Page version:** every event carries `page_version`, the code's commit (`git describe --always
   --dirty`, so uncommitted changes show as `-dirty`), written into the deploy config as
-  `pageVersion` by [write-deploy-config.sh](../../scripts/write-deploy-config.sh). Local
+  `pageVersion` by [write-deploy-config.sh](../../../scripts/write-deploy-config.sh). Local
   development, with no deploy config, records `local`.
-- [frontend/infra/activity-recorder.js](../../frontend/infra/): keeps events in memory and sends
+- [frontend/infra/activity-recorder.js](../../../frontend/infra): keeps events in memory and sends
   them to `POST /activity` only at quiet moments (below, "When events are sent").
 
 **Which user actions: every kind the page's JavaScript responds to** (the user's direction,
@@ -137,9 +137,9 @@ new kind of event appears, so the recorder can't silently fall behind the page.
   This needs one listener the page doesn't otherwise have: Enter key presses in text boxes, and
   nothing else about the keyboard.
 - `view`: tab changes (`hashchange` and the router,
-  [frontend/ui/router.js](../../frontend/ui/router.js)).
+  [frontend/ui/router.js](../../../frontend/ui/router.js)).
 - `shown`: every message the page shows, from the setters in
-  [status-indicators.js](../../frontend/ui/widgets/status-indicators.js) (`setLoadStatus`,
+  [status-indicators.js](../../../frontend/ui/widgets/status-indicators.js) (`setLoadStatus`,
   `setSaveStatus`, the load-progress labels, `failLoadProgress`, `showRestoredNotice`), the
   sign-in state and the error area. **Recorded as a fixed message identifier** (`where` plus
   `message`, e.g. `saveStatus` / `save.saved`), never the wording; each caller of a setter names
@@ -149,9 +149,9 @@ new kind of event appears, so the recorder can't silently fall behind the page.
   (`error_kind`, e.g. `stale_page`, `not_logged_in`, `network`); never the server's or the
   browser's error message, which can repeat parts of the request.
 - `request`: each request the page makes, through one new `apiFetch` in
-  [api-client.js](../../frontend/infra/api-client.js) that also adds the `Authorization` and
-  session headers. The seven call sites in [load-flow.js](../../frontend/ui/load-flow.js) and
-  [api-client.js](../../frontend/infra/api-client.js) move to it; the S3 upload
+  [api-client.js](../../../frontend/infra/api-client.js) that also adds the `Authorization` and
+  session headers. The seven call sites in [load-flow.js](../../../frontend/ui/load-flow.js) and
+  [api-client.js](../../../frontend/infra/api-client.js) move to it; the S3 upload
   (`putWithProgress`) and the S3 download record the same event. Records method, route (S3
   links reduced to `s3 PUT raw/…`, with the signature removed), status, duration, bytes. The
   `/detect` events also record offset and limit; the upload start records whether the scan box
@@ -184,8 +184,8 @@ failure in the browser console (`console.warn`, with the status), and includes "
 in the next batch that gets through. Recording never blocks or breaks the page.
 
 **Turning it on and off:** the deploy config the page already reads
-([frontend/deploy-configs/](../../frontend/deploy-configs/)) gains `recordActivity: true|false`,
-written by [scripts/write-deploy-config.sh](../../scripts/write-deploy-config.sh) from a new
+([frontend/deploy-configs/](../../../frontend/deploy-configs)) gains `recordActivity: true|false`,
+written by [scripts/write-deploy-config.sh](../../../scripts/write-deploy-config.sh) from a new
 stack setting `RecordActivity` (default `on` for `dev`). With it off, nothing is recorded or sent.
 Local development (no deploy config) records and sends to the **local backend** (`timeline-api`
 running locally, which stands in for AWS), which writes the records to its own output: §8's
@@ -195,14 +195,14 @@ browser console only", contradicting §8).
 ## §5 The `POST /activity` route, in its own function
 
 **Its own Lambda function**, `ActivityFunction` (a new binary, `bin/record_activity.rs`, beside
-[bin/process_upload.rs](../../backend/timeline-api/src/bin/process_upload.rs)), with the route
+[bin/process_upload.rs](../../../backend/timeline-api/src/bin/process_upload.rs)), with the route
 `POST /activity` declared on it in the template; API Gateway sends a specific route there ahead
 of the API's catch-all `/{proxy+}`. **Why not the API function:** a report occupying an API copy
 when one of the user's real requests arrives would make AWS start a second API copy for that
 request, costing 202–455 ms (the API's start-ups measured on 2026-10-02). A separate function
 can never do that; its own start-ups happen in the background, where no one waits.
 
-The handler, in a new [routes/activity.rs](../../backend/timeline-api/src/routes/): requires a
+The handler, in a new [routes/activity.rs](../../../backend/timeline-api/src/routes): requires a
 sign-in like every route; accepts up to 200 events of at most 4 KB each; each event's `kind` must be one of the
 five above (anything else is refused with 400, naming it); every text field is capped again. Each
 accepted event becomes one log line `kind: "page_event"` with the user's `sub` and the session ID.
@@ -264,7 +264,7 @@ dependency. The deployment analysis documents cite its output from now on.
   refuses 201 events, an oversized event and an unknown kind, each with 400 and the reason, and
   refuses no sign-in with 401; a processing run logs its line, including a failed attempt.
 - **Template** (text checks in the style of
-  [template_event_logging.rs](../../backend/timeline-api/tests/)): access log settings and
+  [template_event_logging.rs](../../../backend/timeline-api/tests)): access log settings and
   format, the five log groups with retention, `LoggingConfig` on each function, `ActivityFunction` and its route, the CORS `AllowHeaders` and `ExposeHeaders`,
   the two new settings. `scripts/check-template.sh` passes.
 - **Frontend unit, sending (§4), with a fake clock and a fake request tracker:** nothing is sent
@@ -285,7 +285,7 @@ dependency. The deployment analysis documents cite its output from now on.
   message ID and "Saved.", all with one session ID; and no line contains any message text from the
   synthetic export.
 - **The timeline script:** against a stand-in `aws`, in the style of
-  [test-deploy-scripts.sh](../../scripts/test-deploy-scripts.sh), with lines in the documented
+  [test-deploy-scripts.sh](../../../scripts/test-deploy-scripts.sh), with lines in the documented
   formats: joins by request ID, sorts, filters by session.
 - **On AWS (end to end, after deploying):** rerun D4, D5 (detection off, then on) and D6, then
   `scripts/activity-timeline.sh dev --since 30m`. Done means Claude can state from its output
@@ -374,7 +374,7 @@ items by far.
 
 **Acceptance check for response time,** in §8's end-to-end run, against today's measurements as
 the baseline (detection pages 3.0–4.4 s, processing 6.1–6.6 s for the same 60.6 MB export,
-[deployment-checks analysis](../analysis/2026-10-02-deployment-checks-status.md)): with recording
+[deployment-checks analysis](../../analysis/2026-10-02-deployment-checks-status.md)): with recording
 on, run the same upload with detection, then compare each function's `REPORT` durations, and the
 page's own measured request times, against the baseline; confirm no 429s; and confirm from the
 timeline that no report was sent while a page request was in flight. **Proposed
@@ -391,7 +391,7 @@ report it and stop, rather than tune it quietly.
 - **Per-click limit revised to 4 ms** (the user, 2026-10-02): 1 ms is below what anyone can
   notice; 4 ms is a quarter of one screen redraw. Background below.
 - **Per-click time over 1 ms, intermittently** (one click in about half the runs, 1.5–1.6 ms;
-  [analysis](../analysis/2026-10-02-recording-click-time.md)): coincides with the browser's
+  [analysis](../../analysis/2026-10-02-recording-click-time.md)): coincides with the browser's
   memory clean-up. The user directed (2026-10-02): reduce what the recorder allocates per click,
   then re-measure with the test unchanged.
 
@@ -490,7 +490,7 @@ message identifiers, element attributes and a page version; errors by kind ([§4
 
 ### C18 [RESOLVED]: recording a click sometimes exceeds 1 ms
 Original concern: one click in about half the runs took 1.5–1.6 ms, coinciding with a memory
-clean-up ([analysis](../analysis/2026-10-02-recording-click-time.md)). Cutting the recorder's
+clean-up ([analysis](../../analysis/2026-10-02-recording-click-time.md)). Cutting the recorder's
 allocation (about 244 to about 160 bytes per click) removed that pause in 15 of 15 runs; the first
 click still reached 1.0–1.2 ms in 3 of 15. **User's resolution (2026-10-02):** 1 ms is far below
 what anyone can notice (about 100 ms feels instant; a screen redraw is about 16 ms), so the limit

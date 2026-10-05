@@ -69,7 +69,7 @@ with only a console message, which a test looking elsewhere on the page could mi
   Also a refused proof, uploading before signing in, missing settings, and switching back to
   local development. Real Cognito is checked only by a deployment (migration plan §V2e, D3).
 - `activity.spec.js`: the page's activity log
-  ([docs/plans/2026-10-02-activity-instrumentation.md](../docs/plans/2026-10-02-activity-instrumentation.md)).
+  ([docs/plans/completed/2026-10-02-activity-instrumentation.md](../docs/plans/completed/2026-10-02-activity-instrumentation.md)).
   Times the recording listener over 1,000 clicks on the review table (fails if one takes 1 ms or
   more; prints the median and average), and checks that one session's records reach the local
   backend's log in order, with one session id and no message text. The backend's standard output

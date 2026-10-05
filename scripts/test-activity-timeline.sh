@@ -7,7 +7,7 @@
 #   scripts/test-activity-timeline.sh
 #
 # The canned log lines follow the activity-recording contract and the plan's
-# formats (docs/plans/2026-10-02-activity-instrumentation.md §2-§5); the
+# formats (docs/plans/completed/2026-10-02-activity-instrumentation.md §2-§5); the
 # answer shape follows the AWS CLI's documented filter-log-events output,
 # with `NextToken` as the CLI's pagination token. None were captured from a
 # real deployment; the plan's end-to-end check (§8, "On AWS") does that.

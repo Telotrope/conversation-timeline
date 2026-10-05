@@ -1,6 +1,6 @@
 // Counts the page's own requests that are still waiting for an answer, and
 // remembers when the last one finished, so activity records are sent only
-// when the page is quiet (plan docs/plans/2026-10-02-activity-instrumentation.md
+// when the page is quiet (plan docs/plans/completed/2026-10-02-activity-instrumentation.md
 // §4). `now` is the clock, a function returning milliseconds.
 
 export function createRequestTracker(now){

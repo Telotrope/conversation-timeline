@@ -1,5 +1,5 @@
 // Turns on the activity log for this page load (plan
-// docs/plans/2026-10-02-activity-instrumentation.md §4): makes the request
+// docs/plans/completed/2026-10-02-activity-instrumentation.md §4): makes the request
 // tracker and the recorder, connects the recorder to the port the rest of
 // the page records through (core/activity-sink.js), and hands back what the
 // listeners (ui/activity-listeners.js, installed by main.js) need.

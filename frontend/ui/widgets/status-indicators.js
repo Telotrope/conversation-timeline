@@ -9,7 +9,7 @@ import { pageMessage, recordedValues } from './page-messages.js';
 
 // Every setter here takes a message's identifier (page-messages.js) and its
 // live values, shows the wording, and records the identifier for the
-// activity log (plan docs/plans/2026-10-02-activity-instrumentation.md §4,
+// activity log (plan docs/plans/completed/2026-10-02-activity-instrumentation.md §4,
 // `shown`), never the wording.
 function recordShown(where, id, entry, values){
   recordActivity(shownEvent(where, id, entry.isError, recordedValues(entry, values)));

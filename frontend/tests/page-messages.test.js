@@ -1,6 +1,6 @@
 // The page's message catalog (ui/widgets/page-messages.js): the activity log
 // records these identifiers instead of the wording (plan
-// docs/plans/2026-10-02-activity-instrumentation.md §4, C17).
+// docs/plans/completed/2026-10-02-activity-instrumentation.md §4, C17).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

@@ -1,6 +1,6 @@
 //! One `api_request` log line per request, through real requests to the
 //! router wrapped by `with_request_log`
-//! (docs/plans/2026-10-02-activity-instrumentation.md §3). Each test reads
+//! (docs/plans/completed/2026-10-02-activity-instrumentation.md §3). Each test reads
 //! the lines a collecting sink received, in the format the timeline script
 //! (`scripts/activity_timeline.py`) reads.
 //!

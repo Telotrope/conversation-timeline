@@ -1,5 +1,5 @@
 //! One log line per API request
-//! (docs/plans/2026-10-02-activity-instrumentation.md §3), in the
+//! (docs/plans/completed/2026-10-02-activity-instrumentation.md §3), in the
 //! `api_request` format the timeline script reads (`scripts/activity_timeline.py`).
 //!
 //! [`with_request_log`] wraps a router so that every request it answers,

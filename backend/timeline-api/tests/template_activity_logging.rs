@@ -1,5 +1,5 @@
 //! The template's part of recording what the user did and what reached AWS
-//! (docs/plans/2026-10-02-activity-instrumentation.md §2, §5, §6): the five
+//! (docs/plans/completed/2026-10-02-activity-instrumentation.md §2, §5, §6): the five
 //! log groups and how long they keep records, each function writing to its
 //! own group, API Gateway's request log, the activity function and its
 //! route, the CORS headers the page needs, and the two settings.
