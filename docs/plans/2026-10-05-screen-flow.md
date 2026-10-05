@@ -250,7 +250,11 @@ Consequences:
 `makeRateEstimator` ([status-indicators.js](../../frontend/ui/widgets/status-indicators.js)),
 `applyExportText` and `runDetectionPass` ([load-flow.js](../../frontend/ui/load-flow.js)). Changes:
 the combined bar feeds the rate estimator the sum across files (the same function, given different
-numbers); `putWithProgress` and `waitForProcessing` each gain a way to be cancelled, for Stop.
+numbers). For Stop, only `putWithProgress` changes: it already handles an aborted send
+([api-client.js:286](../../frontend/infra/api-client.js#L286)) but gives the caller no way to abort, so it
+returns an abort handle too. `waitForProcessing` needs no change: its `sleep` is passed in
+([upload-wait.js:30](../../frontend/core/upload-wait.js#L30)), so Stop hands it a `sleep` that
+ends the wait.
 
 ## 7. The metadata, and the Describe page
 
@@ -543,7 +547,7 @@ New modules under [frontend/](../../frontend/), one job each:
 | `core/screen-flow.js` | The state machine (§3): the five pages, the events, `nextPage`. No page access. |
 | `core/conversation-metadata.js` | Form answers ↔ the server's metadata JSON, and the rules in §7d, checked once when Done is pressed. No page access. |
 | `core/upload-batch.js` | Several files' sends and waits at once: the combined progress, each file's outcome, Stop. No page access; given the send and wait functions. |
-| `ui/screens/screen-host.js` | Shows the one page the state names, hides the rest, writes the address (§4), and handles hashchange for pages. Replaces the screen-switching now split between [main.js:31-43](../../frontend/main.js#L31-L43) and `applyExportText`. |
+| `ui/screens/screen-host.js` | Shows the one page the state names, hides the rest, writes the address (§4), and handles hashchange for pages. Replaces the screen-switching now split between [main.js:31-43](../../frontend/main.js#L31-L43) and `applyExportText`. Reads and writes addresses by extending [router.js](../../frontend/ui/router.js) and [location.js](../../frontend/ui/navigation/location.js), not beside them. |
 | `ui/screens/sign-in-screen.js` | §5. Takes over [login-panel.js](../../frontend/ui/login-panel.js). |
 | `ui/screens/upload-screen.js` | §6. Takes the upload half of [load-flow.js](../../frontend/ui/load-flow.js). |
 | `ui/screens/describe-screen.js` | §7d. |
@@ -566,6 +570,36 @@ timeline), set by screen-host through a `noteScreenShown` replacing `noteMainSho
 ([activity-sink.js:51-53](../../frontend/core/activity-sink.js#L51-L53)), and the modal's
 open/close, Stop, and every page change are recorded as events. Free text (names, file names) is
 never recorded, only which fields changed, matching how sign-in emails are kept out today.
+
+### 9a. Reuse audit (2026-10-05)
+
+Done when the user asked whether the plan reuses existing code; earlier drafts named reuse only for
+the upload pieces. Each new piece, what already exists, and the decision:
+
+| New piece | Existing code found | Decision |
+|---|---|---|
+| Text shown on the new pages | [page-messages.js](../../frontend/ui/widgets/page-messages.js): every status message by identifier, so the activity log records the identifier, never the wording | **Reuse.** Every new message (sending, failures, the reminder, the warnings, "ran out") is an entry there; `SHOWN_PLACES` in [activity-event.js:188](../../frontend/core/activity-event.js#L188) gains the new places and loses `restoredNotice`. |
+| Keeping names and file names out of the activity log | `CONTENT_REGIONS` in [activity-event.js:30-31](../../frontend/core/activity-event.js#L30-L31) marks where conversation text appears, so clicks there record no text | **Reuse.** The Describe form, the Files tab and the conversation details line are added to it. |
+| Cleaning names on the page | `cleanText` in [activity-event.js:50](../../frontend/core/activity-event.js#L50) strips control and invisible characters and caps length | **Reuse** for the page's own copy of the rules; the cap passed in is 200. |
+| Cleaning names on the server | Nothing in the backend cleans text. The `regex` crate is already a `timeline-core` dependency, and it understands the same character classes (`\p{Cc}`, `\p{Cf}`) `cleanText` uses | **New function, existing library:** one `clean_label` next to the newtypes, using the same classes as the page, so the two can't disagree. |
+| Newtypes | `ConversationName` ([model.rs:143](../../backend/timeline-core/src/model.rs#L143)) is the existing pattern | **Follow it** (`#[serde(transparent)]`), plus a checked constructor. |
+| Upload sends, waits, progress | `putWithProgress`, `waitForProcessing`, the progress-bar functions, `makeRateEstimator` | **Reuse** (§6); one small change to `putWithProgress`. |
+| Showing dates and times | `formatClock`, `formatDayHeading` in [format.js](../../frontend/core/format.js); the browser's own date-and-time input for editing | **Reuse**; nothing new for display. |
+| Drawing names in lists | `escapeHtml` in [markup.js:5](../../frontend/ui/render/markup.js#L5) | **Reuse** wherever markup is built from text. |
+| Calls to the new routes | `apiFetch`, `requestFailure` in [api-client.js](../../frontend/infra/api-client.js) | **Reuse**; the new client module is only those calls. |
+| "Sign-in ran out" | `ensureAuthToken` already throws a `PageError` of kind `not_logged_in` ([api-client.js:202](../../frontend/infra/api-client.js#L202)); `errorKindOf` reads it | **Reuse**: screen-host moves to Sign-in on that kind; no new detection. |
+| Sign-in page | [login-panel.js](../../frontend/ui/login-panel.js) and [cognito-login.js](../../frontend/infra/cognito-login.js) | **Move**, not rewrite. |
+| The modal | Nothing: the page has no overlay or modal style today | **New**, CSS only, plus the reused progress bar. |
+| The state machine | Nothing comparable | **New.** |
+| Route ownership checks | `flags.rs` turns a missing summary into `ApiError::NotFound` ([flags.rs:48](../../backend/timeline-api/src/routes/flags.rs#L48)); `AuthenticatedUser`; `ApiError::BadRequest` | **Reuse** the same pattern for both metadata routes. |
+| Storing metadata on the summary row | the summary store and its DynamoDB adapter, with the read helpers in `attributes.rs` (`required_string`, `optional_string`, …) | **Reuse**; metadata is stored as one JSON text attribute read with `required_string`, since the types already derive `Serialize`. |
+| Added-message objects | `ObjectStore::put` and `get` ([object_store.rs:51-54](../../backend/timeline-core/src/ports/object_store.rs#L51-L54)) | **Reuse.** |
+| First-message fingerprint (later plan) | `sha2` is already a `timeline-api` dependency, for flag handles | **Reuse** when that plan comes. |
+| Upload counts and "had to choose" in logs | `note` in [request_record.rs:60](../../backend/timeline-api/src/request_record.rs#L60) | **Reuse.** |
+| Retried messages across files | `dedup_chat_messages` | **Reuse** (§8b-2). |
+| Guessing metadata | Nothing | **New** (`guess_metadata`). |
+| Browser tests with several files, extra messages, empty conversations | [synthetic-export.js](../../e2e/synthetic-export.js) builds exports in Claude's shape; the Cognito stand-in; `failOnPageErrors` | **Reuse**; the builder gains an option for a later copy of a conversation with extra messages. |
+| Unit tests of page modules | [fake-dom.js](../../frontend/tests/fake-dom.js) | **Reuse.** |
 
 ## 10. Tests
 
@@ -720,7 +754,7 @@ The server never learns a file's name today; only the browser knows it. With the
 that the original file name is part of each conversation's metadata, the server must know it
 before processing.
 **Resolution:** `POST /uploads` takes the file name and the human's name, recorded on the upload's
-row and read by processing; see [§8b (line 437)](2026-10-05-screen-flow.md#L437) and [§8c (line 531)](2026-10-05-screen-flow.md#L531).
+row and read by processing; see [§8b (line 441)](2026-10-05-screen-flow.md#L441) and [§8c (line 535)](2026-10-05-screen-flow.md#L535).
 
 ### C4 [OPEN]: Back across real Cognito's pages is unmeasured
 The stand-in Cognito skips the login form, so the browser tests can't show what Back does on
@@ -746,7 +780,7 @@ sessionStorage. Trigger: the user reports losing answers, or the renewal item is
 ### C7 [OPEN]: Existing browser tests drive the old load screen
 Their page-driving steps (pick a file, press Load, wait for `#mainContent`) won't match the new
 pages.
-**Mitigation in plan:** [§10 (line 628)](2026-10-05-screen-flow.md#L628) commits to bringing the
+**Mitigation in plan:** [§10 (line 662)](2026-10-05-screen-flow.md#L662) commits to bringing the
 list of changes to the user before coding. **Open:** the list is written when the plan is approved.
 
 ### C8 [RESOLVED]: A conversation in two files
@@ -757,13 +791,13 @@ this showed a third problem, present today: the export rebuilds a conversation o
 file that held it, so an older file uploaded after a newer one hides the newer messages.
 **Resolution:** the user decided (2026-10-05) that an earlier conversation is recognized and keeps
 its details, and new messages in it are added, judged by timeframe: only messages outside the
-stored time range are added, and stored messages are never compared one by one (Q18); see [§8b-2 (line 450)](2026-10-05-screen-flow.md#L450).
+stored time range are added, and stored messages are never compared one by one (Q18); see [§8b-2 (line 454)](2026-10-05-screen-flow.md#L454).
 
 ### C9 [RESOLVED]: Free text from the form reaches the page, the server's storage and logs
 Names and file names come from the user and are shown back on the page.
 **Resolution:** trimmed, cleaned of control and invisible characters and limited in length when the
-request is read ([§8a (line 375)](2026-10-05-screen-flow.md#L375)); shown on the page only as text,
-never as markup; kept out of the activity log ([§9 (line 568)](2026-10-05-screen-flow.md#L568)).
+request is read ([§8a (line 379)](2026-10-05-screen-flow.md#L379)); shown on the page only as text,
+never as markup; kept out of the activity log ([§9 (line 572)](2026-10-05-screen-flow.md#L572)).
 
 ### C10 [RESOLVED]: The first diagram was not a diagram of pages
 The first draft's diagram mixed the five pages with brief checks, sending, and every failure as
@@ -778,15 +812,15 @@ carrying its original file name and upload date so a whole file can still be edi
 (2026-10-05, Q13) editable one conversation at a time from the Conversations tab.
 **Resolution:** metadata is a field of each conversation's summary row, with a `SourceFile` part;
 file-level edits change only the fields you changed, on every conversation from that file, and a
-conversation can be edited alone (`MetadataEdit`, [§8a (line 375)](2026-10-05-screen-flow.md#L375)); see [§7a (line 257)](2026-10-05-screen-flow.md#L257)
-and [§8b (line 437)](2026-10-05-screen-flow.md#L437).
+conversation can be edited alone (`MetadataEdit`, [§8a (line 379)](2026-10-05-screen-flow.md#L379)); see [§7a (line 261)](2026-10-05-screen-flow.md#L261)
+and [§8b (line 441)](2026-10-05-screen-flow.md#L441).
 
 ### C12 [RESOLVED]: An unfinished Describe left files without details
 The first draft sent the next visit back to Describe for undescribed files. The user decided
 instead that guesses are made at upload and the next visit opens the Timeline.
-**Resolution:** the guess is written during processing ([§7b (line 275)](2026-10-05-screen-flow.md#L275));
+**Resolution:** the guess is written during processing ([§7b (line 279)](2026-10-05-screen-flow.md#L279));
 the "opens the page → Describe" arc is gone ([§3 (line 60)](2026-10-05-screen-flow.md#L60)); Describe
-is reached later from the Files tab ([§7e (line 351)](2026-10-05-screen-flow.md#L351)).
+is reached later from the Files tab ([§7e (line 355)](2026-10-05-screen-flow.md#L355)).
 
 ### C13 [OPEN]: Where the human's default name comes from
 The server knows you by Cognito's user id, and I have not checked whether the access token the
@@ -799,7 +833,7 @@ first deployment of this work (look at a decoded access token).
 
 ### C14 [RESOLVED]: A file of hundreds of conversations makes a long Describe page
 Each section lists its file's conversations with their dates and times; one file can hold hundreds.
-**Resolution:** the list starts collapsed; see [§7d (line 315)](2026-10-05-screen-flow.md#L315).
+**Resolution:** the list starts collapsed; see [§7d (line 319)](2026-10-05-screen-flow.md#L319).
 
 ### C15 [OPEN]: Placing untimed conversations can't be shown end to end yet
 The user wants a conversation whose messages have no times placed by its start and end. No file
@@ -810,7 +844,7 @@ a browser test through an upload.
 The same holds for the upload's warning about conversations with times on only some messages
 (Q19): processing can't meet one today, so it is tested by handing processing's counting function a
 conversation directly.
-**Mitigation in plan:** the rule lives in blocks.js and is unit-tested there ([§7f (line 360)](2026-10-05-screen-flow.md#L360)).
+**Mitigation in plan:** the rule lives in blocks.js and is unit-tested there ([§7f (line 364)](2026-10-05-screen-flow.md#L364)).
 **Open:** the first plan that reads a format without message times adds the browser test. Trigger:
 that plan.
 
@@ -821,13 +855,13 @@ repeated full exports of one account (the project's own was 64.7 MB) multiplied 
 one is compared with that one only, and that conversations without ids are compared only when
 neither side has an id and their time ranges overlap. The id comparison uses the stored
 conversation's summary row (its time range), and the messages a later file adds are saved on their own at upload, so the export
-reads the first file plus small addition objects; see [§8b-2 (line 450)](2026-10-05-screen-flow.md#L450).
+reads the first file plus small addition objects; see [§8b-2 (line 454)](2026-10-05-screen-flow.md#L454).
 The id-less case is built with the first format that has one.
 
 ### C17 [RESOLVED]: Question numbers didn't match what the reader saw
 §12 wrote open questions as a Markdown numbered list starting at 1, 3, 4, 8…; Markdown renumbers
 such lists on display, so the user saw 1–5 and couldn't find Q3, Q4, Q8 or Q12.
-**Resolution:** every question is labelled "Q" with its number as text; see [§12 (line 648)](2026-10-05-screen-flow.md#L648).
+**Resolution:** every question is labelled "Q" with its number as text; see [§12 (line 682)](2026-10-05-screen-flow.md#L682).
 
 ### C18 [OPEN]: Judging new messages by timeframe misses messages inside the range
 With the user's rule (Q18), a message timed inside the stored range is assumed present. A message
@@ -837,4 +871,12 @@ never added.
 message count after re-uploading is lower than the same conversation's count in the newest file
 alone. Processing can count that at no extra cost and log it; this plan adds that log line
 (§8b-2's report). Trigger: the log line firing.
+
+### C19 [RESOLVED]: Reuse was not checked piece by piece
+The drafts named reuse for the upload pieces only. Asked by the user, a search per new piece found
+existing code the plan would otherwise have duplicated: the message registry and activity-log
+content regions, the page's text cleaning, the `not_logged_in` error, the route ownership pattern,
+the storage read helpers, the injected `sleep` that makes Stop need no change to the wait, and the
+synthetic export builder for tests.
+**Resolution:** the audit table and its decisions; see [§9a (line 574)](2026-10-05-screen-flow.md#L574).
 
