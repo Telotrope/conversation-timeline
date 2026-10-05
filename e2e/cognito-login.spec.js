@@ -78,7 +78,7 @@ test('a sign-in that fails to start says so and stays on the page', async ({ pag
   await openDeployed(page);
   await expect(status(page)).toHaveText('Sign in to upload your export.');
   // Stands in for the sign-in library failing before it leaves the page
-  // (plan docs/plans/2026-10-05-page-coverage-gaps.md).
+  // (plan docs/plans/completed/2026-10-05-page-coverage-gaps.md).
   await page.evaluate(() => {
     window.oidc.UserManager.prototype.signinRedirect = () => Promise.reject(new Error('stand-in failure'));
   });

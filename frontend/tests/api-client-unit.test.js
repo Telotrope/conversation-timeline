@@ -1,5 +1,5 @@
 // infra/api-client.js's failure and edge paths that no browser test reaches
-// (plan docs/plans/2026-10-05-page-coverage-gaps.md). The module reads the
+// (plan docs/plans/completed/2026-10-05-page-coverage-gaps.md). The module reads the
 // address's query string and localStorage as it loads, so stand-ins for
 // those two are set first; `fetch` is replaced per test. Node runs each test
 // file in its own process, so none of this reaches other test files.

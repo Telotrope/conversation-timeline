@@ -1,7 +1,7 @@
 // The time-remaining estimate under the progress bar
 // (ui/widgets/status-indicators.js makeRateEstimator), with a stand-in clock:
 // browser tests' downloads finish within a second, before it ever gives one
-// (plan docs/plans/2026-10-05-page-coverage-gaps.md).
+// (plan docs/plans/completed/2026-10-05-page-coverage-gaps.md).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

@@ -2,7 +2,7 @@
 // Its `page` records which of the page's own JavaScript ran, whenever the
 // COVERAGE_DIR environment variable names a directory to write it to, so no
 // test can be left out of the measurement
-// (docs/plans/2026-10-02-browser-coverage-every-test.md). Every spec file
+// (docs/plans/completed/2026-10-02-browser-coverage-every-test.md). Every spec file
 // imports from here; coverage-setup.spec.js fails any that doesn't.
 //
 // Uses Chrome's built-in precise coverage through Playwright, which reports

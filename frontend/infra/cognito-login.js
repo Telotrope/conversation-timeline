@@ -62,7 +62,7 @@ export function createCognitoLogin(config){
       const user = await manager.getUser();
       return user && !user.expired ? (user.profile.email || user.profile.sub) : null;
     },
-    // coverage-exempt-start: runs just before the page leaves for Cognito's sign-in (docs/plans/2026-10-02-browser-coverage-every-test.md §3)
+    // coverage-exempt-start: runs just before the page leaves for Cognito's sign-in (docs/plans/completed/2026-10-02-browser-coverage-every-test.md §3)
     signIn(){ return manager.signinRedirect(); },
     // coverage-exempt-end
     // Forgets the tokens in this tab. Cognito's own session stays, so the

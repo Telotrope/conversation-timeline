@@ -1,6 +1,6 @@
 // Every browser test is measured: each spec file must take `test` from
 // ./fixtures, whose `page` records coverage, never straight from
-// @playwright/test (docs/plans/2026-10-02-browser-coverage-every-test.md).
+// @playwright/test (docs/plans/completed/2026-10-02-browser-coverage-every-test.md).
 
 const fs = require('fs');
 const path = require('path');

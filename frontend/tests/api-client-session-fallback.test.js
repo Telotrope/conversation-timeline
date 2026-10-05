@@ -1,7 +1,7 @@
 // The session id on a page without crypto.randomUUID, which Chrome offers
 // only on secure pages (https, or this machine): infra/api-client.js then
 // builds a version-4 UUID from crypto.getRandomValues (plan
-// docs/plans/2026-10-05-page-coverage-gaps.md). Its own file: the id is
+// docs/plans/completed/2026-10-05-page-coverage-gaps.md). Its own file: the id is
 // made once, as the module loads.
 
 import { test } from 'node:test';

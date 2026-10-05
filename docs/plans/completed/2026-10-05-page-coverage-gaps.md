@@ -9,18 +9,18 @@ unit tests acceptable, and a reason for any that can't.
 
 | File | Lines | Case |
 |---|---|---|
-| [infra/api-client.js](../../frontend/infra/api-client.js) | 59–63 | session id without `crypto.randomUUID` |
+| [infra/api-client.js](../../../frontend/infra/api-client.js) | 59–63 | session id without `crypto.randomUUID` |
 | | 122, 129–134 | the processed timeline's download answers an error, or never answers |
 | | 153 | an activity batch's answer, with the page still open |
 | | 247–248 | an error reply whose body can't be read |
 | | 330–331, 338–339 | a flag save while signed out; for a message with no handle |
-| [infra/cognito-login.js](../../frontend/infra/cognito-login.js) | 18–19 | the sign-in library didn't load |
+| [infra/cognito-login.js](../../../frontend/infra/cognito-login.js) | 18–19 | the sign-in library didn't load |
 | | 70 | signing out |
-| [ui/login-panel.js](../../frontend/ui/login-panel.js) | 81–85 | sign-in fails to start |
+| [ui/login-panel.js](../../../frontend/ui/login-panel.js) | 81–85 | sign-in fails to start |
 | | 88–91 | signing out |
-| [ui/annotated-export.js](../../frontend/ui/annotated-export.js) | 17–19 | the download with nothing loaded |
-| [ui/load-flow.js](../../frontend/ui/load-flow.js) | 248–250 | receiving the timeline with no size given |
-| [ui/widgets/status-indicators.js](../../frontend/ui/widgets/status-indicators.js) | 113 | the time-remaining estimate |
+| [ui/annotated-export.js](../../../frontend/ui/annotated-export.js) | 17–19 | the download with nothing loaded |
+| [ui/load-flow.js](../../../frontend/ui/load-flow.js) | 248–250 | receiving the timeline with no size given |
+| [ui/widgets/status-indicators.js](../../../frontend/ui/widgets/status-indicators.js) | 113 | the time-remaining estimate |
 
 ## §1 Tests
 

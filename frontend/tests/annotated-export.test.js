@@ -1,7 +1,7 @@
 // The annotated download with nothing loaded (ui/annotated-export.js). The
 // page can't reach this -- the button sits in the main view, shown only
 // after a load, and nothing clears the loaded data -- so the function is
-// called directly (plan docs/plans/2026-10-05-page-coverage-gaps.md).
+// called directly (plan docs/plans/completed/2026-10-05-page-coverage-gaps.md).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

@@ -1,5 +1,5 @@
 // infra/cognito-login.js when the sign-in library didn't load: the error
-// names the file to look for (plan docs/plans/2026-10-05-page-coverage-gaps.md).
+// names the file to look for (plan docs/plans/completed/2026-10-05-page-coverage-gaps.md).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

@@ -3,7 +3,7 @@
 // Every program file under frontend/ is listed, including any no test
 // loaded (shown as never loaded, 0%). Scripts that aren't repository files
 // (a page a test made up) are named at the top and left out
-// (docs/plans/2026-10-02-browser-coverage-every-test.md).
+// (docs/plans/completed/2026-10-02-browser-coverage-every-test.md).
 //
 // A script reported without its text (code that ran as the old page
 // unloaded, after the test's recording was saved and restarted; the plan's

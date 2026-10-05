@@ -72,7 +72,7 @@ export async function initLogin(){
   }
 }
 
-// coverage-exempt-start: runs just before the page leaves for Cognito's sign-in, and Chrome discards a page's coverage when it leaves (docs/plans/2026-10-02-browser-coverage-every-test.md §3)
+// coverage-exempt-start: runs just before the page leaves for Cognito's sign-in, and Chrome discards a page's coverage when it leaves (docs/plans/completed/2026-10-02-browser-coverage-every-test.md §3)
 export async function signIn(){
   if(!LOGIN) return; // the error is already shown; see initLogin
   try{

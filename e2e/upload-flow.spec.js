@@ -118,7 +118,7 @@ test('a timeline download without a stated size reports what has arrived', async
   });
   // The processed timeline's download, sent on to a server that streams it
   // in pieces with no Content-Length (Playwright's route.fulfill always adds
-  // one); plan docs/plans/2026-10-05-page-coverage-gaps.md.
+  // one); plan docs/plans/completed/2026-10-05-page-coverage-gaps.md.
   const http = require('http');
   const streamer = http.createServer(async (req, res) => {
     const original = await fetch(`${API_BASE}${req.url}`);
