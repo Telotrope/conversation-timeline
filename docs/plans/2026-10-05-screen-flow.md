@@ -668,6 +668,41 @@ was wrong: I had not looked. The page's accent is a green (`--accent: #3C6E64`) 
 its fonts are Spectral and Inter. The project's instructions ask for orange as the brand colour and
 no Inter. This plan doesn't change the palette or fonts; Q22 asks whether it should.
 
+### 9c. One document, five pages
+
+All five pages are sections of the one HTML document, shown and hidden by `showPage`; moving
+between them never loads a new document. Why, and the alternative:
+
+- **The timeline data stays in memory.** Your processed export is downloaded once (the project's
+  own was tens of megabytes) and held by the page. Separate HTML documents would drop it at every
+  move — Timeline to Describe and back would download it again — unless it were also kept in the
+  browser's own storage, which is more code and a second copy to keep current.
+- **Sign-in returns to one address.** Cognito sends you back only to addresses listed in the
+  deployment's template ([template.yaml:301](../../infra/template.yaml#L301)), and the page returns
+  to its own address ([cognito-login.js:27](../../frontend/infra/cognito-login.js#L27)). One
+  document is one address.
+- **It's how the page already works**: the load screen and the timeline are two sections of one
+  document today, and the browser tests drive it that way.
+- **The cost:** every page's markup is loaded even when you only see Sign-in. Small: the markup is
+  about 150 lines today ([timeline.html:700-853](../../timeline.html#L700-L853)); with the
+  stylesheet moved out (§9b) the whole file drops from 854 lines to about 165. Each page's markup
+  is one clearly marked section, so the file stays readable.
+
+### 9d. The Timeline page: reused, not rebuilt
+
+The current timeline (its header, the show switches, and the Calendar, Conversations, Review &
+flags and Analytics tabs) is the Timeline page as it is. What this plan changes on it, and nothing
+else:
+
+| Part | Change |
+|---|---|
+| Header | Removed: "Load a different file…" and the "Picked up where you left off" notice. Added: "Add conversations" and the "Signed in as … · Sign out" line (§5). |
+| Tabs | Added: a Files tab (one more button in the tab bar, one more view; `switchTab` and the address code handle it like the others). |
+| Conversations tab | Added above the open conversation's transcript: its details line and Edit details (§7e), in `selectConversation` ([conversations.js:47](../../frontend/ui/views/conversations.js#L47)). |
+| Calendar and every view that uses sessions | Unchanged, except that sessions for conversations without message times come from their start and end (§7f), in `buildBlocks` ([blocks.js](../../frontend/core/blocks.js)). No file read today has such conversations, so what you see doesn't change. |
+| Review & flags, Analytics, the show switches, flag saving, the annotated download | Unchanged. |
+| How it's filled | Unchanged: `applyExportText` draws every view, as today; the page also reads the conversations' metadata (§8c) for the Files tab and the details line. |
+
 ### 9a. Reuse audit (2026-10-05)
 
 Done when the user asked whether the plan reuses existing code; earlier drafts named reuse only for
@@ -888,7 +923,7 @@ sessionStorage. Trigger: the user reports losing answers, or the renewal item is
 ### C7 [OPEN]: Existing browser tests drive the old load screen
 Their page-driving steps (pick a file, press Load, wait for `#mainContent`) won't match the new
 pages.
-**Mitigation in plan:** [§10 (line 762)](2026-10-05-screen-flow.md#L762) commits to bringing the
+**Mitigation in plan:** [§10 (line 797)](2026-10-05-screen-flow.md#L797) commits to bringing the
 list of changes to the user before coding. **Open:** the list is written when the plan is approved.
 
 ### C8 [RESOLVED]: A conversation in two files
@@ -969,7 +1004,7 @@ The id-less case is built with the first format that has one.
 ### C17 [RESOLVED]: Question numbers didn't match what the reader saw
 §12 wrote open questions as a Markdown numbered list starting at 1, 3, 4, 8…; Markdown renumbers
 such lists on display, so the user saw 1–5 and couldn't find Q3, Q4, Q8 or Q12.
-**Resolution:** every question is labelled "Q" with its number as text; see [§12 (line 782)](2026-10-05-screen-flow.md#L782).
+**Resolution:** every question is labelled "Q" with its number as text; see [§12 (line 817)](2026-10-05-screen-flow.md#L817).
 
 ### C18 [OPEN]: Judging new messages by timeframe misses messages inside the range
 With the user's rule (Q18), a message timed inside the stored range is assumed present. A message
@@ -986,7 +1021,7 @@ existing code the plan would otherwise have duplicated: the message registry and
 content regions, the page's text cleaning, the `not_logged_in` error, the route ownership pattern,
 the storage read helpers, the injected `sleep` that makes Stop need no change to the wait, and the
 synthetic export builder for tests.
-**Resolution:** the audit table and its decisions; see [§9a (line 671)](2026-10-05-screen-flow.md#L671).
+**Resolution:** the audit table and its decisions; see [§9a (line 706)](2026-10-05-screen-flow.md#L706).
 
 ### C20 [RESOLVED]: The plan built the page-flow model as code, and didn't show how the old pages are reused
 The plan proposed a state-machine module, which the user pointed out makes no sense: the diagram
