@@ -14,6 +14,7 @@ const { test, expect } = require('./fixtures');
 const { failOnPageErrors } = require('./page-health');
 const { syntheticExport } = require('./synthetic-export');
 const { API_BASE, TIMELINE_HTML } = require('./test-endpoints');
+const { finishDescribe, signInToUpload } = require('./pages');
 
 failOnPageErrors();
 
@@ -51,7 +52,7 @@ function uniqueSub() {
 
 async function loadExport(page, { sub, scan }) {
   await page.goto(TIMELINE_HTML);
-  await page.fill('#devLoginSub', sub);
+  await signInToUpload(page, sub);
   if (scan) await page.check('#autoDetectCheckbox');
   await page.setInputFiles('#loadConvFile', {
     name: 'conversations.json',
@@ -59,6 +60,7 @@ async function loadExport(page, { sub, scan }) {
     buffer: Buffer.from(syntheticExport(CONVERSATIONS)),
   });
   await page.click('#loadBtn');
+  await finishDescribe(page);
   await expect(page.locator('#mainContent')).toBeVisible({ timeout: 30_000 });
 }
 
@@ -147,7 +149,8 @@ test("one session's activity reaches the backend's log, in order, without messag
   page.on('request', (req) => {
     const url = req.url();
     if (req.method() === 'POST' && url === `${API_BASE}/uploads`) sessionHeaders.uploads = req.headers()['x-timeline-session'];
-    if (req.method() === 'PUT') sessionHeaders.put = req.headers()['x-timeline-session'];
+    // The signed upload link only; the API's own PUTs (saving file details) carry the header.
+    if (req.method() === 'PUT' && url.includes('/local-storage/put/')) sessionHeaders.put = req.headers()['x-timeline-session'];
   });
 
   await loadExport(page, { sub, scan: true });
@@ -170,7 +173,7 @@ test("one session's activity reaches the backend's log, in order, without messag
     .concat(['Saved.', 'Logging in…', 'Sending your file…', 'Processing on the server…',
       'Scanning your messages for flags…', 'Preparing the timeline…', 'Signing in…', 'Reading the file…'])
     .filter((w) => w.length >= 4);
-  expect(pageWording).toContain('Load');
+  expect(pageWording).toContain('Upload');
   expect(pageWording).toContain('Approve');
 
   // Leaving the page sends what is waiting (pagehide, with keepalive).

@@ -11,6 +11,7 @@ const { test, expect } = require('./fixtures');
 const { failOnPageErrors } = require('./page-health');
 const { startCognitoStandIn } = require('./cognito-standin');
 const { API_BASE, PAGE_URL } = require('./test-endpoints');
+const { finishDescribe } = require('./pages');
 
 const FIXTURE = path.resolve(
   __dirname, '..', 'backend', 'timeline-core', 'tests', 'fixtures', 'sample_conversations.json'
@@ -55,12 +56,20 @@ test('signing in through Cognito, then uploading, then reloading', async ({ page
 
   await page.setInputFiles('#loadConvFile', FIXTURE);
   await page.click('#loadBtn');
+  await finishDescribe(page);
   await expect(page.locator('#mainContent')).toBeVisible({ timeout: 30_000 });
 
-  // Same tab: still signed in, and the session comes back.
+  // Same tab: still signed in, and the session comes back behind the
+  // loading modal (held for half a second so it can be seen).
+  await page.route(`${API_BASE}/export`, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await route.continue();
+  });
   await page.reload();
-  await expect(page.locator('#restoredNotice')).toBeVisible({ timeout: 30_000 });
-  await expect(page.locator('#restoredNoticeText')).toContainText(EMAIL);
+  await expect(page.locator('#loadingModal')).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('#loadingModal')).toBeHidden({ timeout: 30_000 });
+  await expect(page.locator('#mainContent')).toBeVisible();
+  await expect(page.locator('#accountName')).toHaveText(EMAIL);
 });
 
 test('signing out forgets the sign-in in this tab', async ({ page }) => {
@@ -68,7 +77,10 @@ test('signing out forgets the sign-in in this tab', async ({ page }) => {
   await page.click('#cognitoSignInBtn');
   await expect(status(page)).toHaveText(`Signed in as ${EMAIL}.`);
 
-  await page.click('#cognitoSignOutBtn');
+  // Sign out is on the account line of every signed-in page (plan
+  // 2026-10-05-screen-flow.md §5).
+  await page.click('#accountSignOutBtn');
+  await expect(page.locator('#signInPage')).toBeVisible();
   await expect(status(page)).toHaveText('Sign in to upload your export.');
   await expect(page.locator('#cognitoSignInBtn')).toBeVisible();
   await expect(page.locator('#cognitoSignOutBtn')).toBeHidden();
@@ -97,11 +109,15 @@ test('a wrong PKCE proof is refused and the page says so', async ({ page }) => {
   expect(page.url()).not.toContain('code=');
 });
 
-test('uploading before signing in asks you to sign in', async ({ page }) => {
+test('signed out, the page shows Sign-in, and the Upload page can\'t be reached', async ({ page }) => {
   await openDeployed(page);
-  await page.setInputFiles('#loadConvFile', FIXTURE);
-  await page.click('#loadBtn');
-  await expect(page.locator('#loadStatus')).toContainText('sign in first');
+  await expect(page.locator('#signInPage')).toBeVisible();
+  await expect(page.locator('#uploadPage')).toBeHidden();
+  // Asking for the Upload page by its address still shows Sign-in.
+  await page.goto(`${PAGE_URL}?deploy=e2e#upload`);
+  await expect(page.locator('#signInPage')).toBeVisible();
+  await expect(page.locator('#uploadPage')).toBeHidden();
+  expect(new URL(page.url()).hash).toBe('#signin');
 });
 
 test('a deployment whose settings are missing is an error, not the dev login', async ({ page }) => {
@@ -109,9 +125,9 @@ test('a deployment whose settings are missing is an error, not the dev login', a
   await page.goto(`${PAGE_URL}?deploy=missing-deployment`);
   await expect(status(page)).toContainText('write-deploy-config.sh missing-deployment');
   await expect(page.locator('#devLoginField')).toBeHidden();
-  await page.setInputFiles('#loadConvFile', FIXTURE);
-  await page.click('#loadBtn');
-  await expect(page.locator('#loadStatus')).toContainText('could not read frontend/deploy-configs/missing-deployment.json');
+  // With no working sign-in, nothing past the Sign-in page can be reached.
+  await expect(page.locator('#signInPage')).toBeVisible();
+  await expect(page.locator('#uploadPage')).toBeHidden();
 });
 
 test('?deploy= with no name goes back to local development', async ({ page }) => {
@@ -120,4 +136,56 @@ test('?deploy= with no name goes back to local development', async ({ page }) =>
   await page.goto(`${PAGE_URL}?deploy=`);
   await expect(page.locator('#devLoginField')).toBeVisible();
   await expect(page.locator('#cognitoLoginField')).toBeHidden();
+});
+
+test('a sign-in that runs out sends you back to Sign-in, saying so', async ({ page }) => {
+  await openDeployed(page);
+  await page.click('#cognitoSignInBtn');
+  await expect(page.locator('#uploadPage')).toBeVisible({ timeout: 30_000 });
+  // Cognito's sign-in lasts an hour; this one has run out.
+  await page.evaluate(() => {
+    const key = Object.keys(sessionStorage).find((k) => k.startsWith('oidc.user:'));
+    const user = JSON.parse(sessionStorage.getItem(key));
+    user.expires_at = Math.floor(Date.now() / 1000) - 60;
+    sessionStorage.setItem(key, JSON.stringify(user));
+  });
+  await page.setInputFiles('#loadConvFile', FIXTURE);
+  await page.click('#loadBtn');
+  await expect(page.locator('#signInPage')).toBeVisible();
+  await expect(page.locator('#signInStatus')).toHaveText('Your sign-in ran out; sign in again.');
+});
+
+// Marks the stored Cognito sign-in as run out.
+async function expireSignIn(page) {
+  await page.evaluate(() => {
+    const key = Object.keys(sessionStorage).find((k) => k.startsWith('oidc.user:'));
+    const user = JSON.parse(sessionStorage.getItem(key));
+    user.expires_at = Math.floor(Date.now() / 1000) - 60;
+    sessionStorage.setItem(key, JSON.stringify(user));
+  });
+}
+
+test('a sign-in that runs out on Describe, then on the way to the timeline, returns to Sign-in', async ({ page }) => {
+  await openDeployed(page);
+  await page.click('#cognitoSignInBtn');
+  await expect(page.locator('#uploadPage')).toBeVisible({ timeout: 30_000 });
+  await page.setInputFiles('#loadConvFile', FIXTURE);
+  await page.click('#loadBtn');
+  await expect(page.locator('#describeBody .describe-section')).toBeVisible({ timeout: 30_000 });
+  await expireSignIn(page);
+  // Done needs the server; so does Cancel, which opens the timeline.
+  await page.click('#describeSaveBtn');
+  await expect(page.locator('#signInStatus')).toHaveText('Your sign-in ran out; sign in again.');
+
+  await page.click('#cognitoSignInBtn');
+  await expect(page.locator('#loadingModal')).toBeHidden({ timeout: 30_000 });
+  await expect(page.locator('#mainContent')).toBeVisible();
+  await page.click('#addConversationsBtn');
+  await page.setInputFiles('#loadConvFile', FIXTURE);
+  await page.click('#loadBtn');
+  await expect(page.locator('#describePage')).toBeVisible({ timeout: 30_000 });
+  await expireSignIn(page);
+  await page.click('#describeLeaveBtn');
+  await expect(page.locator('#signInPage')).toBeVisible();
+  await expect(page.locator('#signInStatus')).toHaveText('Your sign-in ran out; sign in again.');
 });

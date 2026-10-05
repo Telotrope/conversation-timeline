@@ -17,6 +17,7 @@ const { syntheticExport } = require('./synthetic-export');
 const fs = require('fs');
 
 const { API_BASE, PAGE_URL, TIMELINE_HTML } = require('./test-endpoints');
+const { finishDescribe, signInToUpload } = require('./pages');
 const FIXTURE = path.resolve(
   __dirname, '..', 'backend', 'timeline-core', 'tests', 'fixtures', 'sample_conversations.json'
 );
@@ -55,12 +56,13 @@ async function loadFixture(page, { detect = false, sub = uniqueSub() } = {}) {
   page.on('pageerror', (err) => consoleErrors.push(String(err)));
 
   await page.goto(TIMELINE_HTML);
-  await page.fill('#devLoginSub', sub);
+  await signInToUpload(page, sub);
   await page.setInputFiles('#loadConvFile', FIXTURE);
   // Detection is opt-in now: uploading alone computes no flags at all, so
   // any test that needs them has to ask, exactly as a user would.
   if (detect) await page.check('#autoDetectCheckbox');
   await page.click('#loadBtn');
+  await finishDescribe(page);
   await expect(page.locator('#mainContent')).toBeVisible({ timeout: 30_000 });
 
   return consoleErrors;
@@ -279,7 +281,7 @@ test('the detection pass reports progress while it runs', async ({ page }) => {
   page.on('pageerror', (err) => consoleErrors.push(String(err)));
 
   await page.goto(TIMELINE_HTML);
-  await page.fill('#devLoginSub', uniqueSub());
+  await signInToUpload(page, uniqueSub());
   await page.setInputFiles('#loadConvFile', FIXTURE);
   await page.check('#autoDetectCheckbox');
 
@@ -295,6 +297,7 @@ test('the detection pass reports progress while it runs', async ({ page }) => {
   }, 30);
 
   await page.click('#loadBtn');
+  await finishDescribe(page);
   await expect(page.locator('#mainContent')).toBeVisible({ timeout: 30_000 });
   clearInterval(poll);
 
@@ -315,7 +318,7 @@ test('the upload reports byte progress before the server-side wait', async ({ pa
   page.on('pageerror', (err) => consoleErrors.push(String(err)));
 
   await page.goto(TIMELINE_HTML);
-  await page.fill('#devLoginSub', uniqueSub());
+  await signInToUpload(page, uniqueSub());
   await page.setInputFiles('#loadConvFile', FIXTURE);
 
   const seen = new Set();
@@ -327,6 +330,7 @@ test('the upload reports byte progress before the server-side wait', async ({ pa
   }, 20);
 
   await page.click('#loadBtn');
+  await finishDescribe(page);
   await expect(page.locator('#mainContent')).toBeVisible({ timeout: 30_000 });
   clearInterval(poll);
 
@@ -377,6 +381,21 @@ test('an open conversation is addressable in the hash', async ({ page }) => {
   expect(consoleErrors, `console errors:\n${consoleErrors.join('\n')}`).toEqual([]);
 });
 
+// Holds the timeline's download for half a second, long enough to see the
+// loading modal that stands in front of the timeline while it runs.
+async function slowExport(page) {
+  await page.route(`${API_BASE}/export`, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await route.continue();
+  });
+}
+
+// The loading modal opens, then closes by itself once the timeline is there.
+async function expectLoadingModalToComeAndGo(page) {
+  await expect(page.locator('#loadingModal')).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('#loadingModal')).toBeHidden({ timeout: 30_000 });
+}
+
 test('reloading restores the session and says so', async ({ page }) => {
   const sub = uniqueSub();
   await loadFixture(page, { sub });
@@ -387,32 +406,13 @@ test('reloading restores the session and says so', async ({ page }) => {
 
   // A reload is the cheap version of the problem this solves: the export is
   // still on the server, so it should come back without picking the file
-  // again.
+  // again, behind the loading modal (plan 2026-10-05-screen-flow.md §6b).
+  await slowExport(page);
   await page.reload();
+  await expectLoadingModalToComeAndGo(page);
   await expect(page.locator('#mainContent')).toBeVisible({ timeout: 30_000 });
-  await expect(page.locator('#loadScreen')).toBeHidden();
+  await expect(page.locator('#uploadPage')).toBeHidden();
   expect(await page.locator('.conv-item').count()).toBe(before);
-
-  // Announced, not silent -- a page that quietly opens with old data leaves
-  // you unsure which file you are looking at.
-  const notice = page.locator('#restoredNotice');
-  await expect(notice).toBeVisible();
-  await expect(notice).toContainText(sub);
-
-  await page.click('#restoredNoticeDismiss');
-  await expect(notice).toBeHidden();
-});
-
-test('"Load a different file" stops the session coming back', async ({ page }) => {
-  await loadFixture(page, { sub: uniqueSub() });
-  await page.click('#loadDifferentBtn');
-  await expect(page.locator('#loadScreen')).toBeVisible();
-
-  await page.reload();
-  // Back to the picker, and staying there: dismissing a session is a
-  // standing decision, not one you have to repeat on every reload.
-  await expect(page.locator('#loadScreen')).toBeVisible({ timeout: 30_000 });
-  await expect(page.locator('#restoredNotice')).toBeHidden();
 });
 
 // ---------------------------------------------------------------------------
@@ -424,12 +424,21 @@ test('"Load a different file" stops the session coming back', async ({ page }) =
 
 // Loads any export file through the real backend, like loadFixture does for
 // the checked-in fixture. `url` lets a test open the page with a query.
-async function loadFile(page, file, { detect = false, sub = uniqueSub(), url = TIMELINE_HTML } = {}) {
+// An upload that succeeds goes on to the Describe page, whose answers are
+// accepted as they are, so the timeline opens; one that fails stays on the
+// Upload page with the bar red. `beforeUpload` runs after signing in, for
+// tests that break the backend only for the upload itself.
+async function loadFile(page, file, { detect = false, sub = uniqueSub(), url = TIMELINE_HTML, beforeUpload } = {}) {
   await page.goto(url);
-  await page.fill('#devLoginSub', sub);
+  await signInToUpload(page, sub);
+  if (beforeUpload) await beforeUpload();
   await page.setInputFiles('#loadConvFile', file);
   if (detect) await page.check('#autoDetectCheckbox');
   await page.click('#loadBtn');
+  const describe = page.locator('#describePage');
+  await expect(page.locator('#describePage:visible, #loadProgressFill.is-error:visible').first())
+    .toBeVisible({ timeout: 60_000 });
+  if (await describe.isVisible()) await finishDescribe(page);
 }
 
 function writeExport(testInfo, name, conversations) {
@@ -661,8 +670,9 @@ test('opening the page at an analysis address restores the session into that ana
   await loadFixture(page);
 
   await page.evaluate(() => { location.hash = '#analytics/trend'; });
+  await slowExport(page);
   await page.reload();
-  await expect(page.locator('#restoredNotice')).toBeVisible({ timeout: 30_000 });
+  await expectLoadingModalToComeAndGo(page);
   await expect(page.locator('#view-analytics')).toHaveClass(/active/);
   await expect(page.locator('.analytics-item[data-analysis="trend"]')).toHaveClass(/active/);
   await waitForAnalysis(page);
@@ -678,8 +688,9 @@ test('opening the page at a conversation address restores the session into that 
     [...el.childNodes].filter((n) => n.nodeType === Node.TEXT_NODE).map((n) => n.textContent).join('').trim());
 
   await page.evaluate((i) => { location.hash = `#conversations/${i}`; }, idx);
+  await slowExport(page);
   await page.reload();
-  await expect(page.locator('#restoredNotice')).toBeVisible({ timeout: 30_000 });
+  await expectLoadingModalToComeAndGo(page);
   await expect(page.locator('#view-conversations')).toHaveClass(/active/);
   await expect(page.locator('#convDetail h3')).toHaveText(name);
   expect(await page.evaluate(() => location.hash)).toBe(`#conversations/${idx}`);
@@ -741,6 +752,7 @@ test('every save carries the handle the export issued for that message', async (
 
 test('pressing Load with no file chosen asks for one', async ({ page }) => {
   await page.goto(TIMELINE_HTML);
+  await signInToUpload(page, uniqueSub());
   await page.click('#loadBtn');
   await expect(page.locator('#loadStatus')).toHaveText('Choose a conversations.json file first.');
 });
@@ -781,18 +793,24 @@ test('an upload cut off mid-transfer suggests the backend may be down', async ({
 });
 
 test('an unreachable backend is reported with a hint', async ({ page }) => {
-  await page.route(`${API_BASE}/**`, (route) => route.abort());
-  await loadFile(page, FIXTURE);
+  // After signing in, so it is the upload that can't reach the backend.
+  await loadFile(page, FIXTURE, { beforeUpload: () => page.route(`${API_BASE}/**`, (route) => route.abort()) });
   await expect(page.locator('#loadStatus')).toContainText('Is the backend running');
   await expect(page.locator('#loadProgressFill')).toHaveClass(/is-error/);
 });
 
-test('a session that cannot be fetched on reload falls back to the load screen', async ({ page }) => {
+test('a session that cannot be fetched on reload shows the error in the loading modal, with Try again', async ({ page }) => {
   await loadFixture(page);
   await page.route(`${API_BASE}/export`, (route) => route.abort());
   await page.reload();
-  await expect(page.locator('#loadScreen')).toBeVisible();
-  await expect(page.locator('#restoredNotice')).toBeHidden();
+  const modal = page.locator('#loadingModal');
+  await expect(modal).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('#loadStatus')).toContainText('Is the backend running');
+  await expect(page.locator('#loadingRetryBtn')).toBeVisible();
+  await page.unroute(`${API_BASE}/export`);
+  await page.click('#loadingRetryBtn');
+  await expect(modal).toBeHidden({ timeout: 30_000 });
+  await expect(page.locator('#convItems .conv-item')).not.toHaveCount(0);
 });
 
 test('an api_base query parameter points the page at that backend', async ({ page }) => {

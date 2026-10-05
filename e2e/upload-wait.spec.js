@@ -13,6 +13,7 @@ const { test, expect } = require('./fixtures');
 const { failOnPageErrors } = require('./page-health');
 
 const { API_BASE, TIMELINE_HTML } = require('./test-endpoints');
+const { finishDescribe, signInToUpload } = require('./pages');
 const FIXTURE = path.resolve(
   __dirname, '..', 'backend', 'timeline-core', 'tests', 'fixtures', 'sample_conversations.json'
 );
@@ -40,7 +41,7 @@ test('a retry on the server is shown, with the error, while the bar keeps moving
   });
 
   await page.goto(TIMELINE_HTML);
-  await page.fill('#devLoginSub', `upload-wait-${process.pid}`);
+  await signInToUpload(page, `upload-wait-${process.pid}`);
   await page.setInputFiles('#loadConvFile', FIXTURE);
   await page.click('#loadBtn');
 
@@ -59,6 +60,7 @@ test('a retry on the server is shown, with the error, while the bar keeps moving
   );
 
   // Then the real server's "ready", and the timeline.
+  await finishDescribe(page);
   await expect(page.locator('#mainContent')).toBeVisible({ timeout: 30_000 });
   expect(asked).toBe(answers.length);
 });

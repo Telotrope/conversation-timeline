@@ -39,7 +39,6 @@ test('the wording each message shows', () => {
     'flags.loaded': [{ count: 1 }, 'Loaded 1 of your confirmed flag from the server.'],
     'save.saved': [{}, 'Saved.'],
     'save.server_error': [{ detail: 'server returned 500' }, 'Could not save to the server: server returned 500'],
-    restored: [{ sub: 'alice' }, 'Picked up where you left off — the export you last loaded as "alice". Use "Load a different file…" to start fresh.'],
     'signIn.signed_in': [{ who: 'a@b.c' }, 'Signed in as a@b.c.'],
     'signIn.failed': [{ name: 'dev', detail: 'nope' }, 'Signing in to "dev" isn\'t working: nope'],
     'signIn.start_failed': [{ detail: 'nope' }, 'Could not start signing in: nope'],
@@ -73,7 +72,7 @@ test("every identifier the page's code names is in the catalog, and every one in
   for(const file of moduleFiles()){
     if(file.endsWith(path.join('widgets', 'page-messages.js'))) continue;
     const src = fs.readFileSync(file, 'utf8');
-    for(const m of src.matchAll(/'((?:load|progress|wait|save|flags|export|signIn)\.[a-z_]+|restored)'/g)) named.add(m[1]);
+    for(const m of src.matchAll(/'((?:load|progress|wait|save|flags|export|signIn|describe)\.[a-z_]+)'/g)) named.add(m[1]);
   }
   const catalog = new Set(Object.keys(PAGE_MESSAGES));
   assert.deepEqual([...named].filter((id) => !catalog.has(id)), [], 'named in the code but not in the catalog');

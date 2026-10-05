@@ -10,6 +10,7 @@ const { test, expect } = require('./fixtures');
 const { failOnPageErrors } = require('./page-health');
 
 const { API_BASE, TIMELINE_HTML } = require('./test-endpoints');
+const { finishDescribe, signInToUpload } = require('./pages');
 const FIXTURE = path.resolve(
   __dirname, '..', 'backend', 'timeline-core', 'tests', 'fixtures', 'sample_conversations.json'
 );
@@ -21,11 +22,13 @@ async function loadFixtureAndWaitForRender(page) {
   });
 
   await page.goto(TIMELINE_HTML);
+  await signInToUpload(page);
   await page.setInputFiles('#loadConvFile', FIXTURE);
   await page.click('#loadBtn');
+  await finishDescribe(page);
 
   await expect(page.locator('#mainContent')).toBeVisible({ timeout: 20_000 });
-  await expect(page.locator('#loadScreen')).toBeHidden();
+  await expect(page.locator('#uploadPage')).toBeHidden();
 
   return consoleErrors;
 }
@@ -72,12 +75,14 @@ test('a file bigger than axum\'s default 2MB body limit still uploads', async ({
   page.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
 
   await page.goto(TIMELINE_HTML);
+  await signInToUpload(page);
   await page.setInputFiles('#loadConvFile', {
     name: 'large-export.json',
     mimeType: 'application/json',
     buffer,
   });
   await page.click('#loadBtn');
+  await finishDescribe(page);
 
   await expect(page.locator('#mainContent')).toBeVisible({ timeout: 30_000 });
   await expect(page.locator('#loadStatus')).not.toContainText('413');

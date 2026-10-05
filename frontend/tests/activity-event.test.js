@@ -157,7 +157,10 @@ test('a submit carries the text box and its capped text', () => {
 test('view and shown events', () => {
   assert.deepEqual(viewEvent('review', 'router'), { kind: 'view', view: 'review', via: 'router' });
   assert.deepEqual(shownEvent('saveStatus', 'save.saved', 0), { kind: 'shown', where: 'saveStatus', message: 'save.saved', is_error: false });
-  assert.deepEqual([...SHOWN_PLACES], ['loadStatus', 'saveStatus', 'loadProgress', 'restoredNotice', 'signIn']);
+  assert.deepEqual([...SHOWN_PLACES], [
+    'loadStatus', 'saveStatus', 'loadProgress', 'signIn', 'signInStatus', 'fileFailures', 'describeStatus',
+    'describeReminder',
+  ]);
 });
 
 test('routes replace every UUID with {id} and drop the query', () => {
