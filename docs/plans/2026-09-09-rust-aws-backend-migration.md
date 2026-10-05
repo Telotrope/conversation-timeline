@@ -1439,16 +1439,16 @@ this plan:
 - **A development-only "delete my earlier data first" checkbox.**
   [2026-10-02-dev-delete-before-load.md](2026-10-02-dev-delete-before-load.md): proposed, not
   approved.
-- **Rewrite the load screen.** The Load button sits far from the file chooser it depends on,
+- **Rewrite the load screen.** **Replaced** (2026-10-05, the user's decision) by [2026-10-05-screen-flow.md](2026-10-05-screen-flow.md): its Sign-in and Upload pages. The Load button sits far from the file chooser it depends on,
   separated by the sign-in area and a long paragraph about scanning; the user found the page
   confusing. Needs its own plan before any change.
-- **A restore screen with a Stop button** (requested 2026-10-02). Today the page restores your last
+- **A restore screen with a Stop button** (requested 2026-10-02). **Replaced** (2026-10-05, the user's decision) by [2026-10-05-screen-flow.md](2026-10-05-screen-flow.md): its loading modal, which blocks the page during a restore and has no Stop button. Today the page restores your last
   session quietly behind the load screen, which stays usable, so on 2026-10-02 a new load was
   started during a restore and the restored old data briefly appeared as if it were the new file.
   Instead, while a restore runs, show a restore screen (who is signed in, the download's
   progress) with a **Stop** button that cancels the restore and shows the load screen. Needs its
   own plan before any change.
-- **A leftover "Picked up where you left off" notice** (found 2026-10-02). The notice is shown
+- **A leftover "Picked up where you left off" notice** (found 2026-10-02). **Replaced** (2026-10-05, the user's decision) by [2026-10-05-screen-flow.md](2026-10-05-screen-flow.md), which removes the notice and "Load a different file". The notice is shown
   when the page opens and restores your last session
   ([load-flow.js:98](../../frontend/ui/load-flow.js#L98)), and only its own dismiss button hides it
   ([status-indicators.js:85-91](../../frontend/ui/widgets/status-indicators.js#L85-L91)); after
