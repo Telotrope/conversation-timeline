@@ -611,8 +611,7 @@ New modules under [frontend/](../../frontend/), one job each:
 [load-flow.js](../../frontend/ui/load-flow.js) keeps only what both the upload and the modal share
 (`applyExportText`, the scan pass). Removed: `tryRestoreSession`, the restored notice and its
 dismiss button, "Load a different file". [timeline.html](../../timeline.html) gets one section per
-page, the modal and the Files tab; their look follows the page's existing style (orange accents,
-the current fonts).
+page, the modal and the Files tab, all styled from the one stylesheet (§9b).
 
 **Activity log.** Records carry the shown tab, or '' when the tabs aren't shown
 ([activity-capture.js:24-26](../../frontend/ui/activity-capture.js#L24-L26)). With five pages,
@@ -621,6 +620,53 @@ timeline), set by `showPage` through a `noteScreenShown` replacing `noteMainShow
 ([activity-sink.js:51-53](../../frontend/core/activity-sink.js#L51-L53)), and the modal's
 open/close, Stop, and every page change are recorded as events. Free text (names, file names) is
 never recorded, only which fields changed, matching how sign-in emails are kept out today.
+
+### 9b. One stylesheet
+
+**Today, observed in the files:** there is one page, [timeline.html](../../timeline.html), and all
+of its styling is one `<style>` block inside it ([timeline.html:12-698](../../timeline.html#L12-L698)),
+about 690 lines. The five pages in this plan are sections of that same file, so they would all use
+that one block; nothing is copied per page. But the styling is not a file of its own, and it
+already repeats itself in three ways:
+
+- **18 inline `style="…"` attributes** in the markup (margins, paddings, `display:none`), for
+  example [timeline.html:716-739](../../timeline.html#L716-L739) in the load screen's fields.
+- **The error red `#B0392F` is written out six times**: four times in the stylesheet (lines 139,
+  164, 364, 533) and twice in JavaScript, which sets a status line's colour directly
+  ([login-panel.js:27](../../frontend/ui/login-panel.js#L27),
+  [status-indicators.js:27](../../frontend/ui/widgets/status-indicators.js#L27)).
+- **The fonts are named at each use**: `'Inter', sans-serif` and `'Spectral', serif` appear ten
+  times between them, rather than once as named values.
+
+**The change:**
+
+1. **The `<style>` block moves to its own file, `frontend/timeline.css`**, and timeline.html links
+   to it. Every page, the modal and the Files tab use that file and nothing else; no new page gets
+   styling of its own. [publish-page.sh](../../scripts/publish-page.sh) copies the file and sends
+   it as `text/css` (today it publishes only `.js`, `.json`, `.html` and a few others, and refuses
+   unknown types, so this is a required change). The browser tests already serve the whole
+   repository, so they need nothing.
+2. **One named value per design decision.** The colours already have names (`--paper`, `--ink`,
+   `--accent`, … in `:root`). Added: `--error` for the red, and `--font-ui` and `--font-text` for
+   the two fonts; every repeat is replaced by the name.
+3. **No colour or layout set from JavaScript.** The two status lines get an `is-error` class
+   instead of a colour, the way the progress bar already does (`.progress-fill.is-error`). Showing
+   and hiding pages uses a class too, as `switchTab` already does for tabs (`.view.active`), so
+   `showPage` mirrors it.
+4. **No inline styles in markup this plan writes or moves.** The load screen's fields move to the
+   Sign-in and Upload pages, and their inline styles become classes on the way. The 7 inline styles
+   left in the Timeline's own markup (lines 746-818) are converted too only if the user agrees
+   (Q21).
+5. **New pieces reuse existing classes**: `.load-panel` and `.load-field` for every form (Sign-in,
+   Upload, Describe), `.btn-primary`/`.btn-secondary` for buttons, `.filter-banner` for the
+   reminders and warnings, the `.progress-*` classes for the bar, `.hint` and `.note` for
+   explanations, and `.conv-item`'s list style for the Files tab. **New classes only** for what has
+   no counterpart: the modal's box and backdrop, a participant row, and the per-file failure lines.
+
+**A correction.** Earlier drafts said the new pages would follow the page's "orange accents". That
+was wrong: I had not looked. The page's accent is a green (`--accent: #3C6E64`) with an amber, and
+its fonts are Spectral and Inter. The project's instructions ask for orange as the brand colour and
+no Inter. This plan doesn't change the palette or fonts; Q22 asks whether it should.
 
 ### 9a. Reuse audit (2026-10-05)
 
@@ -636,6 +682,7 @@ the upload pieces. Each new piece, what already exists, and the decision:
 | Newtypes | `ConversationName` ([model.rs:143](../../backend/timeline-core/src/model.rs#L143)) is the existing pattern | **Follow it** (`#[serde(transparent)]`), plus a checked constructor. |
 | Upload sends, waits, progress | `putWithProgress`, `waitForProcessing`, the progress-bar functions, `makeRateEstimator` | **Reuse** (§6); one small change to `putWithProgress`. |
 | Showing dates and times | `formatClock`, `formatDayHeading` in [format.js](../../frontend/core/format.js); the browser's own date-and-time input for editing | **Reuse**; nothing new for display. |
+| Styling for the new pages | the one `<style>` block, its named colours, and its classes (`.load-panel`, `.load-field`, buttons, `.filter-banner`, `.progress-*`, `.hint`) | **Reuse**, moved into one stylesheet file (§9b); new classes only for the modal, participant rows and failure lines. |
 | Drawing names in lists | `escapeHtml` in [markup.js:5](../../frontend/ui/render/markup.js#L5) | **Reuse** wherever markup is built from text. |
 | Calls to the new routes | `apiFetch`, `requestFailure` in [api-client.js](../../frontend/infra/api-client.js) | **Reuse**; the new client module is only those calls. |
 | "Sign-in ran out" | `ensureAuthToken` already throws a `PageError` of kind `not_logged_in` ([api-client.js:202](../../frontend/infra/api-client.js#L202)); `errorKindOf` reads it | **Reuse**: `showPage("signIn")` on that kind; no new detection. |
@@ -767,7 +814,15 @@ number written out rather than as a numbered list (which Markdown renumbers on d
   ([lines 1442, 1445 and 1451](2026-09-09-rust-aws-backend-migration.md#L1442)) are marked as
   replaced by this plan (done 2026-10-05).
 
-**Still open:** none.
+**Still open:**
+
+- **Q21 — The Timeline's own inline styles.** Seven `style="…"` attributes remain in the
+  Timeline's markup (timeline.html lines 746-818: margins on hints and buttons, and `display:none`
+  on two banners). This plan converts the inline styles in markup it moves. Convert these seven to
+  classes as well, in this plan, so no styling lives outside the stylesheet?
+- **Q22 — Palette and fonts.** The page uses a green accent and the Inter font; the project's
+  instructions ask for orange as the brand colour and no Inter. Change them in this plan (one
+  stylesheet makes it a change to a few named values), in a separate plan, or leave them?
 
 **Formerly open, kept for the record:**
 
@@ -833,7 +888,7 @@ sessionStorage. Trigger: the user reports losing answers, or the renewal item is
 ### C7 [OPEN]: Existing browser tests drive the old load screen
 Their page-driving steps (pick a file, press Load, wait for `#mainContent`) won't match the new
 pages.
-**Mitigation in plan:** [§10 (line 715)](2026-10-05-screen-flow.md#L715) commits to bringing the
+**Mitigation in plan:** [§10 (line 762)](2026-10-05-screen-flow.md#L762) commits to bringing the
 list of changes to the user before coding. **Open:** the list is written when the plan is approved.
 
 ### C8 [RESOLVED]: A conversation in two files
@@ -850,7 +905,7 @@ stored time range are added, and stored messages are never compared one by one (
 Names and file names come from the user and are shown back on the page.
 **Resolution:** trimmed, cleaned of control and invisible characters and limited in length when the
 request is read ([§8a (line 431)](2026-10-05-screen-flow.md#L431)); shown on the page only as text,
-never as markup; kept out of the activity log ([§9 (line 623)](2026-10-05-screen-flow.md#L623)).
+never as markup; kept out of the activity log ([§9 (line 622)](2026-10-05-screen-flow.md#L622)).
 
 ### C10 [RESOLVED]: The first diagram was not a diagram of pages
 The first draft's diagram mixed the five pages with brief checks, sending, and every failure as
@@ -914,7 +969,7 @@ The id-less case is built with the first format that has one.
 ### C17 [RESOLVED]: Question numbers didn't match what the reader saw
 §12 wrote open questions as a Markdown numbered list starting at 1, 3, 4, 8…; Markdown renumbers
 such lists on display, so the user saw 1–5 and couldn't find Q3, Q4, Q8 or Q12.
-**Resolution:** every question is labelled "Q" with its number as text; see [§12 (line 735)](2026-10-05-screen-flow.md#L735).
+**Resolution:** every question is labelled "Q" with its number as text; see [§12 (line 782)](2026-10-05-screen-flow.md#L782).
 
 ### C18 [OPEN]: Judging new messages by timeframe misses messages inside the range
 With the user's rule (Q18), a message timed inside the stored range is assumed present. A message
@@ -931,7 +986,7 @@ existing code the plan would otherwise have duplicated: the message registry and
 content regions, the page's text cleaning, the `not_logged_in` error, the route ownership pattern,
 the storage read helpers, the injected `sleep` that makes Stop need no change to the wait, and the
 synthetic export builder for tests.
-**Resolution:** the audit table and its decisions; see [§9a (line 625)](2026-10-05-screen-flow.md#L625).
+**Resolution:** the audit table and its decisions; see [§9a (line 671)](2026-10-05-screen-flow.md#L671).
 
 ### C20 [RESOLVED]: The plan built the page-flow model as code, and didn't show how the old pages are reused
 The plan proposed a state-machine module, which the user pointed out makes no sense: the diagram
@@ -943,4 +998,12 @@ Sign-in page the sign-in logic.
 Step-by-step reuse tables for the Sign-in page ([§5 (line 204)](2026-10-05-screen-flow.md#L204)), the
 Upload page ([§6 (line 238)](2026-10-05-screen-flow.md#L238)) and the modal ([§6b (line 291)](2026-10-05-screen-flow.md#L291)),
 whose bar is the existing bar, moved.
+
+### C21 [RESOLVED]: Styling was not planned, and the plan misstated the page's colours
+The plan said nothing about where the new pages' styling would live, and claimed the page has
+"orange accents" without looking; it has a green accent. The user wants one stylesheet every page
+uses.
+**Resolution:** [§9b (line 624)](2026-10-05-screen-flow.md#L624): the style block becomes one file,
+repeats become named values, JavaScript sets classes not colours, new pages reuse existing classes;
+the palette question is Q22.
 
