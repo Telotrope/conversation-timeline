@@ -219,7 +219,7 @@ grep -q "Published to https://howangryami.telotrope.ai/" "$work/out.txt" && pass
   || fail "did not print the page's address: $(cat "$work/out.txt")"
 
 expected="$( (cd "$REPO_ROOT" && { echo index.html; echo frontend/deploy-configs/dev.json;
-  find frontend -name '*.js' -not -path 'frontend/tests/*' -not -path '*/node_modules/*'; find vendor -type f; }) | sort)"
+  find frontend \( -name '*.js' -o -name '*.css' \) -not -path 'frontend/tests/*' -not -path '*/node_modules/*'; find vendor -type f; }) | sort)"
 actual="$( (cd "$work/synced" && find . -type f | sed 's|^\./||') | sort)"
 [ "$expected" = "$actual" ] && pass "uploads exactly the page's files, timeline.html as index.html" \
   || fail "uploaded a different file list: $(diff <(echo "$expected") <(echo "$actual"))"
@@ -247,6 +247,7 @@ fi
 
 for expect in \
   "--include \*\.js --content-type text/javascript; charset=utf-8" \
+  "--include \*\.css --content-type text/css; charset=utf-8" \
   "--include \*\.json --content-type application/json" \
   "--include \*\.html --content-type text/html; charset=utf-8" \
   "--include \*\.md --include \*/LICENSE --include \*/LICENSE-\* --content-type text/plain; charset=utf-8"; do
@@ -254,7 +255,7 @@ for expect in \
     && pass "syncs with --delete, no-cache and its type: ${expect#--include }" \
     || fail "no sync for: $expect; got: $(grep '^s3' "$work/argv.log")"
 done
-[ "$(grep -c '^s3 sync' "$work/argv.log")" = 4 ] && pass "syncs four groups, no more" \
+[ "$(grep -c '^s3 sync' "$work/argv.log")" = 5 ] && pass "syncs five groups, no more" \
   || fail "sync count: $(grep -c '^s3 sync' "$work/argv.log")"
 grep -q -- "^cloudfront create-invalidation --distribution-id E2QWRUHAPOMQZL --paths /\*$" "$work/argv.log" \
   && pass "clears the distribution's copies" \
@@ -272,11 +273,11 @@ fake_repo() {
   : > "$work/argv.log"
 }
 fake_repo
-touch "$work/repo/vendor/style.css"
+touch "$work/repo/vendor/picture.webp"
 if "$work/repo/scripts/publish-page.sh" dev > "$work/out.txt" 2>&1; then
   fail "published a file it has no content type for"
 else
-  grep -q "vendor/style.css" "$work/out.txt" && pass "refuses a file it has no content type for, naming it" \
+  grep -q "vendor/picture.webp" "$work/out.txt" && pass "refuses a file it has no content type for, naming it" \
     || fail "did not name the untyped file: $(cat "$work/out.txt")"
 fi
 grep -q "^s3 " "$work/argv.log" && fail "uploaded before refusing the untyped file" \

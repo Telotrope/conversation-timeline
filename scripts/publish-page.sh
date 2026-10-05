@@ -45,16 +45,16 @@ if page.count(charset) != 1:
 tag = f'<meta name="timeline-deploy" content="{stage}">\n'
 open(target, "w", encoding="utf-8").write(page.replace(charset, charset + tag))
 PY
-(cd "$repo" && find frontend -name '*.js' -not -path 'frontend/tests/*' -not -path '*/node_modules/*' -print0 \
+(cd "$repo" && find frontend \( -name '*.js' -o -name '*.css' \) -not -path 'frontend/tests/*' -not -path '*/node_modules/*' -print0 \
   | xargs -0 -I{} install -D -m 644 {} "$staged/{}")
 cp -r "$repo/vendor" "$staged/vendor"
 DEPLOY_CONFIG_DIR="$staged/frontend/deploy-configs" "$repo/scripts/write-deploy-config.sh" "$stage" > /dev/null
 
 # Each file is sent with its type given, not guessed: browsers refuse to run
-# a module script sent as anything but JavaScript. The four groups cover
+# a module script sent as anything but JavaScript. The five groups cover
 # every staged file (checked here), and each sync's --delete removes only
 # that group's leftovers.
-unknown="$(cd "$staged" && find . -type f -not -name '*.js' -not -name '*.json' -not -name '*.html' \
+unknown="$(cd "$staged" && find . -type f -not -name '*.js' -not -name '*.css' -not -name '*.json' -not -name '*.html' \
   -not -name '*.md' -not -name 'LICENSE' -not -name 'LICENSE-*')"
 if [ -n "$unknown" ]; then
   echo "No content type is set for these files; add one to scripts/publish-page.sh:" >&2
@@ -67,6 +67,7 @@ publish() {
     --exclude '*' "$@" --content-type "$type" --only-show-errors
 }
 publish 'text/javascript; charset=utf-8' --include '*.js'
+publish 'text/css; charset=utf-8' --include '*.css'
 publish 'application/json' --include '*.json'
 publish 'text/html; charset=utf-8' --include '*.html'
 publish 'text/plain; charset=utf-8' --include '*.md' --include '*/LICENSE' --include '*/LICENSE-*'
