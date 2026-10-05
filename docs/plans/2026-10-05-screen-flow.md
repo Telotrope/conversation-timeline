@@ -461,12 +461,29 @@ is looked at. The comparison is by timeframe (below), so it needs only the store
 time range and message count, which are kept on its summary row; the earlier file itself isn't
 opened.
 
-**Conversations without ids** (the user's rule, 2026-10-05, C16): an earlier conversation is
-re-read only when (a) the new conversation has no id, (b) the stored one has no id either, and (c)
-their time ranges overlap. A conversation with an id that matches no stored one is new, and is
-compared with nothing. No format the
-server reads today has conversations without ids (the parser requires `uuid`), so this rule is
-built by the first plan that reads such a format, not here, where nothing could reach it.
+A conversation with an id that matches no stored one is new, and is compared with nothing.
+
+**Conversations without ids** (the user's rules, 2026-10-05, C16), in order, stopping as soon as
+one decides:
+
+1. **Pick the candidates by time.** When both conversations have a start date and time, compare
+   only the starts: more than 24 hours apart, they can't be the same conversation. Otherwise, a
+   stored conversation is a candidate when its time range overlaps the new one's. Every stored
+   conversation that passes is a candidate (Q20 asks whether that includes stored conversations
+   that have ids).
+2. **Compare the first message.** If the new conversation's first message differs from the
+   candidate's, they're different conversations, and nothing more is done with that candidate.
+3. **Same first message:** the same conversation. Its new messages are found by timeframe, as for
+   conversations with ids (below).
+
+To keep step 2 from opening earlier files, the summary row keeps a fingerprint of each
+conversation's first message (a hash of its text, the same kind of short code a file checksum is),
+written at upload. If two candidates pass step 2, the one whose start is nearest is taken, and the
+upload logs that it had to choose.
+
+No format the server reads today has conversations without ids (the parser requires `uuid`), so
+these rules are built by the first plan that reads such a format, not here, where nothing could
+reach them. The plan records them so that plan starts from them.
 
 **Which messages are new: by timeframe, not one by one** (the user, 2026-10-05, Q18). The stored
 conversation has a time range: the times of its earliest and latest stored messages. From a later
@@ -661,7 +678,13 @@ number written out rather than as a numbered list (which Markdown renumbers on d
   ([lines 1442, 1445 and 1451](2026-09-09-rust-aws-backend-migration.md#L1442)) are marked as
   replaced by this plan (done 2026-10-05).
 
-**Still open:** none.
+**Still open:**
+
+- **Q20 — Which stored conversations a conversation without an id is compared with.** Your first
+  rule (2026-10-05) said only stored conversations that also lack an id; your later one said each
+  prior conversation that overlaps in time. The plan follows the later one: every stored
+  conversation that passes the time check, with or without an id. Is that right? It matters when
+  the same conversation was first uploaded in a format with ids and later in one without.
 
 **Formerly open, kept for the record:**
 
@@ -698,7 +721,7 @@ The server never learns a file's name today; only the browser knows it. With the
 that the original file name is part of each conversation's metadata, the server must know it
 before processing.
 **Resolution:** `POST /uploads` takes the file name and the human's name, recorded on the upload's
-row and read by processing; see [§8b (line 437)](2026-10-05-screen-flow.md#L437) and [§8c (line 514)](2026-10-05-screen-flow.md#L514).
+row and read by processing; see [§8b (line 437)](2026-10-05-screen-flow.md#L437) and [§8c (line 531)](2026-10-05-screen-flow.md#L531).
 
 ### C4 [OPEN]: Back across real Cognito's pages is unmeasured
 The stand-in Cognito skips the login form, so the browser tests can't show what Back does on
@@ -724,7 +747,7 @@ sessionStorage. Trigger: the user reports losing answers, or the renewal item is
 ### C7 [OPEN]: Existing browser tests drive the old load screen
 Their page-driving steps (pick a file, press Load, wait for `#mainContent`) won't match the new
 pages.
-**Mitigation in plan:** [§10 (line 611)](2026-10-05-screen-flow.md#L611) commits to bringing the
+**Mitigation in plan:** [§10 (line 628)](2026-10-05-screen-flow.md#L628) commits to bringing the
 list of changes to the user before coding. **Open:** the list is written when the plan is approved.
 
 ### C8 [RESOLVED]: A conversation in two files
@@ -741,7 +764,7 @@ stored time range are added, and stored messages are never compared one by one (
 Names and file names come from the user and are shown back on the page.
 **Resolution:** trimmed, cleaned of control and invisible characters and limited in length when the
 request is read ([§8a (line 375)](2026-10-05-screen-flow.md#L375)); shown on the page only as text,
-never as markup; kept out of the activity log ([§9 (line 551)](2026-10-05-screen-flow.md#L551)).
+never as markup; kept out of the activity log ([§9 (line 568)](2026-10-05-screen-flow.md#L568)).
 
 ### C10 [RESOLVED]: The first diagram was not a diagram of pages
 The first draft's diagram mixed the five pages with brief checks, sending, and every failure as
@@ -805,7 +828,7 @@ The id-less case is built with the first format that has one.
 ### C17 [RESOLVED]: Question numbers didn't match what the reader saw
 §12 wrote open questions as a Markdown numbered list starting at 1, 3, 4, 8…; Markdown renumbers
 such lists on display, so the user saw 1–5 and couldn't find Q3, Q4, Q8 or Q12.
-**Resolution:** every question is labelled "Q" with its number as text; see [§12 (line 631)](2026-10-05-screen-flow.md#L631).
+**Resolution:** every question is labelled "Q" with its number as text; see [§12 (line 648)](2026-10-05-screen-flow.md#L648).
 
 ### C18 [OPEN]: Judging new messages by timeframe misses messages inside the range
 With the user's rule (Q18), a message timed inside the stored range is assumed present. A message
