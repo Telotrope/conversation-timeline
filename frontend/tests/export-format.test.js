@@ -80,3 +80,12 @@ test('a review field with no flag stated is not counted as a review', () => {
   ] }]));
   assert.deepEqual(Object.keys(r.embeddedOverrides), ['0|2026-01-01T10:02:00Z']);
 });
+
+test('each conversation\'s id and its count of untimed messages come beside the list', () => {
+  const r = parseUploadedConversations(JSON.stringify({ conversations: [
+    { uuid: 'u1', name: 'One', chat_messages: [exportMessage('human', 'hi', '2026-01-01T00:00:00Z'), { sender: 'human', content: [] }] },
+    { name: 'No id', chat_messages: [] },
+  ] }));
+  assert.deepEqual(r.conversationIds, ['u1', null]);
+  assert.deepEqual(r.untimedCounts, [1, 0]);
+});

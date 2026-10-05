@@ -7,12 +7,12 @@ const crypto = require('crypto');
 
 const NULL_PARENT = '00000000-0000-4000-8000-000000000000';
 
-function message(sender, text, at, review) {
+function message(sender, text, at, review, uuid) {
   const ts = at.toISOString();
   const reviewField = review ? { _claude_timeline_user: review } : {};
   return {
     ...reviewField,
-    uuid: crypto.randomUUID(),
+    uuid: uuid || crypto.randomUUID(),
     text,
     content: [{
       start_timestamp: ts, stop_timestamp: ts, flags: null, type: 'text', text, citations: [],
@@ -26,16 +26,18 @@ function message(sender, text, at, review) {
   };
 }
 
-// conversations: [{ name, messages: [{ sender: 'human'|'assistant', text, at: Date, review? }] }]
+// conversations: [{ name, uuid?, messages: [{ sender: 'human'|'assistant', text, at: Date, review?, uuid? }] }]
 // review, if given, is your review of the message: { caps, critical, angry }.
+// Ids are random unless given; giving them lets two exports hold the same
+// conversation, as a later export repeats an earlier one's.
 function syntheticExport(conversations) {
   const account = { uuid: crypto.randomUUID() };
   return JSON.stringify(conversations.map((c) => {
-    const msgs = c.messages.map((m) => message(m.sender, m.text, m.at, m.review));
+    const msgs = c.messages.map((m) => message(m.sender, m.text, m.at, m.review, m.uuid));
     const first = msgs.length ? msgs[0].created_at : new Date(0).toISOString();
     const last = msgs.length ? msgs[msgs.length - 1].created_at : first;
     return {
-      uuid: crypto.randomUUID(),
+      uuid: c.uuid || crypto.randomUUID(),
       name: c.name,
       summary: '',
       created_at: first,
