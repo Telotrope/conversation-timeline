@@ -1,6 +1,6 @@
 # Deferred problems
 
-**Status:** open. No fix is designed yet, except item 5's proposal (not approved). Each problem
+**Status:** open. No fix is designed yet, except item 5's proposal (not approved) and the rules recorded in item 8. Each problem
 gets its own plan, or a section here, before any code changes.
 
 These came from the "Known defects" section of
@@ -98,3 +98,60 @@ phases.
      then "Reviewed", and the load summary is still shown; a save the server refuses (a stale
      handle, 403) → that row shows "Not saved: …" and other rows are unchanged; downloading →
      the message appears beside the button only.
+
+## Deferred from the screen-flow plan (2026-10-05)
+
+These were left out of [2026-10-05-screen-flow.md](2026-10-05-screen-flow.md), which replaces the
+load screen with five pages (Sign-in, Upload, Describe, Timeline, and a loading modal) and gives
+every conversation metadata: its participants, the kind of conversation (typed, virtual voice in an
+online meeting, or live voice in a shared space), the transcription service, its start and end,
+and the file it came from. Each was put off by the user's decision unless noted.
+
+6. **Guessing metadata from a file's contents.** When a file is uploaded, every conversation gets
+   metadata at once, so nothing is left blank if the user never edits it. In the screen-flow plan
+   that first version is fixed defaults: one human named with the signed-in account, plus Claude;
+   typed; start and end from the earliest and latest message. The user wants real guesses read
+   from the file (who spoke, whether it was voice, which transcriber), which the user then approves
+   or corrects on the same Describe page. The defaults are made by one function, `guess_metadata`,
+   so this work replaces only that function. Each conversation already records whether its
+   details are still guessed or were confirmed by the user.
+
+7. **Reading other export formats.** The server reads only Claude's export format. The user plans
+   to add ChatGPT's and Gemini's exports, voice-meeting transcripts, and files with several human
+   speakers, each in its own plan. The metadata already has places for them: participants can be
+   ChatGPT, Gemini or another AI, and the kinds of conversation and transcription services cover
+   voice. Files naming several humans will supply their names, rather than the signed-in account
+   filling in one.
+
+8. **Recognizing a re-uploaded conversation that has no id.** A later export usually repeats
+   conversations from an earlier one. Claude's conversations carry ids, so the screen-flow plan
+   matches them by id and adds only messages timed outside the stored conversation's time range.
+   Some future formats may lack ids. The user's rules for those: compare a conversation without an
+   id only with stored conversations that also lack one; pick candidates whose starts are within
+   24 hours of each other (or, without starts, whose time ranges overlap); a different first
+   message means a different conversation; the same first message means the same conversation,
+   and its new messages are added by time range. To avoid reopening earlier files, the stored
+   record should keep a fingerprint (a hash) of each conversation's first message. Built with the
+   first format that has no ids; nothing could reach it before then.
+
+9. **Metadata in the downloaded file.** The "Download annotated conversations.json" button gives
+   back the user's conversations with their flags written in, so re-uploading the file restores
+   the flags. It will not carry the new metadata (participants, kind, transcription, start and
+   end), so a re-uploaded saved file gets fresh default metadata. The user decided this isn't
+   needed for now.
+
+10. **Deleting data.** There is no way to delete uploaded conversations; the screen-flow plan only
+    adds them. One consequence: the Upload page's Stop button can't take back a file whose bytes
+    already reached the server, because the server processes it regardless, so it appears in the
+    user's files with default details. The user decided Stop never deletes, and wants deleting as
+    a separate feature later. Related, for local development only:
+    [2026-10-02-dev-delete-before-load.md](2026-10-02-dev-delete-before-load.md) (proposed, not
+    approved).
+
+11. **Renewing an expired sign-in quietly.** A Cognito sign-in lasts an hour. Today the page then
+    fails every request under a "Signed in" label. The screen-flow plan only sends the user back to
+    the Sign-in page with "Your sign-in ran out", which loses any details typed but not yet saved.
+    Renewing the sign-in in the background with Cognito's refresh token would avoid both; it is
+    already an item in the migration plan
+    ([2026-09-09-rust-aws-backend-migration.md](2026-09-09-rust-aws-backend-migration.md), "Sign-in
+    that goes stale"), not something the user deferred here.

@@ -801,17 +801,15 @@ list of tests to change, with each change, comes to the user for approval before
 
 ## 11. Not in this plan
 
-- **Guessing metadata from a file's contents.** A later plan replaces `guess_metadata` (§8a); the
-  user approves or edits the guesses through the same Describe page. This plan's guesses are fixed
-  defaults (§7b).
-- **Reading other export formats** (ChatGPT, Gemini, voice transcripts, files naming several
-  humans). Later plans; the participant kinds exist so that their metadata has somewhere to go.
-- **Recognizing conversations that have no id** (the user's rule is recorded in §8b-2); built with
-  the first format whose conversations lack ids.
-- **Writing metadata into the downloaded file** (the user, 2026-10-05: not needed for now).
-- **Deleting data, or files Stop couldn't recall** (the user, 2026-10-05: a separate delete
-  feature, later).
-- **Quiet renewal of an expired sign-in** (the migration plan's own item).
+Recorded, each with its own context, in
+[2026-10-02-deferred-problems.md](2026-10-02-deferred-problems.md), items 6 to 11:
+
+- **Item 6:** guessing metadata from a file's contents (replaces `guess_metadata`, §8a).
+- **Item 7:** reading other export formats.
+- **Item 8:** recognizing a re-uploaded conversation that has no id (the user's rules, §8b-2).
+- **Item 9:** metadata in the downloaded file.
+- **Item 10:** deleting data, including files Stop couldn't take back.
+- **Item 11:** renewing an expired sign-in quietly (the migration plan's own item).
 
 ## 12. Questions for the user
 
@@ -997,7 +995,7 @@ The id-less case is built with the first format that has one.
 ### C17 [RESOLVED]: Question numbers didn't match what the reader saw
 §12 wrote open questions as a Markdown numbered list starting at 1, 3, 4, 8…; Markdown renumbers
 such lists on display, so the user saw 1–5 and couldn't find Q3, Q4, Q8 or Q12.
-**Resolution:** every question is labelled "Q" with its number as text; see [§12 (line 816)](2026-10-05-screen-flow.md#L816).
+**Resolution:** every question is labelled "Q" with its number as text; see [§12 (line 814)](2026-10-05-screen-flow.md#L814).
 
 ### C18 [OPEN]: Judging new messages by timeframe misses messages inside the range
 With the user's rule (Q18), a message timed inside the stored range is assumed present. A message
