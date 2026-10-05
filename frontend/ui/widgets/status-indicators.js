@@ -2,7 +2,8 @@
 // progress bar with its time-remaining estimate, the notice that a previous
 // session was restored, and the "Saved." / "Could not save" line.
 
-import { formatEta } from '../../core/format.js';
+import { formatBytes, formatEta } from '../../core/format.js';
+import { waitMessageId } from '../../core/upload-wait.js';
 import { shownEvent } from '../../core/activity-event.js';
 import { recordActivity } from '../../core/activity-sink.js';
 import { pageMessage, recordedValues } from './page-messages.js';
@@ -93,6 +94,53 @@ export function setLoadProgressLabel(id, values = {}){
   if(key === lastLabelRecord) return;
   lastLabelRecord = key;
   recordShown('loadProgress', id, entry, values);
+}
+
+// --- The text under the bar for each kind of progress ---
+// One function per kind, so the load steps (ui/load-flow.js) report numbers
+// through callbacks and never write to the page themselves.
+
+function fillTo(pct){
+  document.getElementById('loadProgressFill').style.width = pct + '%';
+}
+
+function labelText(text){
+  document.getElementById('loadProgressLabel').textContent = text;
+}
+
+// Sending files: bytes so far of the total, and the time left when known.
+export function showSendProgress(loaded, total, eta){
+  const pct = Math.round((loaded / total) * 100);
+  fillTo(pct);
+  labelText(`Sending your file — ${formatBytes(loaded)} of ${formatBytes(total)} (${pct}%)` + (eta ? ` — ${eta}` : ''));
+}
+
+// Waiting for the server to process an upload: which attempt, why the last
+// one failed, and a clock (core/upload-wait.js's describeWait).
+export function showWaitProgress(answer, elapsedMs){
+  setLoadProgressLabel(waitMessageId(answer), {
+    answer, elapsedMs, attempt: answer.attempt, max_attempts: answer.max_attempts,
+  });
+}
+
+// The scan: conversations covered so far of the total.
+export function showScanProgress(covered, total){
+  const pct = total ? Math.round((covered / total) * 100) : 100;
+  fillTo(pct);
+  labelText(`Scanning your messages — ${covered} of ${total} conversation${total === 1 ? '' : 's'} (${pct}%)`);
+}
+
+// Downloading the timeline: a share of the whole when its size is known,
+// otherwise just what has arrived, rather than a made-up proportion.
+export function showDownloadProgress(loaded, total, eta){
+  if(total){
+    const pct = Math.round((loaded / total) * 100);
+    fillTo(pct);
+    labelText(`Receiving your processed timeline — ${formatBytes(loaded)} of ${formatBytes(total)} (${pct}%)` + (eta ? ` — ${eta}` : ''));
+  } else {
+    fillTo(100);
+    labelText(`Receiving your processed timeline — ${formatBytes(loaded)} so far`);
+  }
 }
 
 // Estimates remaining time from a rolling window of recent progress events

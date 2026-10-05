@@ -256,7 +256,9 @@ export async function describeFailure(what, res){
 // The url is a signed S3 link, so no session header or token goes with it.
 // Recorded as "s3 PUT raw/…" (the key and signature are never recorded),
 // with the bytes sent.
-export function putWithProgress(url, body, onProgress){
+// registerAbort(fn), when given, receives a function that cancels the send
+// (the Upload page's Stop); a cancelled send rejects like a cut-off one.
+export function putWithProgress(url, body, onProgress, registerAbort = () => {}){
   const started = Date.now();
   let sentBytes;
   const finish = (status, errorKind) => {
@@ -284,6 +286,7 @@ export function putWithProgress(url, body, onProgress){
     // caller's TypeError hint can still recognize as "couldn't reach it".
     xhr.onerror = () => { finish(null, 'network'); reject(new TypeError('Failed to fetch')); };
     xhr.onabort = () => { finish(null, 'aborted'); reject(new TypeError('upload aborted')); };
+    registerAbort(() => xhr.abort());
     xhr.send(body);
   });
 }
