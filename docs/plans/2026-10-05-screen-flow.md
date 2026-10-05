@@ -341,8 +341,13 @@ defaults, made in one function so that the later guessing plan replaces only tha
 - **Kind:** Typed. **Transcription:** none (Typed has none).
 - **Start and end:** the times of the conversation's earliest and latest messages. Every message in
   a Claude file has its own time (`created_at`, which
-  [model.rs:163](../../backend/timeline-core/src/model.rs#L163) requires). A conversation with no
-  messages gets neither.
+  [model.rs:163](../../backend/timeline-core/src/model.rs#L163) requires). **With no message times**
+  (the user, 2026-10-05): both are the time the file was last written, if the browser reports it,
+  or else the upload time. The browser reports a chosen file's last-written time (`File.lastModified`),
+  and the page sends it with `POST /uploads` (§8c). For a file downloaded from an assistant, that
+  is usually when it was downloaded, not when its conversations happened; it is still a better
+  first guess than nothing, and it is marked guessed. So every conversation always has a start and
+  end.
 - **Guessed or confirmed:** guessed, for both.
 
 ### 7c. Transcription services
@@ -399,7 +404,7 @@ Describe opens on one of three subjects:
 - **Done** saves (§8c) and goes back to where you came from (§3). The guesses already pass the
   rules, so Done is never blocked until you change something into a rule-breaking answer (an empty
   participant list, a voice kind with no transcription choice, a Human or Other AI with no name, an
-  end before the start, a start without an end or the reverse); the field is marked and Done waits.
+  end before the start, a start without an end or the reverse, or neither); the field is marked and Done waits.
   A failed save keeps every answer on screen and shows the error.
 - **Cancel** leaves without saving and goes back to where you came from (the Calendar after an
   upload, where the guesses stay as they are). Shown in every mode.
@@ -418,9 +423,8 @@ Describe opens on one of three subjects:
 - **Messages with times** place the conversation, as today: sessions are built from message times
   in [blocks.js](../../frontend/core/blocks.js).
 - **A conversation whose messages have no times** is drawn as one session from its start to its
-  end, and moves when you edit them. With no start and end either, it is listed in the
-  Conversations tab but not drawn on the Calendar, and its line there says "No date — edit details
-  to place it".
+  end, and moves when you edit them. It always has a start and end, guessed at upload if nothing
+  else (§7b).
 - **Some messages with times and some without:** placed by its start and end, and the upload
   warns about it (§7d; the user, Q19, expects this to be rare).
 - No file the server reads today has messages without times, so the second and third rules can
@@ -433,16 +437,28 @@ Describe opens on one of three subjects:
 Built so that metadata that breaks the rules can't be represented, rather than checked everywhere
 it's read:
 
+The metadata goes directly on the existing per-conversation record, `ConversationSummary`
+([conversations.rs:37-42](../../backend/timeline-core/src/ports/conversations.rs#L37-L42)), which
+today holds `conversation_id`, `upload_id`, `name` and `message_count` (the user, 2026-10-05: no
+second type that is one-to-one with conversations; C22). Its new shape:
+
 ```rust
-pub struct ConversationMetadata {
-    pub source: SourceFile,                 // never changed after upload
-    pub participants: Participants,         // a list that can't be empty
+pub struct ConversationSummary {
+    pub conversation_id: ConversationId,
+    pub name: ConversationName,
+    // Where its messages are (§8b-2)
+    pub source: SourceFile,                     // the first file it came in; replaces `upload_id`
+    pub additions: Vec<UploadId>,               // later files that added messages to it
+    pub message_count: usize,
+    pub message_span: Option<ConversationSpan>, // earliest to latest message time; None if no message has one
+    // Its metadata (§7a)
+    pub participants: Participants,             // a list that can't be empty
     pub medium: ConversationMedium,
-    pub details_origin: MetadataOrigin,     // Guessed | Confirmed: participants, medium
-    pub span: Option<ConversationSpan>,     // None: no messages and no times entered
+    pub details_origin: MetadataOrigin,         // Guessed | Confirmed: participants, medium
+    pub span: ConversationSpan,                 // start and end; always present (§7b)
     pub span_origin: MetadataOrigin,
 }
-pub struct ConversationSpan {               // built only when start <= end
+pub struct ConversationSpan {                   // built only when start <= end
     start: DateTime<FixedOffset>,
     end: DateTime<FixedOffset>,
 }
@@ -450,6 +466,7 @@ pub struct SourceFile {
     pub upload_id: UploadId,
     pub file_name: FileName,
     pub uploaded_at: DateTime<Utc>,
+    pub file_written_at: Option<DateTime<Utc>>, // the browser's last-written time, when it gave one
 }
 pub enum Participant {
     Human { name: PersonName },
@@ -469,6 +486,12 @@ pub enum TranscriptionService {
 }
 ```
 
+`message_span` and `span` are different things: the first is what the messages say and decides
+which messages a later file adds (§8b-2); the second is what the user sees and edits, and places
+untimed conversations (§7f). The record keeps its name, though it is now more than a summary; its
+documentation comment says so, and renaming it would touch every file that uses it for no change
+in behavior.
+
 `PersonName`, `AiName`, `ServiceName` and `FileName` are single-field wrappers around text, each
 trimmed, stripped of control and invisible characters (zero-width, right-to-left override, NUL),
 and limited to 200 characters when the request is read; an empty one is refused. These are
@@ -482,8 +505,9 @@ check. Each named transcription service is kept, rather than folded into `Other`
 later guessing and error-analysis work treats them differently by name; if that turns out not to
 be so, they fold into `Other` (the project's catchall rule).
 
-The guess in §7b is one function, `guess_metadata(conversation, &UploadFacts) ->
-ConversationMetadata`, in a new `timeline-core/src/conversation_metadata.rs` next to these types.
+The guess in §7b is one function, `guess_summary(conversation, &UploadFacts) ->
+ConversationSummary`, which builds a new conversation's record with the guessed fields filled in,
+in a new `timeline-core/src/conversation_metadata.rs` next to these types.
 
 An edit is its own type, `MetadataEdit`, with every field optional: `None` means "leave as is".
 That is what lets a file-wide save change only the fields you changed (§7d), and the same type
@@ -492,13 +516,13 @@ that tries (§8c).
 
 ### 8b. Where they're kept
 
-On the conversation's existing summary row: `ConversationSummary`
-([conversations.rs:36-42](../../backend/timeline-core/src/ports/conversations.rs#L36-L42)) gains a
-`metadata` field, so the in-memory and DynamoDB adapters of the existing
-`ConversationSummaryStore` carry it. No new table, so no template change for storage.
+On the conversation's existing record (§8a), so the in-memory and DynamoDB adapters of the
+existing `ConversationSummaryStore` carry the new fields. In DynamoDB, each field is an attribute
+of the existing row; the structured ones (participants, kind of conversation) are stored as JSON
+text. No new table, so no template change for storage.
 
-The facts the guess needs but the file doesn't hold (the file's name, when it was uploaded, and
-the name to give the human) are written by `POST /uploads` onto the per-upload row that
+The facts the guess needs but the file doesn't hold (the file's name, when it was uploaded, when
+it was last written, and the name to give the human) are written by `POST /uploads` onto the per-upload row that
 `UploadOutcomeStore` already keeps in the same table
 ([uploads.rs:8-12](../../backend/timeline-core/src/ports/uploads.rs#L8-L12)), through a new
 `record_received` method, and read back by the processing step, which runs separately on AWS.
@@ -561,14 +585,19 @@ export after a newer one, the newer messages disappear from your timeline. This 
 
 - **The added messages are saved on their own at upload**, as one small stored object per
   conversation per later file (`additions/{user}/{conversation}/{upload}.json`), holding only the
-  messages that file added. The summary row keeps the first file that held the conversation, its
-  stored time range and message count, and the list of its additions. The single `upload_id` field
-  is replaced by these.
-- **The export rebuilds the conversation from the first file plus its addition objects**, in time
-  order, so it never re-reads a later file in full (C16). The existing retried-message clean-up,
+  messages that file added. The record keeps the first file that held the conversation
+  (`source`), its message time range and count, and the list of its additions (§8a).
+- **One function rebuilds a conversation from the first file plus its addition objects**, in time
+  order, so nothing re-reads a later file in full (C16). The existing retried-message clean-up,
   `dedup_chat_messages` ([dedup.rs:28](../../backend/timeline-core/src/dedup.rs#L28)), runs over
   the joined list, since a retry can straddle two files; it's the same function the upload already
-  runs on each file.
+  runs on each file. The rebuild lives in a new `timeline-api/src/conversation_rebuild.rs` and has
+  two callers:
+  - **the export** ([export.rs:61-80](../../backend/timeline-api/src/routes/export.rs#L61-L80)),
+    which today re-reads files through `upload_id`;
+  - **the scan** ([detect.rs:95](../../backend/timeline-api/src/routes/detect.rs#L95)), which
+    re-reads them the same way. Without this, messages a later file added would never be scanned
+    (C23).
 - **Metadata:** the conversation keeps its metadata and its source file (the first file it came
   in). If the new file brings messages earlier than its start or later than its end, and the start
   and end are still guessed, they widen to cover them; once you've confirmed them, they're left as
@@ -584,7 +613,7 @@ export after a newer one, the newer messages disappear from your timeline. This 
 
 | Route | Does |
 |---|---|
-| `POST /uploads` | Now takes `{ "file_name": …, "human_name": … }` and records them with the upload time (C3). |
+| `POST /uploads` | Now takes `{ "file_name": …, "file_written_at": … (optional), "human_name": … }` and records them with the upload time (C3). |
 | `GET /conversations` | Existing; each conversation now comes with its metadata. The page reads it with the export, for the Conversations tab, the Files tab and placement (§7f). |
 | `GET /uploads` | Lists your files, built from the conversations' metadata (a conversation counts toward its source file): upload id, file name, upload time, counts from §8b-2, the file-level fields or "varies", guessed or confirmed. The Files tab and Describe read it. |
 | `PUT /uploads/{upload_id}/metadata` | Applies one `MetadataEdit` to every conversation whose source is that file; only the fields given change; marks those fields confirmed. Refuses a file that isn't yours (404), an edit carrying a start and end (400), and one that breaks the rules (400, naming the field). |
@@ -726,12 +755,12 @@ the upload pieces. Each new piece, what already exists, and the decision:
 | Showing one page at a time | `switchTab` shows one tab at a time | **Mirror it** in `showPage`. |
 | The page-flow model (§3) | — | **Not built as code**: a specification; the arcs live in the handlers. |
 | Route ownership checks | `flags.rs` turns a missing summary into `ApiError::NotFound` ([flags.rs:48](../../backend/timeline-api/src/routes/flags.rs#L48)); `AuthenticatedUser`; `ApiError::BadRequest` | **Reuse** the same pattern for both metadata routes. |
-| Storing metadata on the summary row | the summary store and its DynamoDB adapter, with the read helpers in `attributes.rs` (`required_string`, `optional_string`, …) | **Reuse**; metadata is stored as one JSON text attribute read with `required_string`, since the types already derive `Serialize`. |
+| Storing metadata on the summary row | the summary store and its DynamoDB adapter, with the read helpers in `attributes.rs` (`required_string`, `optional_string`, …) | **Reuse**; each new field is an attribute of the existing row, the structured ones as JSON text read with `required_string`, since the types already derive `Serialize`. |
 | Added-message objects | `ObjectStore::put` and `get` ([object_store.rs:51-54](../../backend/timeline-core/src/ports/object_store.rs#L51-L54)) | **Reuse.** |
 | First-message fingerprint (later plan) | `sha2` is already a `timeline-api` dependency, for flag handles | **Reuse** when that plan comes. |
 | Upload counts and "had to choose" in logs | `note` in [request_record.rs:60](../../backend/timeline-api/src/request_record.rs#L60) | **Reuse.** |
 | Retried messages across files | `dedup_chat_messages` | **Reuse** (§8b-2). |
-| Guessing metadata | Nothing | **New** (`guess_metadata`). |
+| Guessing metadata | Nothing | **New** (`guess_summary`). |
 | Browser tests with several files, extra messages, empty conversations | [synthetic-export.js](../../e2e/synthetic-export.js) builds exports in Claude's shape; the Cognito stand-in; `failOnPageErrors` | **Reuse**; the builder gains an option for a later copy of a conversation with extra messages. |
 | Unit tests of page modules | [fake-dom.js](../../frontend/tests/fake-dom.js) | **Reuse.** |
 
@@ -746,8 +775,9 @@ the upload pieces. Each new piece, what already exists, and the decision:
   to its end, and moves when they change; one without times or a start and end is not drawn; one
   with some timed and some untimed messages is placed by its start and end (§7f, C15).
 - **Rust, through the public API:**
-  - `guess_metadata` on the fixture: participants, Typed, earliest and latest message times;
-    nothing for an empty conversation.
+  - `guess_summary` on the fixture: participants, Typed, earliest and latest message times; for a
+    conversation with no message times, the file's last-written time when given, else the upload
+    time.
   - Processing writes metadata on every new conversation.
   - Re-uploading: the same file again adds nothing and writes no addition objects; a later file's
     added messages are saved as addition objects and the export reads those, not the later file; a later file with new messages in a known
@@ -756,6 +786,7 @@ the upload pieces. Each new piece, what already exists, and the decision:
     file's copy of them differs; an older file uploaded after a newer one adds nothing and loses no
     messages; untimed messages in a later file are not added and are counted for the warning; a
     retried message straddling two files is cleaned up; the counts in §8b-2 are right.
+  - The scan finds flags in messages a later file added (C23).
   - Each route in §8c, including each refusal and another user's file or conversation; a file-wide
     edit changes only the fields it carries.
   - Names over 200 characters, control characters and invisible characters handled as in §8a; an
@@ -804,7 +835,7 @@ list of tests to change, with each change, comes to the user for approval before
 Recorded, each with its own context, in
 [2026-10-02-deferred-problems.md](2026-10-02-deferred-problems.md), items 6 to 11:
 
-- **Item 6:** guessing metadata from a file's contents (replaces `guess_metadata`, §8a).
+- **Item 6:** guessing metadata from a file's contents (replaces `guess_summary`'s guesses, §8a).
 - **Item 7:** reading other export formats.
 - **Item 8:** recognizing a re-uploaded conversation that has no id (the user's rules, §8b-2).
 - **Item 9:** metadata in the downloaded file.
@@ -888,7 +919,7 @@ The server never learns a file's name today; only the browser knows it. With the
 that the original file name is part of each conversation's metadata, the server must know it
 before processing.
 **Resolution:** `POST /uploads` takes the file name and the human's name, recorded on the upload's
-row and read by processing; see [§8b (line 493)](2026-10-05-screen-flow.md#L493) and [§8c (line 587)](2026-10-05-screen-flow.md#L587).
+row and read by processing; see [§8b (line 517)](2026-10-05-screen-flow.md#L517) and [§8c (line 616)](2026-10-05-screen-flow.md#L616).
 
 ### C4 [OPEN]: Back across real Cognito's pages is unmeasured
 The stand-in Cognito skips the login form, so the browser tests can't show what Back does on
@@ -914,7 +945,7 @@ sessionStorage. Trigger: the user reports losing answers, or the renewal item is
 ### C7 [OPEN]: Existing browser tests drive the old load screen
 Their page-driving steps (pick a file, press Load, wait for `#mainContent`) won't match the new
 pages.
-**Mitigation in plan:** [§10 (line 796)](2026-10-05-screen-flow.md#L796) commits to bringing the
+**Mitigation in plan:** [§10 (line 827)](2026-10-05-screen-flow.md#L827) commits to bringing the
 list of changes to the user before coding. **Open:** the list is written when the plan is approved.
 
 ### C8 [RESOLVED]: A conversation in two files
@@ -925,13 +956,13 @@ this showed a third problem, present today: the export rebuilds a conversation o
 file that held it, so an older file uploaded after a newer one hides the newer messages.
 **Resolution:** the user decided (2026-10-05) that an earlier conversation is recognized and keeps
 its details, and new messages in it are added, judged by timeframe: only messages outside the
-stored time range are added, and stored messages are never compared one by one (Q18); see [§8b-2 (line 506)](2026-10-05-screen-flow.md#L506).
+stored time range are added, and stored messages are never compared one by one (Q18); see [§8b-2 (line 530)](2026-10-05-screen-flow.md#L530).
 
 ### C9 [RESOLVED]: Free text from the form reaches the page, the server's storage and logs
 Names and file names come from the user and are shown back on the page.
 **Resolution:** trimmed, cleaned of control and invisible characters and limited in length when the
-request is read ([§8a (line 431)](2026-10-05-screen-flow.md#L431)); shown on the page only as text,
-never as markup; kept out of the activity log ([§9 (line 622)](2026-10-05-screen-flow.md#L622)).
+request is read ([§8a (line 435)](2026-10-05-screen-flow.md#L435)); shown on the page only as text,
+never as markup; kept out of the activity log ([§9 (line 651)](2026-10-05-screen-flow.md#L651)).
 
 ### C10 [RESOLVED]: The first diagram was not a diagram of pages
 The first draft's diagram mixed the five pages with brief checks, sending, and every failure as
@@ -946,15 +977,15 @@ carrying its original file name and upload date so a whole file can still be edi
 (2026-10-05, Q13) editable one conversation at a time from the Conversations tab.
 **Resolution:** metadata is a field of each conversation's summary row, with a `SourceFile` part;
 file-level edits change only the fields you changed, on every conversation from that file, and a
-conversation can be edited alone (`MetadataEdit`, [§8a (line 431)](2026-10-05-screen-flow.md#L431)); see [§7a (line 313)](2026-10-05-screen-flow.md#L313)
-and [§8b (line 493)](2026-10-05-screen-flow.md#L493).
+conversation can be edited alone (`MetadataEdit`, [§8a (line 435)](2026-10-05-screen-flow.md#L435)); see [§7a (line 313)](2026-10-05-screen-flow.md#L313)
+and [§8b (line 517)](2026-10-05-screen-flow.md#L517).
 
 ### C12 [RESOLVED]: An unfinished Describe left files without details
 The first draft sent the next visit back to Describe for undescribed files. The user decided
 instead that guesses are made at upload and the next visit opens the Timeline.
 **Resolution:** the guess is written during processing ([§7b (line 331)](2026-10-05-screen-flow.md#L331));
 the "opens the page → Describe" arc is gone ([§3 (line 60)](2026-10-05-screen-flow.md#L60)); Describe
-is reached later from the Files tab ([§7e (line 407)](2026-10-05-screen-flow.md#L407)).
+is reached later from the Files tab ([§7e (line 412)](2026-10-05-screen-flow.md#L412)).
 
 ### C13 [OPEN]: Where the human's default name comes from
 The server knows you by Cognito's user id, and I have not checked whether the access token the
@@ -967,7 +998,7 @@ first deployment of this work (look at a decoded access token).
 
 ### C14 [RESOLVED]: A file of hundreds of conversations makes a long Describe page
 Each section lists its file's conversations with their dates and times; one file can hold hundreds.
-**Resolution:** the list starts collapsed; see [§7d (line 371)](2026-10-05-screen-flow.md#L371).
+**Resolution:** the list starts collapsed; see [§7d (line 376)](2026-10-05-screen-flow.md#L376).
 
 ### C15 [OPEN]: Placing untimed conversations can't be shown end to end yet
 The user wants a conversation whose messages have no times placed by its start and end. No file
@@ -978,7 +1009,7 @@ a browser test through an upload.
 The same holds for the upload's warning about conversations with times on only some messages
 (Q19): processing can't meet one today, so it is tested by handing processing's counting function a
 conversation directly.
-**Mitigation in plan:** the rule lives in blocks.js and is unit-tested there ([§7f (line 416)](2026-10-05-screen-flow.md#L416)).
+**Mitigation in plan:** the rule lives in blocks.js and is unit-tested there ([§7f (line 421)](2026-10-05-screen-flow.md#L421)).
 **Open:** the first plan that reads a format without message times adds the browser test. Trigger:
 that plan.
 
@@ -989,13 +1020,13 @@ repeated full exports of one account (the project's own was 64.7 MB) multiplied 
 one is compared with that one only, and that conversations without ids are compared only when
 neither side has an id and their time ranges overlap. The id comparison uses the stored
 conversation's summary row (its time range), and the messages a later file adds are saved on their own at upload, so the export
-reads the first file plus small addition objects; see [§8b-2 (line 506)](2026-10-05-screen-flow.md#L506).
+reads the first file plus small addition objects; see [§8b-2 (line 530)](2026-10-05-screen-flow.md#L530).
 The id-less case is built with the first format that has one.
 
 ### C17 [RESOLVED]: Question numbers didn't match what the reader saw
 §12 wrote open questions as a Markdown numbered list starting at 1, 3, 4, 8…; Markdown renumbers
 such lists on display, so the user saw 1–5 and couldn't find Q3, Q4, Q8 or Q12.
-**Resolution:** every question is labelled "Q" with its number as text; see [§12 (line 814)](2026-10-05-screen-flow.md#L814).
+**Resolution:** every question is labelled "Q" with its number as text; see [§12 (line 845)](2026-10-05-screen-flow.md#L845).
 
 ### C18 [OPEN]: Judging new messages by timeframe misses messages inside the range
 With the user's rule (Q18), a message timed inside the stored range is assumed present. A message
@@ -1012,7 +1043,7 @@ existing code the plan would otherwise have duplicated: the message registry and
 content regions, the page's text cleaning, the `not_logged_in` error, the route ownership pattern,
 the storage read helpers, the injected `sleep` that makes Stop need no change to the wait, and the
 synthetic export builder for tests.
-**Resolution:** the audit table and its decisions; see [§9a (line 705)](2026-10-05-screen-flow.md#L705).
+**Resolution:** the audit table and its decisions; see [§9a (line 734)](2026-10-05-screen-flow.md#L734).
 
 ### C20 [RESOLVED]: The plan built the page-flow model as code, and didn't show how the old pages are reused
 The plan proposed a state-machine module, which the user pointed out makes no sense: the diagram
@@ -1029,7 +1060,22 @@ whose bar is the existing bar, moved.
 The plan said nothing about where the new pages' styling would live, and claimed the page has
 "orange accents" without looking; it has a green accent. The user wants one stylesheet every page
 uses.
-**Resolution:** [§9b (line 624)](2026-10-05-screen-flow.md#L624): the style block becomes one file,
+**Resolution:** [§9b (line 653)](2026-10-05-screen-flow.md#L653): the style block becomes one file,
 repeats become named values, JavaScript sets classes not colours, new pages reuse existing classes;
 the user kept the palette and fonts (Q22) and asked for every inline style to move (Q21).
+
+### C22 [RESOLVED]: Metadata was a second type, one-to-one with the conversation record
+The plan added a `ConversationMetadata` type as one field of `ConversationSummary`, with its own
+`SourceFile` repeating the record's `upload_id`. Nothing handled the metadata apart from the rest of
+the record, so the extra layer did nothing; the user asked whether the fields should go on the
+record directly.
+**Resolution:** they do; `SourceFile` replaces `upload_id`; the small rule-enforcing types stay; see
+[§8a (line 435)](2026-10-05-screen-flow.md#L435).
+
+### C23 [RESOLVED]: The scan would never see messages added by a later file
+The plan changed how the export rebuilds a conversation (first file plus addition objects), but the
+scan for critical, angry and ALL-CAPS messages also re-reads files through `upload_id`
+([detect.rs:95](../../backend/timeline-api/src/routes/detect.rs#L95)), and the plan left it alone.
+Found while answering the user's question about `ConversationSummary`.
+**Resolution:** one rebuild function with both callers; see [§8b-2 (line 530)](2026-10-05-screen-flow.md#L530).
 
