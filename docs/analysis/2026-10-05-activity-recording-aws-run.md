@@ -7,10 +7,10 @@ the refused requests and why, which upload had detection on, every detection pag
 message's flag was saved and the result; and server timings are no more than 5% slower than
 2026-10-02's, with no 429s.
 
-**Headline: met for the session the user was asked to run, from the records alone. One gap: a
-second session the user opened afterwards ("and others") has its server lines but, as of 14:43
-UTC, none of its page records; the records can't say whether that tab is still open (by design an
-open, idle page sends nothing) or was closed and its send-on-close failed.**
+**Headline: met, from the records alone.** The user's later session ("and others") had no page
+records at the first two reads; the tab was still open and idle, which by design sends nothing.
+Its records arrived once it was used again and then closed (see "The gap, resolved"), so both
+sending paths, at a quiet moment and on closing, worked on AWS.
 
 ## Setup
 
@@ -56,22 +56,32 @@ second read, except the last (14:42:33).
   14:37:03. Not on any list yet.
 - **Session `84e6da74…` (14:40:15 onwards):** a restore (`GET /export`), a new upload
   `b233ed47…` (processed 5.7 s, attempt 1), a full detection pass (24 pages, 14:41:03–14:42:23),
-  and **three flag saves during that detection pass** (14:41:04, 14:41:10, 14:41:35; the last
-  `critical: true`), i.e. rows were approved in the restored view while a new load ran (the same
-  known restore problem). Its detection was not asked for by the scan box as far as the records
-  show: the page's records, which would hold the `scan` fact, are missing (below).
+  and **three flag saves during that detection pass**, i.e. in the restored view while a new load
+  ran (the same known restore problem). From the page's records (arrived later): Approve on a
+  message at 14:41:04; the `caps` box set to false at 14:41:10; the `critical` box set to true at
+  14:41:35; each answered `save.saved`, and the next load showed `flags.loaded count 553` (550
+  before). The upload was `POST /uploads scan on` from a Load click at 14:40:29 with no file
+  choice or scan-box click recorded in that session: after the reload the browser kept the chosen
+  file and the ticked box (inferred: no `change` records, yet a 63.5 MB PUT and `scan on`).
 - **The processed export is rebuilt for every load and restore:** five `GET /export` calls, each
   9.9–11.9 s of our code and 2,227 DynamoDB reads, and each followed by a 63.9 MB download.
 - The first page action was **Load with no file chosen** (14:36:03, `load.choose_file`), and the
   user clicked timeline bars (`div column bar:181`, `bar:104`); the records name neither the
   conversations nor any wording.
 
-## The gap
+## The gap, resolved
 
-Session `84e6da74…` has 37 server lines and no page records as of 14:43:02. Its last request was
-the export at 14:42:33. By design (the plan's §4) a page records actions in memory and sends only
-at a quiet moment after recording something, or when it is hidden or closed; an open page that
-stays idle sends nothing. So either the tab is still open and idle, or it was closed and its
-send-on-close did not arrive. **The records alone don't distinguish these**, so the plan's "no
-questions" test is not met for this session. Cheapest test: if the tab is still open, close it,
-and read the timeline again.
+At 14:43:02, session `84e6da74…` had 37 server lines and no page records; its last request was the
+export at 14:42:33. By design (the plan's §4) a page sends only at a quiet moment after recording
+something, or when it is hidden or closed, so an open, idle page sends nothing; the records alone
+couldn't tell an open tab from a failed send-on-close. The user then closed the tab, and a read at
+14:46:49 showed:
+
+- **14:43:20:** a click on the Conversations tab, the first record after a quiet spell, started a
+  send: 69 records (204), then 2 more recorded while it was sending (204).
+- **14:43:52:** the tab closing sent the last 4 (two tab views, a tab click, a click on the
+  header) (204).
+
+So the tab was open at 14:43:02. The page's clock ran slightly ahead of AWS's: the click that
+started the 14:43:20 send is stamped 14:43:20.817 by the page, after the send's 14:43:20.761 at
+the activity function.
