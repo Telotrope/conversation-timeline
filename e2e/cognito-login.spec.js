@@ -63,6 +63,31 @@ test('signing in through Cognito, then uploading, then reloading', async ({ page
   await expect(page.locator('#restoredNoticeText')).toContainText(EMAIL);
 });
 
+test('signing out forgets the sign-in in this tab', async ({ page }) => {
+  await openDeployed(page);
+  await page.click('#cognitoSignInBtn');
+  await expect(status(page)).toHaveText(`Signed in as ${EMAIL}.`);
+
+  await page.click('#cognitoSignOutBtn');
+  await expect(status(page)).toHaveText('Sign in to upload your export.');
+  await expect(page.locator('#cognitoSignInBtn')).toBeVisible();
+  await expect(page.locator('#cognitoSignOutBtn')).toBeHidden();
+});
+
+test('a sign-in that fails to start says so and stays on the page', async ({ page }) => {
+  await openDeployed(page);
+  await expect(status(page)).toHaveText('Sign in to upload your export.');
+  // Stands in for the sign-in library failing before it leaves the page
+  // (plan docs/plans/2026-10-05-page-coverage-gaps.md).
+  await page.evaluate(() => {
+    window.oidc.UserManager.prototype.signinRedirect = () => Promise.reject(new Error('stand-in failure'));
+  });
+  const before = page.url();
+  await page.click('#cognitoSignInBtn');
+  await expect(status(page)).toHaveText('Could not start signing in: stand-in failure');
+  expect(page.url()).toBe(before);
+});
+
 test('a wrong PKCE proof is refused and the page says so', async ({ page }) => {
   await openDeployed(page);
   standIn.breakNextProof();

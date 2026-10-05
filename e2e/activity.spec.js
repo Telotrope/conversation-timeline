@@ -232,3 +232,28 @@ test("one session's activity reaches the backend's log, in order, without messag
   expect(leaked).toEqual([]);
   for (const word of ['Zephyrine', 'Quokka', 'Obsidian']) expect(text).not.toContain(word);
 });
+
+test('at a quiet moment a batch is sent while the page stays open', async ({ page }) => {
+  let session;
+  page.on('request', (req) => {
+    if (req.method() === 'POST' && req.url() === `${API_BASE}/uploads`) session = req.headers()['x-timeline-session'];
+  });
+  let activityAnswer;
+  page.on('response', (res) => {
+    if (res.request().method() === 'POST' && res.url() === `${API_BASE}/activity`) activityAnswer = res.status();
+  });
+  await loadExport(page, { sub: uniqueSub(), scan: false });
+
+  // The recorder sends only once no request has been in flight for 3 s
+  // (QUIET_MS); a click after that is the first thing recorded at a quiet
+  // moment, and it starts a send (plan
+  // docs/plans/2026-10-02-activity-instrumentation.md §4).
+  await page.waitForTimeout(3500);
+  await page.click('button[data-tab="analytics"]');
+
+  const ours = (line) => line.kind === 'page_event' && line.session === session;
+  await expect.poll(() => backendLines().parsed.some((line) => ours(line)
+    && line.event.kind === 'click' && line.event.target.tab === 'analytics'), { timeout: 10_000 }).toBe(true);
+  expect(page.isClosed()).toBe(false);
+  await expect.poll(() => activityAnswer).toBe(204);
+});

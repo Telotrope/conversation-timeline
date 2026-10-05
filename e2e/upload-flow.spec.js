@@ -105,3 +105,49 @@ test('confirming a flag in the review table persists through a reload', async ({
   await expect(page.locator('#saveStatus'))
     .toHaveText(/^Loaded [1-9]\d* of your confirmed flags? from the server\.$/);
 });
+
+test('a timeline download without a stated size reports what has arrived', async ({ page }) => {
+  // Every text the progress label shows, kept as it changes (the download
+  // is over within a moment).
+  await page.addInitScript(() => {
+    window.__progressLabels = [];
+    new MutationObserver(() => {
+      const label = document.getElementById('loadProgressLabel');
+      if (label && label.textContent) window.__progressLabels.push(label.textContent);
+    }).observe(document, { subtree: true, childList: true, characterData: true });
+  });
+  // The processed timeline's download, sent on to a server that streams it
+  // in pieces with no Content-Length (Playwright's route.fulfill always adds
+  // one); plan docs/plans/2026-10-05-page-coverage-gaps.md.
+  const http = require('http');
+  const streamer = http.createServer(async (req, res) => {
+    const original = await fetch(`${API_BASE}${req.url}`);
+    const body = Buffer.from(await original.arrayBuffer());
+    res.writeHead(original.status, {
+      'content-type': original.headers.get('content-type') || 'application/json',
+      'access-control-allow-origin': '*',
+    });
+    for (let at = 0; at < body.length; at += 64 * 1024) res.write(body.subarray(at, at + 64 * 1024));
+    res.end();
+  });
+  await new Promise((resolve) => streamer.listen(0, '127.0.0.1', resolve));
+  const streamerBase = `http://127.0.0.1:${streamer.address().port}`;
+  try {
+    await page.route((url) => url.pathname.includes('/_dev/local-storage/get/export/'), (route) => {
+      const url = new URL(route.request().url());
+      return route.continue({ url: `${streamerBase}${url.pathname}${url.search}` });
+    });
+    let sizeSeen = 'not seen';
+    page.on('response', (res) => {
+      if (res.url().includes('/_dev/local-storage/get/export/')) sizeSeen = res.headers()['content-length'];
+    });
+
+    await loadFixtureAndWaitForRender(page);
+
+    expect(sizeSeen, 'the browser saw no size').toBeUndefined();
+    const labels = await page.evaluate(() => window.__progressLabels);
+    expect(labels.some((t) => /^Receiving your processed timeline — .+ so far$/.test(t)), JSON.stringify(labels)).toBe(true);
+  } finally {
+    await new Promise((resolve) => streamer.close(resolve));
+  }
+});
