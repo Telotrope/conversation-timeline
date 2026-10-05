@@ -1,6 +1,6 @@
 # Screen flow: sign-in, upload, conversation details, timeline
 
-**Status:** proposed 2026-10-05, revised three times the same day with the user's answers; not approved. Open
+**Status:** proposed 2026-10-05, revised four times the same day with the user's answers; not approved. Open
 questions are in §12.
 
 **What this replaces.** Three items in the migration plan's list of work after the deployment
@@ -8,8 +8,8 @@ checks: [the load-screen rewrite (line 1442)](2026-09-09-rust-aws-backend-migrat
 [the restore screen with a Stop button (line 1445)](2026-09-09-rust-aws-backend-migration.md#L1445),
 and [the leftover "Picked up where you left off" notice (line 1451)](2026-09-09-rust-aws-backend-migration.md#L1451).
 In the new flow, restoring happens behind a modal that blocks the page, so nothing can be started
-during a restore; the notice is removed. The migration plan is not edited until the user agrees
-(§12, Q12).
+during a restore; the notice is removed. The three items are marked as replaced in the migration
+plan (the user's decision, Q12).
 
 **Scope.** This plan builds the page flow and the storage it needs. Reading other assistants'
 export formats, and guessing details from a file's contents, are later plans (§11).
@@ -454,7 +454,15 @@ added since. The user decided (2026-10-05) that such a conversation is recognize
 second time, and any new messages in it are added.
 
 **How it's recognized:** by the conversation's id (the `uuid` every conversation in a Claude file
-carries, [model.rs:170](../../backend/timeline-core/src/model.rs#L170)).
+carries, [model.rs:170](../../backend/timeline-core/src/model.rs#L170)). The stored time range and
+message count live on the conversation's summary row, so recognizing a conversation and choosing
+its new messages reads only the new file and that row, never an earlier file.
+
+**Conversations without ids** (the user's rule, 2026-10-05, C16): an earlier conversation is
+re-read only when (a) the new conversation has no id, (b) the stored one has no id either, and (c)
+their time ranges overlap. Every other case is decided from ids and the stored rows. No format the
+server reads today has conversations without ids (the parser requires `uuid`), so this rule is
+built by the first plan that reads such a format, not here, where nothing could reach it.
 
 **Which messages are new: by timeframe, not one by one** (the user, 2026-10-05, Q18). The stored
 conversation has a time range: the times of its earliest and latest stored messages. From a later
@@ -474,14 +482,16 @@ export after a newer one, the newer messages disappear from your timeline. This 
 
 **The change:**
 
-- The summary row keeps the first file that held the conversation, its stored time range, and a
-  list of additions, one per later file that added messages: that file's id and the range it was
-  compared against, so the export can take exactly the messages outside it. The single
-  `upload_id` field is replaced by these.
-- The export rebuilds the conversation from the first file, plus each addition's messages outside
-  its range, in time order. The existing retried-message clean-up, `dedup_chat_messages`
-  ([dedup.rs:28](../../backend/timeline-core/src/dedup.rs#L28)), runs over the joined list, since a
-  retry can straddle two files; it's the same function the upload already runs on each file.
+- **The added messages are saved on their own at upload**, as one small stored object per
+  conversation per later file (`additions/{user}/{conversation}/{upload}.json`), holding only the
+  messages that file added. The summary row keeps the first file that held the conversation, its
+  stored time range and message count, and the list of its additions. The single `upload_id` field
+  is replaced by these.
+- **The export rebuilds the conversation from the first file plus its addition objects**, in time
+  order, so it never re-reads a later file in full (C16). The existing retried-message clean-up,
+  `dedup_chat_messages` ([dedup.rs:28](../../backend/timeline-core/src/dedup.rs#L28)), runs over
+  the joined list, since a retry can straddle two files; it's the same function the upload already
+  runs on each file.
 - **Metadata:** the conversation keeps its metadata and its source file (the first file it came
   in). If the new file brings messages earlier than its start or later than its end, and the start
   and end are still guessed, they widen to cover them; once you've confirmed them, they're left as
@@ -552,7 +562,8 @@ never recorded, only which fields changed, matching how sign-in emails are kept 
   - `guess_metadata` on the fixture: participants, Typed, earliest and latest message times;
     nothing for an empty conversation.
   - Processing writes metadata on every new conversation.
-  - Re-uploading: the same file again adds nothing; a later file with new messages in a known
+  - Re-uploading: the same file again adds nothing and writes no addition objects; a later file's
+    added messages are saved as addition objects and the export reads those, not the later file; a later file with new messages in a known
     conversation adds them, keeps the metadata and source file, widens a guessed start and end and
     leaves a confirmed one alone; messages inside the stored range are not added, even if the new
     file's copy of them differs; an older file uploaded after a newer one adds nothing and loses no
@@ -606,6 +617,8 @@ list of tests to change, with each change, comes to the user for approval before
   defaults (§7b).
 - **Reading other export formats** (ChatGPT, Gemini, voice transcripts, files naming several
   humans). Later plans; the participant kinds exist so that their metadata has somewhere to go.
+- **Recognizing conversations that have no id** (the user's rule is recorded in §8b-2); built with
+  the first format whose conversations lack ids.
 - **Writing metadata into the downloaded file** (the user, 2026-10-05: not needed for now).
 - **Deleting data, or files Stop couldn't recall** (the user, 2026-10-05: a separate delete
   feature, later).
@@ -640,10 +653,15 @@ number written out rather than as a numbered list (which Markdown renumbers on d
   a Cancel button to leave without saving (§7d).
 - **Q18** — new messages are found by timeframe; existing messages are never compared (§8b-2).
 - **Q19** — placed by start and end, with a warning at upload (§7d, §7f).
+- **Q12** — yes: the three items it replaces in the migration plan
+  ([lines 1442, 1445 and 1451](2026-09-09-rust-aws-backend-migration.md#L1442)) are marked as
+  replaced by this plan (done 2026-10-05).
 
-**Still open:**
+**Still open:** none.
 
-- **Q12 — The migration plan's list.** The migration plan's list of work after the deployment
+**Formerly open, kept for the record:**
+
+- **Q12 — The migration plan's list** (answered: yes). The migration plan's list of work after the deployment
   checks has three items this plan does instead. Once you approve this plan, should those three be
   marked "replaced by 2026-10-05-screen-flow.md"? The three, in that plan's words, shortened:
   - [Line 1442](2026-09-09-rust-aws-backend-migration.md#L1442), **"Rewrite the load screen."**
@@ -676,7 +694,7 @@ The server never learns a file's name today; only the browser knows it. With the
 that the original file name is part of each conversation's metadata, the server must know it
 before processing.
 **Resolution:** `POST /uploads` takes the file name and the human's name, recorded on the upload's
-row and read by processing; see [§8b (line 437)](2026-10-05-screen-flow.md#L437) and [§8c (line 500)](2026-10-05-screen-flow.md#L500).
+row and read by processing; see [§8b (line 437)](2026-10-05-screen-flow.md#L437) and [§8c (line 510)](2026-10-05-screen-flow.md#L510).
 
 ### C4 [OPEN]: Back across real Cognito's pages is unmeasured
 The stand-in Cognito skips the login form, so the browser tests can't show what Back does on
@@ -702,7 +720,7 @@ sessionStorage. Trigger: the user reports losing answers, or the renewal item is
 ### C7 [OPEN]: Existing browser tests drive the old load screen
 Their page-driving steps (pick a file, press Load, wait for `#mainContent`) won't match the new
 pages.
-**Mitigation in plan:** [§10 (line 596)](2026-10-05-screen-flow.md#L596) commits to bringing the
+**Mitigation in plan:** [§10 (line 607)](2026-10-05-screen-flow.md#L607) commits to bringing the
 list of changes to the user before coding. **Open:** the list is written when the plan is approved.
 
 ### C8 [RESOLVED]: A conversation in two files
@@ -719,7 +737,7 @@ stored time range are added, and stored messages are never compared one by one (
 Names and file names come from the user and are shown back on the page.
 **Resolution:** trimmed, cleaned of control and invisible characters and limited in length when the
 request is read ([§8a (line 375)](2026-10-05-screen-flow.md#L375)); shown on the page only as text,
-never as markup; kept out of the activity log ([§9 (line 537)](2026-10-05-screen-flow.md#L537)).
+never as markup; kept out of the activity log ([§9 (line 547)](2026-10-05-screen-flow.md#L547)).
 
 ### C10 [RESOLVED]: The first diagram was not a diagram of pages
 The first draft's diagram mixed the five pages with brief checks, sending, and every failure as
@@ -770,19 +788,19 @@ conversation directly.
 **Open:** the first plan that reads a format without message times adds the browser test. Trigger:
 that plan.
 
-### C16 [OPEN]: The export re-reads every file that held each conversation
-Merging messages across files (§8b-2) means `GET /export` parses every file that holds any of your
-conversations. Today it parses only the newest holder of each. With repeated full exports of one
-account (the project's own was 64.7 MB), five uploads would mean reading about five times as much
-per export.
-**Mitigation in plan:** none. **Open:** if the export's time in the activity records grows past
-the time it takes today by more than half, store the merged conversation once at upload instead of
-merging at every export. Trigger: that measurement after the first deployment of this work.
+### C16 [RESOLVED]: The export would re-read every file that held each conversation
+The previous draft rebuilt each conversation at export time from every file that ever held it, so
+repeated full exports of one account (the project's own was 64.7 MB) multiplied the reading.
+**Resolution:** the user ruled (2026-10-05) that earlier conversations are re-read only when
+neither side has an id and their time ranges overlap. With ids, recognition uses only the stored
+summary row, and the messages a later file adds are saved on their own at upload, so the export
+reads the first file plus small addition objects; see [§8b-2 (line 450)](2026-10-05-screen-flow.md#L450).
+The id-less case is built with the first format that has one.
 
 ### C17 [RESOLVED]: Question numbers didn't match what the reader saw
 §12 wrote open questions as a Markdown numbered list starting at 1, 3, 4, 8…; Markdown renumbers
 such lists on display, so the user saw 1–5 and couldn't find Q3, Q4, Q8 or Q12.
-**Resolution:** every question is labelled "Q" with its number as text; see [§12 (line 614)](2026-10-05-screen-flow.md#L614).
+**Resolution:** every question is labelled "Q" with its number as text; see [§12 (line 627)](2026-10-05-screen-flow.md#L627).
 
 ### C18 [OPEN]: Judging new messages by timeframe misses messages inside the range
 With the user's rule (Q18), a message timed inside the stored range is assumed present. A message
