@@ -5,7 +5,7 @@
 #
 #   scripts/test-clean-build.sh
 #
-# docs/plans/2026-10-02-automatic-build-cleanup.md, "Tests".
+# docs/plans/completed/2026-10-02-automatic-build-cleanup.md, "Tests".
 
 set -euo pipefail
 

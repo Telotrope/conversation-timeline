@@ -156,7 +156,7 @@ Lessons to write into `OPERATING.md` (from 2026-10-02):
 5. Sign in afresh just before a test: Cognito's sign-in lasts an hour, and an expired one shows
    as a 401 even when processing succeeded.
 6. The build folder is cleaned automatically
-   ([automatic build cleanup plan](2026-10-02-automatic-build-cleanup.md)), and `deploy.sh`
+   ([automatic build cleanup plan](completed/2026-10-02-automatic-build-cleanup.md)), and `deploy.sh`
    checks free space.
 
 ### §7. Moving the public site to its own stack (once, at the first `deploy.sh public`)

@@ -75,4 +75,4 @@ This shrinks each build but doesn't stop Cargo keeping outdated copies; the fold
 with every change. **Mitigation in plan:** each copy becomes much smaller. **Open:** trigger is the
 build folder passing 15 GB again, at which point a cleanup routine is worth planning.
 **2026-10-02:** the trigger fired (30 GB). Picked up by
-[2026-10-02-automatic-build-cleanup.md](../2026-10-02-automatic-build-cleanup.md).
+[2026-10-02-automatic-build-cleanup.md](2026-10-02-automatic-build-cleanup.md).

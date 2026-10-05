@@ -160,5 +160,5 @@ Release by deploying to remote development first, checking the change there, the
 
 It cleans itself: after any Claude Code turn, a background check runs
 `scripts/clean-build.py` once `backend/target/debug` passes 12 GB, deleting outdated copies and
-keeping everything current ([plan](../docs/plans/2026-10-02-automatic-build-cleanup.md)). Its
+keeping everything current ([plan](../docs/plans/completed/2026-10-02-automatic-build-cleanup.md)). Its
 log is `backend/target/clean-build.log`. `deploy.sh` also stops if less than 3 GB is free.

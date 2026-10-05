@@ -1,7 +1,7 @@
 # Automatic build cleanup
 
 **Status:** approved and implemented 2026-10-02 (scripts/clean-build.py, the Stop hook in .claude/settings.json). Closes C3 of
-[2026-10-01-smaller-debug-builds.md](completed/2026-10-01-smaller-debug-builds.md#L62).
+[2026-10-01-smaller-debug-builds.md](2026-10-01-smaller-debug-builds.md#L62).
 
 ## Why
 
@@ -11,7 +11,7 @@ logged this risk (its C3) with a 15 GB trigger, and no session acted on it.
 
 That day, by hand, I asked Cargo which files its current builds use, and deleted the rest of
 `target/debug`. It freed 14.6 GB with no library rebuilt
-([analysis](../analysis/2026-10-02-page-hosting-deployment.md)). This plan makes that run by
+([analysis](../../analysis/2026-10-02-page-hosting-deployment.md)). This plan makes that run by
 itself, safely, with nobody watching.
 
 ## Reuse check
@@ -61,7 +61,7 @@ Options:
 
 ### §2. Running by itself
 
-A Claude Code **`Stop` hook** in the project's [.claude/settings.json](../../.claude/settings.json):
+A Claude Code **`Stop` hook** in the project's [.claude/settings.json](../../../.claude/settings.json):
 after any session's turn ends, it runs `scripts/clean-build.py --if-larger-than 12G` in the
 background, at low priority (`nice`). Under 12 GB the check takes about a second and does
 nothing. This covers every session, whatever it built, with no step for you. The hook is set up
@@ -118,4 +118,4 @@ plus coverage builds (5.7 GB, growing) and Lambda builds (about 1 GB). §1's
 `--if-larger-than` measured the whole folder, so against 12 GB the hook would have run a full
 cleanup after every turn and freed nothing. **Resolution:** the check measures `target/debug`,
 the part this cleans, still against 12 GB
-([scripts/clean-build.py](../../scripts/clean-build.py)). The other folders stay with C3.
+([scripts/clean-build.py](../../../scripts/clean-build.py)). The other folders stay with C3.

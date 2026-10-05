@@ -14,7 +14,7 @@
 # success, on an error or on Ctrl-C; it is left behind only if the script is
 # killed outright (kill -9) or the machine stops. Not a pipe: aws-cli 2.37.8
 # appears to open its --cli-input-json file twice, and a pipe is empty the
-# second time (docs/plans/2026-10-02-dev-token-script-fix.md).
+# second time (docs/plans/completed/2026-10-02-dev-token-script-fix.md).
 set -euo pipefail
 
 email="${1:?usage: scripts/aws-dev-token.sh <email>}"

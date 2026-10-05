@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Deletes outdated copies from the Rust build folder, keeping everything the
-current builds use (docs/plans/2026-10-02-automatic-build-cleanup.md).
+current builds use (docs/plans/completed/2026-10-02-automatic-build-cleanup.md).
 
 Cargo keeps every outdated copy of every program and library it has built;
 on 2026-10-02 backend/target reached 30 GB. This asks Cargo which files its
