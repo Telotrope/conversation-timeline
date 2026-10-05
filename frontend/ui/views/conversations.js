@@ -61,11 +61,11 @@ export function selectConversation(idx){
 
   const rows = convBlocks.map((b, bi) => {
     const flags = [];
-    if(b.criticalItems.length) flags.push(`<span data-block-idx="${b._idx}" data-flag-type="critical" class="flag-icon critical" style="cursor:pointer;" title="${b.criticalItems.length} critical — click to review">⚑</span>`);
-    if(b.angryItems.length) flags.push(`<span data-block-idx="${b._idx}" data-flag-type="angry" class="flag-icon angry" style="cursor:pointer;" title="${b.angryItems.length} angry — click to review">!</span>`);
-    if(b.capsItems.length) flags.push(`<span data-block-idx="${b._idx}" data-flag-type="caps" class="flag-icon caps" style="cursor:pointer;" title="${b.capsItems.length} ALL-CAPS — click to review">A</span>`);
+    if(b.criticalItems.length) flags.push(`<span data-block-idx="${b._idx}" data-flag-type="critical" class="flag-icon critical clickable" title="${b.criticalItems.length} critical — click to review">⚑</span>`);
+    if(b.angryItems.length) flags.push(`<span data-block-idx="${b._idx}" data-flag-type="angry" class="flag-icon angry clickable" title="${b.angryItems.length} angry — click to review">!</span>`);
+    if(b.capsItems.length) flags.push(`<span data-block-idx="${b._idx}" data-flag-type="caps" class="flag-icon caps clickable" title="${b.capsItems.length} ALL-CAPS — click to review">A</span>`);
     return `
-    <tr class="session-row" data-block-idx="${b._idx}" style="cursor:pointer;" title="Click to review these messages">
+    <tr class="session-row clickable" data-block-idx="${b._idx}" title="Click to review these messages">
       <td>${formatDayHeading(b.date)}</td>
       <td>${formatClock(b.start)} – ${formatClock(b.end)}</td>
       <td class="dur">${formatDuration(b.duration_sec)}</td>
@@ -79,7 +79,7 @@ export function selectConversation(idx){
   if(angryCount) notes.push(`<span class="flag-icon angry">!</span> ${angryCount} angry`);
   if(capsCount) notes.push(`<span class="flag-icon caps">A</span> ${capsCount} ALL-CAPS`);
   const critNote = notes.length
-    ? `<div class="summary" style="display:flex; gap:14px; align-items:center;">${notes.join('')} — click a flag or a row below to review those messages.</div>`
+    ? `<div class="summary with-flags">${notes.join('')} — click a flag or a row below to review those messages.</div>`
     : '';
 
   document.getElementById('convDetail').innerHTML = `
@@ -90,7 +90,7 @@ export function selectConversation(idx){
       <thead><tr><th>Day</th><th>Time span</th><th>Duration</th><th>Messages</th><th>Flags</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
-    <a href="#" id="chatReviewLink" style="display:inline-block; margin-top:18px; font-size:0.85rem; color:var(--accent);">Chat message review →</a>`;
+    <a href="#" id="chatReviewLink" class="review-link">Chat message review →</a>`;
 
   // Flag icon click: jump to Review showing the whole session for context,
   // with the flagged message(s) highlighted — not filtered to just that type.

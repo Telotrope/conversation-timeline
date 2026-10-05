@@ -184,9 +184,9 @@ function renderTimeOfDayResult({ byHour, byDow }){
   document.getElementById('analyticsMain').innerHTML = `
     <h3>${meta.title}</h3>
     <p class="analytics-desc">${meta.desc} Bar height is % of messages flagged in that bucket; hover a bar for counts.</p>
-    <p class="hint" style="margin-bottom:6px;">By hour of day (your local time)</p>
-    <div id="hourChart" style="margin-bottom:28px;"></div>
-    <p class="hint" style="margin-bottom:6px;">By day of week</p>
+    <p class="hint before-chart">By hour of day (your local time)</p>
+    <div id="hourChart" class="chart-block"></div>
+    <p class="hint before-chart">By day of week</p>
     <div id="dowChart"></div>`;
 
   renderBarChartSVG(document.getElementById('hourChart'),

@@ -57,19 +57,19 @@ export function renderCalendar(){
     });
 
     html += `<div class="day-row">
-      <div class="day-label" data-day="${day}" style="cursor:pointer;" title="Click to review the entire day"><span class="num">${d.getDate()}</span>${d.toLocaleDateString(undefined,{weekday:'short'})}</div>
+      <div class="day-label clickable" data-day="${day}" title="Click to review the entire day"><span class="num">${d.getDate()}</span>${d.toLocaleDateString(undefined,{weekday:'short'})}</div>
       <div>
         <div class="track">${bars}
-          <div class="grid-line" style="left:25%;"></div>
-          <div class="grid-line" style="left:50%;"></div>
-          <div class="grid-line" style="left:75%;"></div>
+          <div class="grid-line q1"></div>
+          <div class="grid-line q2"></div>
+          <div class="grid-line q3"></div>
         </div>
       </div>
     </div>`;
   });
 
   document.getElementById('calendarBody').innerHTML = `
-    <div class="day-row" style="border-bottom:none;">
+    <div class="day-row last">
       <div></div>
       <div class="track-labels"><span>12am</span><span>6am</span><span>12pm</span><span>6pm</span><span>12am</span></div>
     </div>

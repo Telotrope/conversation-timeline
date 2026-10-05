@@ -24,7 +24,7 @@ export function setLoadStatus(id, values = {}){
   }
   const entry = pageMessage(id);
   el.textContent = entry.text(values);
-  el.style.color = entry.isError ? '#B0392F' : 'var(--ink-faint)';
+  el.classList.toggle('is-error', entry.isError);
   recordShown('loadStatus', id, entry, values);
 }
 
@@ -36,19 +36,19 @@ export function setLoadStatus(id, values = {}){
 export function showLoadProgress(){
   const wrap = document.getElementById('loadProgress');
   const fill = document.getElementById('loadProgressFill');
-  wrap.style.display = 'block';
+  wrap.hidden = false;
   fill.classList.remove('is-error', 'is-working');
   fill.style.width = '0%';
   document.getElementById('loadProgressLabel').textContent = '';
 }
 
 export function hideLoadProgress(){
-  document.getElementById('loadProgress').style.display = 'none';
+  document.getElementById('loadProgress').hidden = true;
 }
 
 export function failLoadProgress(){
   const wrap = document.getElementById('loadProgress');
-  if(wrap.style.display === 'none') return;
+  if(wrap.hidden) return;
   const fill = document.getElementById('loadProgressFill');
   fill.classList.remove('is-working');
   fill.classList.add('is-error');
@@ -66,7 +66,7 @@ export function failLoadProgress(){
 // setLoadProgressMeasured first, which stops the stripes.
 export function setLoadProgressIndeterminate(id){
   const entry = pageMessage(id);
-  document.getElementById('loadProgress').style.display = 'block';
+  document.getElementById('loadProgress').hidden = false;
   const fill = document.getElementById('loadProgressFill');
   fill.classList.add('is-working');
   fill.style.width = '100%';
@@ -118,9 +118,9 @@ export function showRestoredNotice(sub){
   const notice = document.getElementById('restoredNotice');
   const entry = pageMessage('restored');
   document.getElementById('restoredNoticeText').textContent = entry.text({ sub });
-  notice.style.display = 'flex';
+  notice.hidden = false;
   recordShown('restoredNotice', 'restored', entry);
-  document.getElementById('restoredNoticeDismiss').onclick = () => { notice.style.display = 'none'; };
+  document.getElementById('restoredNoticeDismiss').onclick = () => { notice.hidden = true; };
 }
 
 // An error message here only marks the activity record; the line looks the

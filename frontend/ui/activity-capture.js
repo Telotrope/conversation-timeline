@@ -32,7 +32,7 @@ export function startActivityCapture(){
   const active = document.querySelector('nav.tabs button.active');
   ACTIVE_TAB = active ? active.dataset.tab : '';
   const main = document.getElementById('mainContent');
-  MAIN_SHOWN = Boolean(main) && main.style.display !== 'none';
+  MAIN_SHOWN = Boolean(main) && !main.hidden;
   const now = () => Date.now();
   const tracker = createRequestTracker(now);
   RECORDER = createActivityRecorder({

@@ -24,9 +24,9 @@ function show(signedIn, id, values = {}){
   const entry = pageMessage(id);
   const status = document.getElementById('cognitoLoginStatus');
   status.textContent = entry.text(values);
-  status.style.color = entry.isError ? '#B0392F' : 'var(--ink-faint)';
-  document.getElementById('cognitoSignInBtn').style.display = signedIn ? 'none' : '';
-  document.getElementById('cognitoSignOutBtn').style.display = signedIn ? '' : 'none';
+  status.classList.toggle('is-error', entry.isError);
+  document.getElementById('cognitoSignInBtn').hidden = signedIn;
+  document.getElementById('cognitoSignOutBtn').hidden = !signedIn;
   recordActivity(shownEvent('signIn', id, entry.isError, recordedValues(entry, values)));
 }
 
@@ -53,8 +53,8 @@ export async function initLogin(){
   const tag = document.querySelector('meta[name="timeline-deploy"]');
   const name = chosenDeployName(tag ? tag.getAttribute('content') ?? '' : null);
   if(name === null) return { recordActivity: true, pageVersion: 'local' };
-  document.getElementById('devLoginField').style.display = 'none';
-  document.getElementById('cognitoLoginField').style.display = '';
+  document.getElementById('devLoginField').hidden = true;
+  document.getElementById('cognitoLoginField').hidden = false;
   try{
     const config = await loadDeployConfig(name);
     setApiBase(config.apiBase);

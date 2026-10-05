@@ -29,9 +29,9 @@ installActivityListeners({ win: window, doc: document, ...startActivityCapture()
 
 document.getElementById('loadBtn').addEventListener('click', handleLoadClick);
 document.getElementById('loadDifferentBtn').addEventListener('click', ()=>{
-  document.getElementById('mainContent').style.display = 'none';
+  document.getElementById('mainContent').hidden = true;
   noteMainShown(false);
-  document.getElementById('loadScreen').style.display = '';
+  document.getElementById('loadScreen').hidden = false;
   document.getElementById('loadConvFile').value = '';
   setLoadStatus(null);
   // Asking for a different file is also how you say "stop bringing the old

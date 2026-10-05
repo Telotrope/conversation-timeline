@@ -173,14 +173,14 @@ function renderReviewFilterBanner(){
   const el = document.getElementById('reviewFilterBanner');
 
   if(reviewDayFilter !== null){
-    el.style.display = 'flex';
+    el.hidden = false;
     const d = new Date(reviewDayFilter + 'T00:00:00');
     const label = d.toLocaleDateString(undefined, {weekday:'long', month:'long', day:'numeric', year:'numeric'});
     el.innerHTML = `
       <span>
-        <button id="prevDayBtn" class="btn-secondary" style="padding:4px 10px;">◀</button>
+        <button id="prevDayBtn" class="btn-secondary btn-small">◀</button>
         Day: <strong>${label}</strong>
-        <button id="nextDayBtn" class="btn-secondary" style="padding:4px 10px;">▶</button>
+        <button id="nextDayBtn" class="btn-secondary btn-small">▶</button>
       </span>
       <button id="clearReviewFilter" class="btn-secondary">Clear filter</button>`;
     document.getElementById('prevDayBtn').addEventListener('click', ()=> shiftReviewDay(-1));
@@ -190,11 +190,11 @@ function renderReviewFilterBanner(){
   }
 
   if(reviewConvFilter === null && !reviewRangeFilter){
-    el.style.display = 'none';
+    el.hidden = true;
     el.innerHTML = '';
     return;
   }
-  el.style.display = 'flex';
+  el.hidden = false;
   const convName = reviewConvFilter !== null ? state.conversations[reviewConvFilter].name : null;
   let label = '';
   if(convName) label += `Conversation: <strong>${escapeHtml(convName)}</strong>`;
@@ -212,7 +212,7 @@ function renderReviewFilterBanner(){
   }
   buttons.push(`<button id="clearReviewFilter" class="btn-secondary">Clear filter</button>`);
 
-  el.innerHTML = `<span>${label}</span><span style="display:flex; gap:8px;">${buttons.join('')}</span>`;
+  el.innerHTML = `<span>${label}</span><span class="button-group">${buttons.join('')}</span>`;
   document.getElementById('clearReviewFilter').addEventListener('click', clearReviewFilters);
   const viewConvBtn = document.getElementById('viewEntireConvBtn');
   if(viewConvBtn) viewConvBtn.addEventListener('click', ()=>{
@@ -261,7 +261,7 @@ export function renderReviewTable(){
     const mainRow = `<tr data-msg-id="${m.id}">
       <td class="when">${dt.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'})}<br>${dt.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})}</td>
       <td class="conv-name">${escapeHtml(conv.name)}</td>
-      <td class="msg-text">${m.text ? renderMarkdownLite(m.text) : '<em style="color:var(--ink-faint);">(no text — attachment only)</em>'}</td>
+      <td class="msg-text">${m.text ? renderMarkdownLite(m.text) : '<em class="no-text">(no text — attachment only)</em>'}</td>
       ${flagCells}
     </tr>`;
     return mainRow + renderReplyRow(m);

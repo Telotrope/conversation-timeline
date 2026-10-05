@@ -9,693 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-<style>
-  :root{
-    --paper: #E8E4D9;
-    --paper-raised: #F2EFE6;
-    --ink: #24221D;
-    --ink-soft: #6B665A;
-    --ink-faint: #9A9484;
-    --rule: #C7C0AC;
-    --accent: #3C6E64;
-    --accent-soft: #DCE6E2;
-    --amber: #A6752C;
-    --amber-soft: #EFE3CE;
-  }
-  *{box-sizing:border-box;}
-  body{
-    margin:0;
-    background:var(--paper);
-    color:var(--ink);
-    font-family:'Inter', sans-serif;
-    -webkit-font-smoothing:antialiased;
-  }
-  .wrap{
-    max-width:1080px;
-    margin:0 auto;
-    padding:48px 26px 120px;
-  }
-  header h1{
-    font-family:'Spectral', serif;
-    font-weight:500;
-    font-size:2.2rem;
-    line-height:1.15;
-    margin:0 0 8px;
-    letter-spacing:-0.01em;
-  }
-  header p.sub{
-    font-size:0.95rem;
-    color:var(--ink-soft);
-    margin:0 0 12px;
-    max-width:60ch;
-    line-height:1.5;
-  }
-  .note{
-    font-size:0.82rem;
-    color:var(--ink-faint);
-    margin:0 0 36px;
-    border-left:2px solid var(--rule);
-    padding-left:12px;
-  }
-  nav.tabs{
-    display:flex;
-    gap:4px;
-    margin-bottom:28px;
-    border-bottom:1px solid var(--rule);
-  }
-  nav.tabs button{
-    background:none;
-    border:none;
-    font-family:'Inter', sans-serif;
-    font-size:0.9rem;
-    color:var(--ink-soft);
-    padding:10px 4px;
-    margin-right:22px;
-    cursor:pointer;
-    border-bottom:2px solid transparent;
-  }
-  nav.tabs button.active{
-    color:var(--ink);
-    border-bottom-color:var(--accent);
-    font-weight:500;
-  }
-  .view{display:none;}
-  .view.active{display:block;}
-
-  /* Calendar view */
-  .day-row{
-    display:grid;
-    grid-template-columns:110px 1fr;
-    gap:16px;
-    align-items:center;
-    padding:8px 0;
-    border-bottom:1px solid #DDD8C9;
-  }
-  .day-row .day-label{
-    font-size:0.82rem;
-    color:var(--ink-soft);
-  }
-  .day-row .day-label .num{
-    font-family:'Spectral', serif;
-    font-size:1.15rem;
-    color:var(--ink);
-    display:block;
-  }
-  .track{
-    position:relative;
-    height:26px;
-    background:var(--paper-raised);
-    border-radius:3px;
-    border:1px solid var(--rule);
-  }
-  .grid-line{
-    position:absolute;
-    top:0; bottom:0;
-    width:1px;
-    background:#DDD8C9;
-  }
-  .bar{
-    position:absolute;
-    top:3px;
-    height:20px;
-    border-radius:3px;
-    cursor:pointer;
-    opacity:0.88;
-    transition:opacity .1s;
-  }
-  .bar:hover{opacity:1; outline:1.5px solid var(--ink);}
-  .legend-crit{
-    display:flex;
-    align-items:center;
-    gap:6px;
-    margin-top:8px;
-    font-size:0.75rem;
-    color:var(--ink-faint);
-  }
-  .legend-crit .swatch{
-    width:14px; height:14px;
-    border-radius:3px;
-    background:var(--accent-soft);
-    box-shadow: 0 0 0 2px #B0392F, 0 0 0 3px var(--paper-raised) inset;
-  }
-  .flag-key{
-    display:flex;
-    flex-wrap:wrap;
-    gap:16px;
-    margin-top:10px;
-    font-size:0.75rem;
-    color:var(--ink-faint);
-  }
-  .flag-key span.tag{
-    display:inline-flex;
-    align-items:center;
-    gap:5px;
-  }
-  .flag-icon{
-    display:inline-flex;
-    align-items:center;
-    justify-content:center;
-    width:15px; height:15px;
-    border-radius:50%;
-    font-size:9px;
-    color:#fff;
-    line-height:1;
-  }
-  .flag-icon.critical{ background:#B0392F; }
-  .flag-icon.angry{ background:#C7791E; }
-  .flag-icon.caps{ background:#5B4F8C; }
-
-  .bar-flags{
-    position:absolute;
-    top:-16px;
-    left:0;
-    display:flex;
-    gap:2px;
-  }
-  .bar-flags .flag-icon{
-    width:13px; height:13px;
-    font-size:8px;
-    cursor:pointer;
-  }
-  .bar-flags .flag-icon:hover{
-    outline:1.5px solid var(--ink);
-  }
-
-  /* Review tab */
-  .review-controls{
-    display:flex;
-    gap:12px;
-    align-items:center;
-    margin-bottom:14px;
-    flex-wrap:wrap;
-  }
-  .review-controls input[type="search"]{
-    flex:1;
-    min-width:220px;
-    background:var(--paper-raised);
-    border:1px solid var(--rule);
-    padding:9px 12px;
-    font-family:'Inter', sans-serif;
-    font-size:0.88rem;
-    color:var(--ink);
-    border-radius:4px;
-  }
-  .review-controls select{
-    background:var(--paper-raised);
-    border:1px solid var(--rule);
-    padding:9px 10px;
-    font-family:'Inter', sans-serif;
-    font-size:0.85rem;
-    border-radius:4px;
-  }
-  .review-count{
-    font-size:0.8rem;
-    color:var(--ink-faint);
-    margin-left:auto;
-  }
-  .filter-banner{
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    gap:12px;
-    background:var(--amber-soft);
-    border:1px solid #D8C79A;
-    border-radius:5px;
-    padding:9px 14px;
-    margin-bottom:14px;
-    font-size:0.82rem;
-    color:var(--ink);
-  }
-  tr.row-highlight{
-    animation: rowFlash 1.8s ease-out;
-  }
-  @keyframes rowFlash{
-    0% { background:#F4E3B0; }
-    100% { background:transparent; }
-  }
-  .save-bar{
-    display:flex;
-    align-items:center;
-    gap:10px;
-    margin-bottom:18px;
-    padding:10px 14px;
-    background:var(--paper-raised);
-    border:1px solid var(--rule);
-    border-radius:5px;
-    flex-wrap:wrap;
-  }
-  .save-status{
-    font-size:0.78rem;
-    color:var(--ink-faint);
-    flex:1;
-  }
-  .btn-secondary{
-    background:#fff;
-    border:1px solid var(--rule);
-    padding:7px 12px;
-    font-size:0.8rem;
-    border-radius:4px;
-    cursor:pointer;
-    color:var(--ink);
-    font-family:'Inter', sans-serif;
-  }
-  .btn-secondary:hover{ border-color:var(--accent); }
-
-  table.review{
-    width:100%;
-    border-collapse:collapse;
-    font-size:0.85rem;
-  }
-  table.review th{
-    text-align:left;
-    font-weight:500;
-    color:var(--ink-soft);
-    font-size:0.72rem;
-    padding:6px 8px;
-    border-bottom:1px solid var(--rule);
-    white-space:nowrap;
-  }
-  table.review td{
-    padding:10px 8px;
-    border-bottom:1px solid #DDD8C9;
-    vertical-align:top;
-  }
-  table.review td.when{
-    font-size:0.75rem;
-    color:var(--ink-faint);
-    white-space:nowrap;
-  }
-  table.review td.conv-name{
-    font-size:0.78rem;
-    color:var(--ink-soft);
-    max-width:140px;
-  }
-  table.review td.msg-text{
-    font-size:0.85rem;
-    line-height:1.45;
-    max-width:480px;
-  }
-  table.review td.flag-cell{
-    text-align:center;
-    white-space:nowrap;
-  }
-  .flag-checkbox{
-    display:flex;
-    flex-direction:column;
-    align-items:center;
-    gap:2px;
-  }
-  .flag-checkbox input{
-    width:16px; height:16px;
-    cursor:pointer;
-    accent-color:var(--accent);
-  }
-  .review-status{
-    display:block;
-    margin-top:4px;
-    font-size:0.62rem;
-    color:var(--ink-faint);
-  }
-  .review-status.is-reviewed{ color:var(--amber); font-weight:600; }
-
-  .pagination{
-    display:flex;
-    justify-content:center;
-    align-items:center;
-    gap:14px;
-    margin-top:20px;
-    font-size:0.85rem;
-  }
-  .pagination button{
-    background:var(--paper-raised);
-    border:1px solid var(--rule);
-    padding:7px 14px;
-    border-radius:4px;
-    cursor:pointer;
-    font-family:'Inter', sans-serif;
-  }
-  .pagination button:disabled{
-    opacity:0.4;
-    cursor:default;
-  }
-
-  /* Load screen */
-  #loadScreen{
-    max-width:560px;
-    margin:80px auto 0;
-  }
-  #loadScreen header{ margin-bottom:0; }
-  .load-panel{
-    margin-top:32px;
-    background:var(--paper-raised);
-    border:1px solid var(--rule);
-    border-radius:6px;
-    padding:26px 28px;
-  }
-  .load-field{
-    margin-bottom:20px;
-  }
-  .load-field label{
-    display:block;
-    font-size:0.85rem;
-    color:var(--ink-soft);
-    margin-bottom:8px;
-  }
-  .load-field .req{ color:#B0392F; font-size:0.75rem; }
-  .load-field .opt{ color:var(--ink-faint); font-size:0.75rem; }
-  .load-field input[type="file"]{
-    font-family:'Inter', sans-serif;
-    font-size:0.85rem;
-    width:100%;
-  }
-  .btn-primary{
-    background:var(--accent);
-    color:#fff;
-    border:none;
-    padding:10px 20px;
-    font-size:0.9rem;
-    border-radius:4px;
-    cursor:pointer;
-    font-family:'Inter', sans-serif;
-  }
-  .btn-primary:hover{ opacity:0.92; }
-  .load-status{
-    margin-top:14px;
-    font-size:0.82rem;
-    color:var(--ink-faint);
-    min-height:1.2em;
-  }
-
-  /* Global toggle bar */
-  .global-toggles{
-    display:flex;
-    flex-wrap:wrap;
-    align-items:center;
-    gap:18px;
-    padding:12px 16px;
-    background:var(--paper-raised);
-    border:1px solid var(--rule);
-    border-radius:6px;
-    margin-bottom:22px;
-    font-size:0.85rem;
-  }
-  .toggle-field{
-    display:flex;
-    align-items:center;
-    gap:6px;
-    cursor:pointer;
-    white-space:nowrap;
-  }
-  .toggle-field input{ accent-color:var(--accent); cursor:pointer; }
-
-
-  /* Claude reply rows in Review */
-  tr.claude-reply-row{
-    background:var(--paper-raised);
-  }
-  tr.claude-reply-row td{
-    padding-left:24px;
-    color:var(--ink-soft);
-    font-size:0.85rem;
-    line-height:1.45;
-  }
-  tr.claude-reply-row .who-label{
-    font-style:normal;
-    font-weight:600;
-    font-size:0.7rem;
-    color:var(--accent);
-    display:block;
-    margin-bottom:2px;
-  }
-
-  /* Analytics tab */
-  .analytics-layout{
-    display:grid;
-    grid-template-columns:220px 1fr;
-    gap:0;
-    border:1px solid var(--rule);
-  }
-  .analytics-menu{
-    border-right:1px solid var(--rule);
-    background:var(--paper-raised);
-    display:flex;
-    flex-direction:column;
-  }
-  .analytics-item{
-    text-align:left;
-    background:none;
-    border:none;
-    border-bottom:1px solid #DDD8C9;
-    padding:14px 16px;
-    font-family:'Inter', sans-serif;
-    font-size:0.86rem;
-    color:var(--ink);
-    cursor:pointer;
-  }
-  .analytics-item:hover{ background:var(--accent-soft); }
-  .analytics-item.active{
-    background:var(--accent);
-    color:#fff;
-    font-weight:500;
-  }
-  .analytics-main{
-    padding:26px 30px;
-    min-height:420px;
-  }
-  .analytics-main h3{
-    font-family:'Spectral', serif;
-    font-weight:500;
-    font-size:1.25rem;
-    margin:0 0 6px;
-  }
-  .analytics-main .analytics-desc{
-    font-size:0.85rem;
-    color:var(--ink-soft);
-    margin:0 0 20px;
-    max-width:60ch;
-    line-height:1.5;
-  }
-  .analytics-controls{
-    display:flex;
-    gap:10px;
-    align-items:center;
-    margin-bottom:20px;
-  }
-  .analytics-controls select, .analytics-controls button.seg{
-    background:#fff;
-    border:1px solid var(--rule);
-    padding:6px 12px;
-    font-size:0.82rem;
-    border-radius:4px;
-    font-family:'Inter', sans-serif;
-    cursor:pointer;
-  }
-  .analytics-controls button.seg.active{
-    background:var(--accent);
-    color:#fff;
-    border-color:var(--accent);
-  }
-  .progress-wrap{
-    max-width:420px;
-    margin:60px auto;
-    text-align:center;
-  }
-  .progress-track{
-    height:8px;
-    background:var(--rule);
-    border-radius:4px;
-    overflow:hidden;
-    margin-bottom:10px;
-  }
-  .progress-fill{
-    height:100%;
-    background:var(--accent);
-    width:0%;
-    transition:width 0.08s linear;
-  }
-  /* A wait whose length can't be measured: stripes that keep moving, so it
-     never reads as a bar frozen at 100% (plan
-     2026-10-02-upload-processing-failures.md §3). */
-  .progress-fill.is-working{
-    background:repeating-linear-gradient(-45deg,
-      var(--accent) 0 10px, var(--accent-soft) 10px 20px);
-    background-size:28.28px 28.28px;
-    animation:progressStripes 0.9s linear infinite;
-  }
-  @keyframes progressStripes{
-    from{ background-position:0 0; }
-    to{ background-position:28.28px 0; }
-  }
-  @media (prefers-reduced-motion: reduce){
-    .progress-fill.is-working{ animation:none; }
-  }
-  .progress-fill.is-error{
-    background:#B0392F;
-    animation:none;
-  }
-  .progress-label{
-    font-size:0.8rem;
-    color:var(--ink-faint);
-  }
-  .stat-row{
-    display:flex;
-    gap:24px;
-    margin-bottom:18px;
-    flex-wrap:wrap;
-  }
-  .stat-row .stat-block .num{
-    font-family:'Spectral', serif;
-    font-size:1.4rem;
-    color:var(--accent);
-    display:block;
-  }
-  .stat-row .stat-block .label{
-    font-size:0.75rem;
-    color:var(--ink-faint);
-  }
-  table.friction{
-    width:100%;
-    border-collapse:collapse;
-    font-size:0.85rem;
-  }
-  table.friction th{
-    text-align:left;
-    font-weight:500;
-    color:var(--ink-soft);
-    font-size:0.72rem;
-    padding:6px 10px 8px 0;
-    border-bottom:1px solid var(--rule);
-    cursor:pointer;
-    user-select:none;
-  }
-  table.friction td{
-    padding:9px 10px 9px 0;
-    border-bottom:1px solid #DDD8C9;
-  }
-  table.friction tr.friction-row{ cursor:pointer; }
-  table.friction tr.friction-row:hover{ background:var(--paper-raised); }
-  table.friction td.pct{
-    font-variant-numeric:tabular-nums;
-    color:var(--amber);
-    font-weight:600;
-  }
-  .chart-svg text{
-    font-family:'Inter', sans-serif;
-    fill:var(--ink-faint);
-    font-size:10px;
-  }
-  .chart-svg .axis-line{ stroke:var(--rule); stroke-width:1; }
-  .chart-svg .data-line{ stroke:var(--accent); stroke-width:2; fill:none; }
-  .chart-svg .data-point{ fill:var(--accent); }
-  .chart-svg .data-bar{ fill:var(--accent); }
-  .chart-svg .grid-line{ stroke:#E4E0D4; stroke-width:1; }
-
-  .track-labels{
-    font-size:0.68rem;
-    color:var(--ink-faint);
-    display:flex;
-    justify-content:space-between;
-    padding:2px 2px 0;
-  }
-  .month-heading{
-    font-family:'Spectral', serif;
-    font-style:italic;
-    font-size:1.05rem;
-    color:var(--ink-soft);
-    padding:22px 0 8px;
-  }
-
-  /* Conversation list / detail */
-  .split{
-    display:grid;
-    grid-template-columns:320px 1fr;
-    gap:0;
-    border:1px solid var(--rule);
-  }
-  .conv-list{
-    border-right:1px solid var(--rule);
-    max-height:640px;
-    overflow-y:auto;
-    background:var(--paper-raised);
-  }
-  .conv-list input{
-    width:100%;
-    border:none;
-    border-bottom:1px solid var(--rule);
-    padding:11px 14px;
-    font-family:'Inter', sans-serif;
-    font-size:0.88rem;
-    background:var(--paper-raised);
-    color:var(--ink);
-  }
-  .conv-list input:focus{outline:none; background:#fff;}
-  .conv-item{
-    padding:11px 14px;
-    border-bottom:1px solid #DDD8C9;
-    cursor:pointer;
-    font-size:0.86rem;
-  }
-  .conv-item:hover{background:var(--accent-soft);}
-  .conv-item.selected{background:var(--accent); color:#fff;}
-  .conv-item .meta{
-    display:block;
-    font-size:0.72rem;
-    color:var(--ink-faint);
-    margin-top:2px;
-  }
-  .conv-item.selected .meta{color:#DCE6E2;}
-  .detail{
-    padding:24px 28px;
-    min-height:400px;
-  }
-  .detail h3{
-    font-family:'Spectral', serif;
-    font-weight:500;
-    font-size:1.3rem;
-    margin:0 0 4px;
-  }
-  .detail .summary{
-    font-size:0.85rem;
-    color:var(--ink-soft);
-    margin-bottom:22px;
-  }
-  .placeholder{
-    color:var(--ink-faint);
-    font-size:0.9rem;
-    padding:40px 0;
-    text-align:center;
-  }
-  table.sessions{
-    width:100%;
-    border-collapse:collapse;
-    font-size:0.86rem;
-  }
-  table.sessions th{
-    text-align:left;
-    font-weight:500;
-    color:var(--ink-soft);
-    font-size:0.75rem;
-    padding:6px 10px 8px 0;
-    border-bottom:1px solid var(--rule);
-  }
-  table.sessions td{
-    padding:9px 10px 9px 0;
-    border-bottom:1px solid #DDD8C9;
-  }
-  table.sessions td.dur{color:var(--amber); font-variant-numeric:tabular-nums;}
-  footer{
-    margin-top:56px;
-    padding-top:18px;
-    border-top:1px solid var(--rule);
-    font-size:0.78rem;
-    color:var(--ink-faint);
-  }
-  @media (max-width:760px){
-    .split{grid-template-columns:1fr;}
-    .conv-list{max-height:260px; border-right:none; border-bottom:1px solid var(--rule);}
-    .day-row{grid-template-columns:70px 1fr;}
-  }
-</style>
+<link rel="stylesheet" href="frontend/timeline.css">
 </head>
 <body>
 <div class="wrap">
@@ -713,18 +27,18 @@
         <label for="devLoginSub">Dev login name <span class="req">(required — local development only; a deployment signs in with Cognito)</span></label>
         <input type="text" id="devLoginSub" placeholder="e.g. alice" value="alice">
       </div>
-      <div class="load-field" id="cognitoLoginField" style="display:none;">
+      <div class="load-field" id="cognitoLoginField" hidden>
         <label>Your account</label>
-        <p class="load-status" id="cognitoLoginStatus" style="margin:0 0 8px;">Checking whether you're signed in…</p>
-        <button type="button" id="cognitoSignInBtn" class="btn-primary" style="display:none;">Sign in</button>
-        <button type="button" id="cognitoSignOutBtn" style="display:none;">Sign out</button>
+        <p class="load-status" id="cognitoLoginStatus">Checking whether you're signed in…</p>
+        <button type="button" id="cognitoSignInBtn" class="btn-primary" hidden>Sign in</button>
+        <button type="button" id="cognitoSignOutBtn" class="btn-secondary" hidden>Sign out</button>
       </div>
       <div class="load-field load-checkbox-field">
-        <label style="display:flex; align-items:flex-start; gap:9px; cursor:pointer;">
-          <input type="checkbox" id="autoDetectCheckbox" style="margin-top:3px;">
+        <label>
+          <input type="checkbox" id="autoDetectCheckbox">
           <span>
             After uploading, scan for likely ALL-CAPS emphasis, criticism of Claude, and anger.
-            <span class="opt" style="display:block; margin-top:4px;">
+            <span class="opt">
               This runs only if you tick it. It reads every message you sent, so it takes a while on a large
               export — you'll see its progress. ALL-CAPS uses a dictionary check to skip acronyms (IRS, DARPA,
               etc.); criticism and anger use keyword and sentiment heuristics. Treat all three as a starting
@@ -736,17 +50,17 @@
       </div>
       <button id="loadBtn" class="btn-primary">Load</button>
       <p class="load-status" id="loadStatus"></p>
-      <div id="loadProgress" style="display:none;">
+      <div id="loadProgress" hidden>
         <div class="progress-track"><div class="progress-fill" id="loadProgressFill"></div></div>
         <div class="progress-label" id="loadProgressLabel"></div>
       </div>
     </div>
   </div>
 
-  <div id="mainContent" style="display:none;">
-  <div class="filter-banner" id="restoredNotice" style="display:none;">
+  <div id="mainContent" hidden>
+  <div class="filter-banner" id="restoredNotice" hidden>
     <span id="restoredNoticeText"></span>
-    <button id="restoredNoticeDismiss" class="btn-secondary" style="padding:4px 10px;">Dismiss</button>
+    <button id="restoredNoticeDismiss" class="btn-secondary btn-small">Dismiss</button>
   </div>
   <header>
     <h1>A record of our conversations</h1>
@@ -757,15 +71,15 @@
       <span class="tag"><span class="flag-icon angry">!</span> Angry</span>
       <span class="tag"><span class="flag-icon caps">A</span> Contains an ALL-CAPS word</span>
     </div>
-    <p class="hint" style="margin-top:8px;">Critical and angry are judgment calls; ALL-CAPS is mechanical. All three can be corrected by hand in the "Review &amp; flags" tab — this view reflects your overrides.</p>
-    <button id="loadDifferentBtn" class="btn-secondary" style="margin-top:10px;">Load a different file…</button>
+    <p class="hint under-key">Critical and angry are judgment calls; ALL-CAPS is mechanical. All three can be corrected by hand in the "Review &amp; flags" tab — this view reflects your overrides.</p>
+    <button id="loadDifferentBtn" class="btn-secondary btn-spaced">Load a different file…</button>
   </header>
 
   <div class="global-toggles">
     <label class="toggle-field"><input type="checkbox" id="toggleShowAuto" checked> Show automatic tags</label>
     <label class="toggle-field"><input type="checkbox" id="toggleShowUser" checked> Show your tags</label>
     <label class="toggle-field"><input type="checkbox" id="toggleShowReplies"> Show Claude's replies</label>
-    <span class="hint" style="margin:0;">These affect the whole page — Calendar, Conversations, and Review.</span>
+    <span class="hint inline">These affect the whole page — Calendar, Conversations, and Review.</span>
   </div>
 
   <nav class="tabs">
@@ -792,7 +106,7 @@
   </div>
 
   <div class="view" id="view-review">
-    <p class="hint" style="margin-bottom:16px;">
+    <p class="hint before-controls">
       Every message you sent is listed below, in your own words, so you can check my automated flags against
       what you actually meant rather than taking my word for it. Toggling a box overrides the auto-detected
       value for that message; it does not change the message text.
@@ -810,12 +124,12 @@
       </select>
       <span class="review-count" id="reviewCount"></span>
     </div>
-    <div class="filter-banner" id="reviewFilterBanner" style="display:none;"></div>
+    <div class="filter-banner" id="reviewFilterBanner" hidden></div>
     <div class="save-bar">
       <span id="saveStatus" class="save-status"></span>
-      <button id="exportAnnotatedBtn" class="btn-primary" style="padding:7px 14px; font-size:0.8rem;">Download annotated conversations.json</button>
+      <button id="exportAnnotatedBtn" class="btn-primary btn-compact">Download annotated conversations.json</button>
     </div>
-    <p class="hint" style="margin-bottom:14px;">
+    <p class="hint before-table">
       This saves one self-contained file with both the automatic tags and your confirmed flags embedded in it —
       load that file directly next time and everything comes back automatically.
     </p>

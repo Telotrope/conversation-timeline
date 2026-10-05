@@ -52,8 +52,8 @@ function applyExportText(text, flagHandles){
     setSaveStatus('flags.loaded', { count: embeddedCount });
   }
 
-  document.getElementById('loadScreen').style.display = 'none';
-  document.getElementById('mainContent').style.display = '';
+  document.getElementById('loadScreen').hidden = true;
+  document.getElementById('mainContent').hidden = false;
   noteMainShown(true);
 
   renderSubtitle();

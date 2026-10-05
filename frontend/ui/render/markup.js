@@ -23,7 +23,7 @@ export function renderMarkdownLite(text){
     line = line.replace(/__(.+?)__/g, '<strong>$1</strong>');
     line = line.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
     line = line.replace(/(^|[^_])_([^_\n]+)_(?!_)/g, '$1<em>$2</em>');
-    line = line.replace(/`([^`]+)`/g, '<code style="background:var(--paper); padding:1px 4px; border-radius:3px; font-size:0.9em;">$1</code>');
+    line = line.replace(/`([^`]+)`/g, '<code class="md-code">$1</code>');
     return line;
   }
 
@@ -34,7 +34,7 @@ export function renderMarkdownLite(text){
 
   function flushParagraph(){
     if(paragraphBuffer.length){
-      html += '<p style="margin:0 0 8px;">' + paragraphBuffer.join('<br>') + '</p>';
+      html += '<p class="md-p">' + paragraphBuffer.join('<br>') + '</p>';
       paragraphBuffer = [];
     }
   }
@@ -56,8 +56,7 @@ export function renderMarkdownLite(text){
     if(headerMatch){
       flushParagraph();
       closeLists();
-      const size = Math.max(0.85, 1.15 - headerMatch[1].length * 0.08);
-      html += `<div style="font-weight:600; font-size:${size}rem; margin:8px 0 4px;">${inlineFormat(headerMatch[2])}</div>`;
+      html += `<div class="md-heading h${headerMatch[1].length}">${inlineFormat(headerMatch[2])}</div>`;
       return;
     }
 
@@ -65,7 +64,7 @@ export function renderMarkdownLite(text){
     if(ulMatch){
       flushParagraph();
       if(inOl){ html += '</ol>'; inOl = false; }
-      if(!inUl){ html += '<ul style="margin:2px 0 8px; padding-left:20px;">'; inUl = true; }
+      if(!inUl){ html += '<ul class="md-list">'; inUl = true; }
       html += `<li>${inlineFormat(ulMatch[1])}</li>`;
       return;
     }
@@ -74,7 +73,7 @@ export function renderMarkdownLite(text){
     if(olMatch){
       flushParagraph();
       if(inUl){ html += '</ul>'; inUl = false; }
-      if(!inOl){ html += '<ol style="margin:2px 0 8px; padding-left:20px;">'; inOl = true; }
+      if(!inOl){ html += '<ol class="md-list">'; inOl = true; }
       html += `<li>${inlineFormat(olMatch[1])}</li>`;
       return;
     }
