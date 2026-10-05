@@ -52,86 +52,107 @@ From a throwaway browser test run against the local backend and the tests' stand
 
 ## 3. The state machine
 
-A **state machine** here means: the page is always in exactly one named state, and only the
-listed events move it to another. Screens are states; some states are brief checks with no screen
-of their own (shown as a small "Checking…" line).
+A **state machine** here means: the page is always on exactly one of five pages, and only the
+arcs below move it to another. Each arc is labelled with what the user does, and in brackets the
+condition that picks between arcs.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Starting
-    Starting --> SignIn: not signed in
-    Starting --> CheckingData: signed in
-    Starting --> SignIn: deployment settings unreadable (error shown)
+    direction LR
+    SignIn: Sign-in
+    Upload: Upload
+    Describe: Describe your files
+    Loading: Timeline + loading modal
+    Timeline: Timeline
 
-    SignIn --> CheckingData: dev name entered, Continue
-    SignIn --> [*]: Sign in (leaves for Cognito; the return is a new page load, so Starting)
+    [*] --> SignIn: opens the page [signed out]
+    [*] --> Upload: opens the page [signed in, no data]
+    [*] --> Loading: opens the page [signed in, has data]
+    [*] --> Describe: opens the page [signed in, a file not yet described (Q7)]
 
-    CheckingData --> Upload: you have no conversations
-    CheckingData --> Describe: some upload has no description (Q7)
-    CheckingData --> TimelineLoading: you have conversations
-    CheckingData --> SignIn: sign-in expired
-    CheckingData --> CheckFailed: server unreachable or error
-    CheckFailed --> CheckingData: Try again
+    SignIn --> Upload: signs in [no data]
+    SignIn --> Loading: signs in [has data]
 
-    Upload --> Sending: Upload pressed, files chosen
-    Upload --> Timeline: Back to timeline (only if you have data)
-    Sending --> Upload: every file failed (errors shown)
-    Sending --> SendingPartFailed: some files failed (Q5)
-    SendingPartFailed --> Describe: Continue with the ones that worked
-    SendingPartFailed --> Sending: Try the failed ones again
-    Sending --> Describe: every file processed
+    Upload --> Describe: presses Upload [files finish processing]
+    Upload --> Timeline: presses Back to timeline [has data]
 
-    Describe --> TimelineLoading: Done, descriptions saved
-    Describe --> Describe: save failed (error shown, answers kept)
+    Describe --> Loading: presses Done [timeline still downloading]
+    Describe --> Timeline: presses Done [timeline already downloaded]
 
-    TimelineLoading --> Timeline: download finished
-    TimelineLoading --> LoadFailed: download or server error
-    LoadFailed --> TimelineLoading: Try again
+    Loading --> Timeline: waits [download finishes]
 
-    Timeline --> Upload: Add conversations
-    Timeline --> SignIn: Sign out
-    Upload --> SignIn: Sign out
-    Describe --> SignIn: Sign out
+    Timeline --> Upload: presses Add conversations
+
+    Upload --> SignIn: signs out [or sign-in ran out]
+    Describe --> SignIn: signs out [or sign-in ran out]
+    Timeline --> SignIn: signs out [or sign-in ran out]
 ```
 
-Notes on the diagram:
+The same arcs as a table, which is also the list the unit tests check (§10):
 
-1. **Sign-in always comes back through Starting.** Cognito's sign-in leaves the page, and the
-   return is a fresh page load. So "a user who signs in goes to Upload or Timeline" is
-   Starting → CheckingData → Upload or TimelineLoading. Local development's typed name doesn't
-   leave the page; it goes straight to CheckingData.
-2. **CheckingData asks `GET /conversations`**, an existing route
+| From | User action [condition] | To |
+|---|---|---|
+| (page opened) | [signed out] | Sign-in |
+| (page opened) | [signed in, no data] | Upload |
+| (page opened) | [signed in, has data] | Timeline + loading modal |
+| (page opened) | [signed in, a file not yet described] (Q7) | Describe |
+| Sign-in | signs in [no data] | Upload |
+| Sign-in | signs in [has data] | Timeline + loading modal |
+| Upload | presses Upload [files finish processing] | Describe |
+| Upload | presses Back to timeline [has data] | Timeline |
+| Describe | presses Done [still downloading] | Timeline + loading modal |
+| Describe | presses Done [already downloaded] | Timeline |
+| Timeline + loading modal | waits [download finishes] | Timeline |
+| Timeline | presses Add conversations | Upload |
+| Upload, Describe, Timeline | signs out, or the sign-in runs out | Sign-in |
+
+Failures don't change the page; they show on the page you're on, with what you can do next:
+
+| Page | Failure | Shown, and what you can do |
+|---|---|---|
+| Sign-in | Deployment settings unreadable, or Cognito refuses the sign-in | The error; Sign in again |
+| (page opened) | Server unreachable while checking for data | Sign-in page's error line; Try again |
+| Upload | Every file fails | Each file's reason; change files and press Upload again |
+| Upload | Some files fail (Q5) | Each file's reason; Continue with the ones that worked (→ Describe), or Try the failed ones again |
+| Describe | Saving fails | The error; every answer kept; press Done again |
+| Timeline + loading modal | Download or server error | The error in the modal; Try again, or Sign out (→ Sign-in) |
+
+Notes:
+
+1. **Signing in leaves the page.** Cognito's sign-in sends you to Cognito's site and back, and
+   the return is a fresh page load, so the two "signs in" arcs are really "opens the page" arcs
+   on the return. Local development's typed name doesn't leave the page.
+2. **"Has data" is asked with `GET /conversations`**, an existing route
    ([app.rs:23](../../backend/timeline-api/src/app.rs#L23)) that lists your conversations'
-   summaries without reading the files. Today the page decides "is there anything to restore?" by
-   asking for the whole export ([load-flow.js:92-96](../../frontend/ui/load-flow.js#L92-L96)).
-3. **TimelineLoading** is the Timeline screen with the loading modal in front. Its tabs are drawn
-   empty behind the modal and filled in when the download finishes. LoadFailed is the same modal
-   showing the error, with Try again and Sign out.
-4. **Describe → TimelineLoading usually takes no wait.** The export download starts as soon as
-   every file is processed (and the scan, if ticked, has run), in the background while you fill in
-   the descriptions. When you press Done, the modal shows only if the download isn't finished yet.
-5. **Sign-in that runs out.** Cognito's sign-in lasts an hour
+   summaries without reading the files. Today the page asks for the whole export to find out
+   ([load-flow.js:92-96](../../frontend/ui/load-flow.js#L92-L96)). While the answer is awaited,
+   the page shows a "Checking…" line; it is not one of the five pages.
+3. **Timeline + loading modal** is the Timeline with the modal in front. The tabs are drawn empty
+   behind it and filled in when the download finishes.
+4. **Describe → Timeline usually skips the modal.** The download starts as soon as every file is
+   processed (and the scan, if ticked, has run), in the background while you fill in the
+   descriptions.
+5. **The sign-in running out.** Cognito's sign-in lasts an hour
    ([cognito-login.js:10-12](../../frontend/infra/cognito-login.js#L10-L12)). Any request that
-   fails with "sign in first" moves to SignIn with the message "Your sign-in ran out; sign in
+   fails with "sign in first" moves to Sign-in with the message "Your sign-in ran out; sign in
    again." The quiet renewal in [the migration plan's stale sign-in item (line 1462)](2026-09-09-rust-aws-backend-migration.md#L1462)
-   stays a separate piece of work; this plan only makes the page say so instead of failing under
-   a "Signed in" label. Descriptions typed but not saved are lost in that case (C6).
+   stays a separate piece of work. Descriptions typed but not saved are lost in that case (C6).
 
-The machine itself is a plain function with no page access, `nextState(state, event)` in a new
-[frontend/core/screen-flow.js](../../frontend/core/screen-flow.js), so every arrow above is
-checked by a unit test (§10). A separate module draws whichever screen the state names.
+The machine itself is a plain function with no page access, `nextPage(page, event)` in a new
+[frontend/core/screen-flow.js](../../frontend/core/screen-flow.js), so every row of the first table
+is checked by a unit test (§10). A separate module shows whichever page it names.
 
 ## 4. Addresses and the Back button
 
 Each screen gets an address, so a reload reopens the right place and Back behaves predictably:
 
-| State | Address | Added to history? |
+| Page | Address | Added to history? |
 |---|---|---|
-| Starting, CheckingData, Sending, TimelineLoading | unchanged | no |
-| SignIn | `#signin` | replaces the current entry |
+| Sign-in | `#signin` | replaces the current entry |
 | Upload | `#upload` | **new entry** when reached from Timeline's "Add conversations"; otherwise replaces |
 | Describe | `#describe` | replaces |
 | Timeline | today's `#calendar`, `#conversations/3` and so on | replaces on arrival; tab clicks add entries as today |
+| Timeline + loading modal | the Timeline's address | the modal adds nothing |
 
 Consequences:
 
@@ -226,7 +247,7 @@ unchosen, so it can't be accepted without a look.
 ### 7c. Done
 
 Done is enabled only when every form passes the rules above; anything missing is marked next to its
-field. Pressing it saves one description per file (§8) and moves to TimelineLoading. A failed save
+field. Pressing it saves one description per file (§8) and moves to the Timeline (with the loading modal if the download is still running). A failed save
 keeps every answer on screen and shows the error.
 
 ## 8. Server changes
@@ -280,10 +301,10 @@ in `timeline-storage`, following the existing `UploadOutcomeStore` pair.
 |---|---|
 | `POST /uploads` | Now takes `{ "file_name": … }` and stores it with the upload, so a file can be named on Describe even after a reload (C3). |
 | `PUT /uploads/{upload_id}/description` | Saves one upload's description. Refuses an upload that isn't yours or isn't processed (404), and a body that breaks the rules (400, naming the field). |
-| `GET /uploads` | Lists your processed uploads: id, file name, conversation count, description or null. Describe uses it after a reload; CheckingData uses it to find undescribed uploads (Q7). |
+| `GET /uploads` | Lists your processed uploads: id, file name, conversation count, description or null. Describe uses it after a reload; opening the page uses it to find undescribed files (Q7). |
 
 The existing `GET /conversations` answers "do you have any data?"; `GET /uploads` could too, but it
-is a bigger answer, so CheckingData asks the smaller one first and asks `GET /uploads` only if Q7's
+is a bigger answer, so opening the page asks the smaller one first and asks `GET /uploads` only if Q7's
 answer needs it.
 
 ## 9. Page layout and modules
@@ -292,7 +313,7 @@ New modules under [frontend/](../../frontend/), one job each:
 
 | Module | Job |
 |---|---|
-| `core/screen-flow.js` | The state machine (§3): states, events, `nextState`. No page access. |
+| `core/screen-flow.js` | The state machine (§3): the five pages, the events, `nextPage`. No page access. |
 | `core/upload-description.js` | Form answers ↔ the server's description JSON, and the rules in §7a, checked once when Done is pressed. No page access. |
 | `ui/screens/screen-host.js` | Shows the one screen the state names, hides the rest, writes the address (§4), and handles hashchange for screens. Replaces the screen-switching now split between [main.js:31-43](../../frontend/main.js#L31-L43) and `applyExportText`. |
 | `ui/screens/sign-in-screen.js` | §5. Takes over [login-panel.js](../../frontend/ui/login-panel.js). |
@@ -318,8 +339,8 @@ out today.
 
 ## 10. Tests
 
-- **Unit, `screen-flow.js`:** every arrow in §3, plus every event that a state must ignore (Upload
-  pressed during Sending, for example).
+- **Unit, `screen-flow.js`:** every row of §3's arc table, plus every event a page must ignore (Upload
+  pressed again while files are sending, for example).
 - **Unit, `upload-description.js`:** each rule in §7a, both ways; same-for-all copied to every file;
   separate answers kept apart.
 - **Rust, through the routes:** saving and reading back a description; each refusal in §8c;
@@ -394,22 +415,22 @@ list of tests to change, with each change, comes to the user for approval before
 ### C1 [RESOLVED]: First draft fetched the full export to decide which screen to show
 Asking `GET /export` (as restore does today) makes the server rebuild and store a full export just
 to learn "is there any data?", and then the page downloads it again for the Timeline.
-**Resolution:** CheckingData asks `GET /conversations` instead; see [§3, note 2 (line 103)](2026-10-05-screen-flow.md#L103).
+**Resolution:** opening the page asks `GET /conversations` instead; see [§3, note 2 (line 125)](2026-10-05-screen-flow.md#L125).
 
 ### C2 [RESOLVED]: First draft made Describe wait for the download
 Moving to the Timeline only after Done, then starting the download, puts the whole download wait
 after the user has finished typing.
-**Resolution:** the download starts in the background when processing ends; see [§3, note 4 (line 110)](2026-10-05-screen-flow.md#L110).
+**Resolution:** the download starts in the background when processing ends; see [§3, note 4 (line 132)](2026-10-05-screen-flow.md#L132).
 
 ### C3 [RESOLVED]: File names would be lost on a reload
 The server never learns a file's name today; only the browser knows it, so a reload on Describe
 couldn't say which file is which.
-**Resolution:** `POST /uploads` takes the file name; see [§8c (line 281)](2026-10-05-screen-flow.md#L281).
+**Resolution:** `POST /uploads` takes the file name; see [§8c (line 302)](2026-10-05-screen-flow.md#L302).
 
 ### C4 [OPEN]: Back across real Cognito's pages is unmeasured
 The stand-in Cognito skips the login form, so the browser tests can't show what Back does on
 Cognito's own page after sign-in, or whether `redirectMethod: "replace"` helps.
-**Mitigation in plan:** [§4 (line 149)](2026-10-05-screen-flow.md#L149) proposes the option and
+**Mitigation in plan:** [§4 (line 170)](2026-10-05-screen-flow.md#L170) proposes the option and
 marks it untried. **Open:** checked by hand on the deployed site after the first deployment of this
 work, and written up in an analysis.
 
@@ -422,14 +443,14 @@ files takes over a minute in the activity records, or the user reports it as slo
 
 ### C6 [OPEN]: An expired sign-in on Describe loses typed answers
 Moving to SignIn means leaving for Cognito, and unsaved answers go with the page.
-**Mitigation in plan:** none beyond the "ran out" message ([§3, note 5 (line 113)](2026-10-05-screen-flow.md#L113)).
+**Mitigation in plan:** none beyond the "ran out" message ([§3, note 5 (line 135)](2026-10-05-screen-flow.md#L135)).
 **Open:** solved by the migration plan's quiet-renewal item; if that slips, keep the answers in
 sessionStorage. Trigger: the user reports losing answers, or the renewal item is deferred.
 
 ### C7 [OPEN]: Existing browser tests drive the old load screen
 Their page-driving steps (pick a file, press Load, wait for `#mainContent`) won't match the new
 screens.
-**Mitigation in plan:** [§10 (line 346)](2026-10-05-screen-flow.md#L346) commits to bringing the
+**Mitigation in plan:** [§10 (line 367)](2026-10-05-screen-flow.md#L367) commits to bringing the
 list of changes to the user before coding. **Open:** the list is written when the plan is approved.
 
 ### C8 [OPEN]: A conversation in two files gets the later file's description
@@ -445,5 +466,12 @@ conversations were already in an earlier file" — to be added if the user wants
 ### C9 [RESOLVED]: Free text from the form reaches the page, the server's storage and logs
 Names and file names come from the user and are shown back on the page.
 **Resolution:** trimmed, cleaned of control and invisible characters and limited in length when the
-request is read ([§8a (line 261)](2026-10-05-screen-flow.md#L261)); shown on the page only as text,
-never as markup; kept out of the activity log ([§9 (line 316)](2026-10-05-screen-flow.md#L316)).
+request is read ([§8a (line 282)](2026-10-05-screen-flow.md#L282)); shown on the page only as text,
+never as markup; kept out of the activity log ([§9 (line 337)](2026-10-05-screen-flow.md#L337)).
+
+### C10 [RESOLVED]: The first diagram was not a diagram of pages
+The first draft's diagram mixed the five pages with brief checks, sending, and every failure as
+states of their own (sixteen boxes); the user found it unreadable and asked for five pages with arcs
+showing how a user moves between them.
+**Resolution:** §3 now draws only the five pages, each arc labelled with the user's action and its
+condition; failures are a separate table of what each page shows, not states. See [§3 (line 53)](2026-10-05-screen-flow.md#L53).
