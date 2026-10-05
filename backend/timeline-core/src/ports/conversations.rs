@@ -31,14 +31,38 @@ use serde::{Deserialize, Serialize};
 
 use super::errors::StoreError;
 use super::ids::{UploadId, UserId};
+use crate::conversation_metadata::{
+    ConversationMedium, ConversationSpan, MetadataOrigin, Participants, SourceFile,
+};
 use crate::model::{ConversationId, ConversationName};
 
+/// The one record kept per conversation. Despite the name it is now more
+/// than a summary: besides the name and message count it records where the
+/// conversation's messages are (its first file and any later files that
+/// added messages) and its metadata (plan
+/// `docs/plans/2026-10-05-screen-flow.md` §8a). Renaming it would touch
+/// every user of it for no change in behaviour, so the name stays.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConversationSummary {
     pub conversation_id: ConversationId,
-    pub upload_id: UploadId,
     pub name: ConversationName,
+    /// The first file the conversation came in.
+    pub source: SourceFile,
+    /// Later files that added messages to it, oldest first; each one's
+    /// added messages are stored on their own (plan §8b-2).
+    pub additions: Vec<UploadId>,
     pub message_count: usize,
+    /// From the earliest to the latest message time; `None` when no
+    /// message has a time. Decides which messages a later file adds.
+    pub message_span: Option<ConversationSpan>,
+    pub participants: Participants,
+    pub medium: ConversationMedium,
+    /// Whether `participants` and `medium` are still guessed.
+    pub details_origin: MetadataOrigin,
+    /// The start and end the user sees and edits; places a conversation
+    /// whose messages have no times.
+    pub span: ConversationSpan,
+    pub span_origin: MetadataOrigin,
 }
 
 #[async_trait]

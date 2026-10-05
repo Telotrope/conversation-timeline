@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
+use timeline_core::conversation_metadata::UploadFacts;
 use timeline_core::ports::errors::StoreError;
 use timeline_core::ports::ids::{UploadId, UserId};
 use timeline_core::ports::uploads::{UploadOutcome, UploadOutcomeStore, UploadProgress};
@@ -12,6 +13,7 @@ use timeline_core::ports::uploads::{UploadOutcome, UploadOutcomeStore, UploadPro
 pub struct InMemoryUploadOutcomeStore {
     outcomes: Mutex<HashMap<(UserId, UploadId), UploadOutcome>>,
     progress: Mutex<HashMap<(UserId, UploadId), UploadProgress>>,
+    received: Mutex<HashMap<(UserId, UploadId), UploadFacts>>,
 }
 
 impl InMemoryUploadOutcomeStore {
@@ -99,6 +101,32 @@ impl UploadOutcomeStore for InMemoryUploadOutcomeStore {
             .get(&(user_id.clone(), upload_id))
             .cloned())
     }
+
+    async fn record_received(
+        &self,
+        user_id: &UserId,
+        upload_id: UploadId,
+        facts: UploadFacts,
+    ) -> Result<(), StoreError> {
+        self.received
+            .lock()
+            .expect("in-memory store mutex poisoned")
+            .insert((user_id.clone(), upload_id), facts);
+        Ok(())
+    }
+
+    async fn get_received(
+        &self,
+        user_id: &UserId,
+        upload_id: UploadId,
+    ) -> Result<Option<UploadFacts>, StoreError> {
+        Ok(self
+            .received
+            .lock()
+            .expect("in-memory store mutex poisoned")
+            .get(&(user_id.clone(), upload_id))
+            .cloned())
+    }
 }
 
 impl crate::memory::resettable::Resettable for InMemoryUploadOutcomeStore {
@@ -108,6 +136,10 @@ impl crate::memory::resettable::Resettable for InMemoryUploadOutcomeStore {
             .expect("in-memory store mutex poisoned")
             .clear();
         self.progress
+            .lock()
+            .expect("in-memory store mutex poisoned")
+            .clear();
+        self.received
             .lock()
             .expect("in-memory store mutex poisoned")
             .clear();

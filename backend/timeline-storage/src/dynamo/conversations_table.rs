@@ -7,7 +7,9 @@
 //! upload's own terminal-outcome row (written once, by
 //! `record_outcome` -- see the migration plan's §V2a-revision for why there
 //! is no earlier, pending row), `CONV#<conversation_id>` for each
-//! conversation summary it eventually produces.
+//! conversation summary it eventually produces, and `RECEIVED#<upload_id>`
+//! for what `POST /uploads` learned about the file (its name, when it was
+//! uploaded and last written, the human's name).
 
 use crate::aws_failure::report;
 use std::collections::HashMap;
@@ -15,6 +17,7 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::types::AttributeValue;
 use aws_sdk_dynamodb::Client;
+use timeline_core::conversation_metadata::UploadFacts;
 use timeline_core::model::{ConversationId, ConversationName};
 use timeline_core::ports::conversations::{ConversationSummary, ConversationSummaryStore};
 use timeline_core::ports::errors::StoreError;
@@ -22,7 +25,8 @@ use timeline_core::ports::ids::{UploadId, UserId};
 use timeline_core::ports::uploads::{UploadOutcome, UploadOutcomeStore, UploadProgress};
 
 use super::attributes::{
-    invalid_data, optional_string, required_count, required_id_list, required_string,
+    invalid_data, json_attribute, optional_string, required_count, required_id_list, required_json,
+    required_string,
 };
 
 pub struct DynamoConversationsTable {
@@ -58,6 +62,11 @@ fn upload_sort_key(upload_id: UploadId) -> String {
 /// outcome row is never touched before processing finishes.
 fn progress_sort_key(upload_id: UploadId) -> String {
     format!("PROGRESS#{upload_id}")
+}
+
+/// What `POST /uploads` recorded about the file, read back by processing.
+fn received_sort_key(upload_id: UploadId) -> String {
+    format!("RECEIVED#{upload_id}")
 }
 
 fn conversation_sort_key(conversation_id: ConversationId) -> String {
@@ -223,25 +232,78 @@ impl UploadOutcomeStore for DynamoConversationsTable {
             last_error: optional_string(&item, "last_error")?.map(str::to_string),
         }))
     }
+
+    async fn record_received(
+        &self,
+        user_id: &UserId,
+        upload_id: UploadId,
+        facts: UploadFacts,
+    ) -> Result<(), StoreError> {
+        self.client
+            .put_item()
+            .table_name(&self.table_name)
+            .item("pk", AttributeValue::S(user_id.to_string()))
+            .item("sk", AttributeValue::S(received_sort_key(upload_id)))
+            .item("facts", json_attribute(&facts))
+            .send()
+            .await
+            .map_err(backend_error("DynamoDB.PutItem"))?;
+        Ok(())
+    }
+
+    async fn get_received(
+        &self,
+        user_id: &UserId,
+        upload_id: UploadId,
+    ) -> Result<Option<UploadFacts>, StoreError> {
+        // Strongly consistent: processing reads this right after
+        // `POST /uploads` wrote it (see `get_progress`).
+        let output = self
+            .client
+            .get_item()
+            .table_name(&self.table_name)
+            .key("pk", AttributeValue::S(user_id.to_string()))
+            .key("sk", AttributeValue::S(received_sort_key(upload_id)))
+            .consistent_read(true)
+            .send()
+            .await
+            .map_err(backend_error("DynamoDB.GetItem"))?;
+        output
+            .item
+            .map(|item| required_json(&item, "facts"))
+            .transpose()
+    }
 }
 
 fn conversation_summary_from_item(
     conversation_id: ConversationId,
     item: &HashMap<String, AttributeValue>,
 ) -> Result<ConversationSummary, StoreError> {
-    let upload_id_str = required_string(item, "upload_id")?;
-    let upload_id = UploadId(
-        upload_id_str
-            .parse()
-            .map_err(|e| invalid_data(format!("bad upload_id: {e}")))?,
-    );
     let name = required_string(item, "name")?.to_string();
     let message_count = required_count(item, "message_count")?;
+    // A row written before conversations had metadata (2026-10-05) has an
+    // `upload_id` and no `source`. Nothing it holds says what its file was
+    // called or when it came, and inventing those would show made-up facts
+    // as real, so it is refused with a message saying why.
+    if !item.contains_key("source") && item.contains_key("upload_id") {
+        return Err(invalid_data(format!(
+            "conversation {conversation_id} was stored before conversations had metadata \
+             (plan 2026-10-05-screen-flow.md); it has no source file, so it must be \
+             uploaded again after the old rows are cleared"
+        )));
+    }
     Ok(ConversationSummary {
         conversation_id,
-        upload_id,
         name: ConversationName(name),
+        source: required_json(item, "source")?,
+        additions: required_json(item, "additions")?,
         message_count,
+        message_span: required_json(item, "message_span")?,
+        participants: required_json(item, "participants")?,
+        medium: required_json(item, "medium")?,
+        details_origin: required_json(item, "details_origin")?,
+        span: required_json(item, "span")?,
+        span_origin: required_json(item, "span_origin")?,
     })
 }
 
@@ -324,15 +386,19 @@ impl ConversationSummaryStore for DynamoConversationsTable {
                 "sk",
                 AttributeValue::S(conversation_sort_key(summary.conversation_id)),
             )
-            .item(
-                "upload_id",
-                AttributeValue::S(summary.upload_id.to_string()),
-            )
             .item("name", AttributeValue::S(summary.name.0))
+            .item("source", json_attribute(&summary.source))
+            .item("additions", json_attribute(&summary.additions))
             .item(
                 "message_count",
                 AttributeValue::N(summary.message_count.to_string()),
             )
+            .item("message_span", json_attribute(&summary.message_span))
+            .item("participants", json_attribute(&summary.participants))
+            .item("medium", json_attribute(&summary.medium))
+            .item("details_origin", json_attribute(&summary.details_origin))
+            .item("span", json_attribute(&summary.span))
+            .item("span_origin", json_attribute(&summary.span_origin))
             .send()
             .await
             .map_err(backend_error("DynamoDB.PutItem"))?;

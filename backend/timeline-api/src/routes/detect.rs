@@ -21,20 +21,18 @@
 //! arbitrarily ordered list would be free to skip or repeat conversations, so
 //! the order is pinned here rather than assumed.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::extract::State;
 use axum::Json;
 use serde::{Deserialize, Serialize};
-use timeline_core::model::{Conversation, ConversationId};
 use timeline_core::ports::conversations::ConversationSummaryStore;
 use timeline_core::ports::message_flags::AutoFlagWriter;
 use timeline_core::ports::object_store::ObjectStore;
-use timeline_core::ports::uploads::raw_object_key;
-use timeline_core::{extract_text, unwrap_uploaded_json, Sender};
+use timeline_core::{extract_text, Sender};
 
 use crate::auth_extractor::AuthenticatedUser;
+use crate::conversation_rebuild::rebuild_conversations;
 use crate::error::ApiError;
 use crate::processing::heuristic_flags;
 use crate::request_record::note;
@@ -63,13 +61,6 @@ pub struct DetectResponse {
     pub next_offset: Option<usize>,
 }
 
-fn integrity_error(context: &str, e: impl std::fmt::Display) -> ApiError {
-    // Anything reachable here parsed successfully at upload time, so a
-    // failure now means previously-good stored data stopped being good -- a
-    // genuine internal fault, not a user-facing input problem.
-    ApiError::Internal(format!("{context}: {e}"))
-}
-
 pub async fn detect(
     AuthenticatedUser(user_id): AuthenticatedUser,
     State(object_store): State<Arc<dyn ObjectStore>>,
@@ -90,36 +81,11 @@ pub async fn detect(
         .take(limit)
         .collect();
 
-    // Parse each distinct upload once, even when several of this window's
-    // conversations came from the same one.
-    let mut upload_ids: Vec<_> = window.iter().map(|s| s.upload_id).collect();
-    upload_ids.sort_by_key(|id| id.0);
-    upload_ids.dedup();
-
-    let mut conversations_by_id: HashMap<ConversationId, Conversation> = HashMap::new();
-    for upload_id in upload_ids {
-        let key = raw_object_key(&user_id, upload_id);
-        let raw_bytes = object_store.get(&key).await?;
-        let raw_text = String::from_utf8(raw_bytes)
-            .map_err(|e| integrity_error("stored upload was not valid UTF-8", e))?;
-        let parsed = unwrap_uploaded_json(&raw_text)
-            .map_err(|e| integrity_error("stored upload no longer parses", e))?;
-        for conversation in parsed.conversations {
-            conversations_by_id.insert(conversation.uuid, conversation);
-        }
-    }
+    let conversations = rebuild_conversations(object_store.as_ref(), &user_id, &window).await?;
 
     let conversations_processed = window.len();
     let mut messages_detected = 0;
-    for summary in window {
-        let conversation = conversations_by_id
-            .remove(&summary.conversation_id)
-            .ok_or_else(|| {
-                integrity_error(
-                    "conversation summary has no matching parsed conversation",
-                    summary.conversation_id,
-                )
-            })?;
+    for (summary, conversation) in window.iter().zip(conversations) {
         for message in &conversation.chat_messages {
             if message.sender != Sender::Human {
                 continue;

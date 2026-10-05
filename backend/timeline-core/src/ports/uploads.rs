@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use super::errors::StoreError;
 use super::ids::{UploadId, UserId};
+use crate::conversation_metadata::UploadFacts;
 use crate::model::ConversationId;
 
 /// The raw upload's object-store key is a pure function of `(user_id,
@@ -28,6 +29,18 @@ use crate::model::ConversationId;
 /// drift out of sync with each other.
 pub fn raw_object_key(user_id: &UserId, upload_id: UploadId) -> String {
     format!("raw/{user_id}/{upload_id}.json")
+}
+
+/// Where the messages a later file added to an earlier conversation are
+/// kept: `additions/{user_id}/{conversation_id}/{upload_id}.json`, a JSON
+/// list of messages (plan `2026-10-05-screen-flow.md` §8b-2). Like
+/// [`raw_object_key`], recomputed rather than stored.
+pub fn addition_object_key(
+    user_id: &UserId,
+    conversation_id: ConversationId,
+    upload_id: UploadId,
+) -> String {
+    format!("additions/{user_id}/{conversation_id}/{upload_id}.json")
 }
 
 /// The inverse of [`raw_object_key`]: the user and upload a raw upload's key
@@ -110,4 +123,21 @@ pub trait UploadOutcomeStore: Send + Sync {
         user_id: &UserId,
         upload_id: UploadId,
     ) -> Result<Option<UploadProgress>, StoreError>;
+
+    /// Records what `POST /uploads` learned about the file, for processing
+    /// to read back (plan `2026-10-05-screen-flow.md` §8b). Written once,
+    /// before the file's upload address is handed out.
+    async fn record_received(
+        &self,
+        user_id: &UserId,
+        upload_id: UploadId,
+        facts: UploadFacts,
+    ) -> Result<(), StoreError>;
+
+    /// `None` when `POST /uploads` never recorded this upload.
+    async fn get_received(
+        &self,
+        user_id: &UserId,
+        upload_id: UploadId,
+    ) -> Result<Option<UploadFacts>, StoreError>;
 }

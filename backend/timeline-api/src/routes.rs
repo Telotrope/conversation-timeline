@@ -9,4 +9,5 @@ pub mod dev_login;
 pub mod dev_reset;
 pub mod export;
 pub mod flags;
+pub mod metadata;
 pub mod uploads;

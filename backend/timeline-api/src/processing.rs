@@ -23,22 +23,28 @@
 
 use std::fmt;
 
+use timeline_core::conversation_metadata::{guess_summary, message_span, MetadataOrigin};
 use timeline_core::flags::anger::detect_angry;
 use timeline_core::flags::caps::has_emphasis_caps;
 use timeline_core::flags::criticism::detect_critical;
-use timeline_core::model::{ConversationId, MessageId, Sender};
+use timeline_core::model::{ChatMessage, Conversation, ConversationId, MessageId, Sender};
 use timeline_core::ports::conversations::{ConversationSummary, ConversationSummaryStore};
 use timeline_core::ports::errors::{ObjectStoreError, StoreError};
 use timeline_core::ports::ids::{UploadId, UserId};
 use timeline_core::ports::message_flags::{FlagOverrides, FlagSet, UserFlagWriter};
 use timeline_core::ports::object_store::ObjectStore;
-use timeline_core::ports::uploads::{raw_object_key, UploadOutcome, UploadOutcomeStore};
+use timeline_core::ports::uploads::{
+    addition_object_key, raw_object_key, UploadOutcome, UploadOutcomeStore,
+};
 use timeline_core::{unwrap_uploaded_json, FormatError};
 
 use crate::request_record::note;
 
 #[derive(Debug)]
 pub enum ProcessingError {
+    /// `POST /uploads` never recorded this upload, so its file name, upload
+    /// time and human name are unknown. Retrying can't help.
+    NoUploadRecord,
     RawObjectNotUtf8(std::string::FromUtf8Error),
     Format(FormatError),
     Store(StoreError),
@@ -75,6 +81,12 @@ pub enum ProcessingError {
 impl fmt::Display for ProcessingError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            ProcessingError::NoUploadRecord => {
+                write!(
+                    f,
+                    "there is no record of this upload being started (POST /uploads)"
+                )
+            }
             ProcessingError::RawObjectNotUtf8(e) => {
                 write!(f, "uploaded file was not valid UTF-8: {e}")
             }
@@ -114,6 +126,7 @@ impl fmt::Display for ProcessingError {
 impl std::error::Error for ProcessingError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            ProcessingError::NoUploadRecord => None,
             ProcessingError::RawObjectNotUtf8(e) => Some(e),
             ProcessingError::Format(e) => Some(e),
             ProcessingError::Store(e) => Some(e),
@@ -250,27 +263,66 @@ pub async fn process_upload(
             })?;
     }
 
+    // Read only now, after the file has been read and checked, so a file
+    // that hasn't arrived, or isn't an export, is reported as that rather
+    // than as a missing record.
+    let Some(facts) = upload_outcome_store
+        .get_received(user_id, upload_id)
+        .await?
+    else {
+        upload_outcome_store
+            .record_outcome(
+                user_id,
+                upload_id,
+                UploadOutcome::Failed {
+                    reason: ProcessingError::NoUploadRecord.to_string(),
+                },
+            )
+            .await?;
+        return Err(ProcessingError::NoUploadRecord);
+    };
     let total = parsed.conversations.len();
     note("conversations", total);
     let mut conversation_ids = Vec::with_capacity(total);
+    let mut report = MergeReport::default();
     for (index, conversation) in parsed.conversations.iter().enumerate() {
-        let summary = ConversationSummary {
+        let saving = |source| ProcessingError::SavingSummary {
+            number: index + 1,
+            total,
             conversation_id: conversation.uuid,
-            upload_id,
-            name: conversation.name.clone(),
-            message_count: conversation.chat_messages.len(),
+            source,
         };
-        conversation_summary_store
-            .put(user_id, summary)
+        let summary = match conversation_summary_store
+            .get(user_id, conversation.uuid)
             .await
-            .map_err(|source| ProcessingError::SavingSummary {
-                number: index + 1,
-                total,
-                conversation_id: conversation.uuid,
-                source,
-            })?;
+            .map_err(saving)?
+        {
+            None => {
+                report.new += 1;
+                Some(guess_summary(conversation, upload_id, &facts))
+            }
+            Some(stored) => {
+                report.already_present += 1;
+                merge_into(
+                    object_store,
+                    user_id,
+                    upload_id,
+                    conversation,
+                    stored,
+                    &mut report,
+                )
+                .await?
+            }
+        };
+        if let Some(summary) = summary {
+            conversation_summary_store
+                .put(user_id, summary)
+                .await
+                .map_err(saving)?;
+        }
         conversation_ids.push(conversation.uuid);
     }
+    report.note();
 
     upload_outcome_store
         .record_outcome(
@@ -280,4 +332,112 @@ pub async fn process_upload(
         )
         .await?;
     Ok(())
+}
+
+/// What processing a file did to conversations already stored (plan
+/// `2026-10-05-screen-flow.md` §8b-2), for the run's log line.
+#[derive(Default)]
+struct MergeReport {
+    new: usize,
+    already_present: usize,
+    gained_messages: usize,
+    earliest_added: Option<chrono::DateTime<chrono::Utc>>,
+    latest_added: Option<chrono::DateTime<chrono::Utc>>,
+    /// Conversations that, after the merge, hold fewer messages than this
+    /// file's copy of them: a sign the timeframe rule missed messages inside
+    /// the stored range (plan C18).
+    fewer_than_file: usize,
+}
+
+impl MergeReport {
+    /// Logged only when the file met conversations already stored; for a
+    /// file of only new conversations every count would just repeat
+    /// `conversations`.
+    fn note(&self) {
+        if self.already_present == 0 {
+            return;
+        }
+        note("conversations_new", self.new);
+        note("conversations_already_present", self.already_present);
+        note("conversations_gained_messages", self.gained_messages);
+        if let (Some(earliest), Some(latest)) = (self.earliest_added, self.latest_added) {
+            note("earliest_added_message", earliest.to_rfc3339());
+            note("latest_added_message", latest.to_rfc3339());
+        }
+        if self.fewer_than_file > 0 {
+            note("conversations_fewer_than_file", self.fewer_than_file);
+        }
+    }
+}
+
+/// A conversation this user already has, met again in a later file. Only
+/// the messages timed outside the stored conversation's message range are
+/// added (the user's rule, plan §8b-2 and Q18); stored messages are never
+/// compared with the file's. The added messages are stored on their own,
+/// so nothing has to re-read this whole file to rebuild the conversation.
+/// Returns the record to save, or `None` when nothing changed.
+///
+/// A file already recorded on the conversation (as its source or an
+/// addition) is a repeat of an earlier processing attempt of this same
+/// upload, retried on AWS, and is skipped so its messages are never added
+/// twice.
+async fn merge_into(
+    object_store: &dyn ObjectStore,
+    user_id: &UserId,
+    upload_id: UploadId,
+    conversation: &Conversation,
+    mut stored: ConversationSummary,
+    report: &mut MergeReport,
+) -> Result<Option<ConversationSummary>, ProcessingError> {
+    if stored.source.upload_id == upload_id || stored.additions.contains(&upload_id) {
+        return Ok(None);
+    }
+    let added: Vec<&ChatMessage> = conversation
+        .chat_messages
+        .iter()
+        .filter(|m| match &stored.message_span {
+            None => true,
+            Some(range) => {
+                let at = m.created_at.fixed_offset();
+                at < range.start() || at > range.end()
+            }
+        })
+        .collect();
+    let count_after = stored.message_count + added.len();
+    if count_after < conversation.chat_messages.len() {
+        report.fewer_than_file += 1;
+    }
+    if added.is_empty() {
+        return Ok(None);
+    }
+    let key = addition_object_key(user_id, stored.conversation_id, upload_id);
+    // Unreachable backstop: a list of messages that were just parsed from
+    // JSON serializes back to JSON.
+    let bytes = serde_json::to_vec(&added).expect("parsed messages serialize to JSON");
+    object_store.put(&key, bytes).await?;
+
+    let added_conversation = Conversation {
+        uuid: conversation.uuid,
+        name: conversation.name.clone(),
+        chat_messages: added.into_iter().cloned().collect(),
+        extra: serde_json::Map::new(),
+    };
+    // Unreachable backstop: `added` is non-empty, so it has a span.
+    let added_span = message_span(&added_conversation).expect("added messages have times");
+    report.gained_messages += 1;
+    let start = added_span.start().with_timezone(&chrono::Utc);
+    let end = added_span.end().with_timezone(&chrono::Utc);
+    report.earliest_added = Some(report.earliest_added.map_or(start, |e| e.min(start)));
+    report.latest_added = Some(report.latest_added.map_or(end, |l| l.max(end)));
+
+    stored.additions.push(upload_id);
+    stored.message_count = count_after;
+    stored.message_span = Some(match &stored.message_span {
+        None => added_span,
+        Some(range) => range.widened_to(&added_span),
+    });
+    if stored.span_origin == MetadataOrigin::Guessed {
+        stored.span = stored.span.widened_to(&added_span);
+    }
+    Ok(Some(stored))
 }

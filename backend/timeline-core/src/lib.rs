@@ -4,9 +4,11 @@
 //! [docs/plans/2026-09-09-rust-aws-backend-migration.md](../../docs/plans/2026-09-09-rust-aws-backend-migration.md)
 //! for the version this crate implements (V1) and the architecture it's part of.
 
+pub mod conversation_metadata;
 pub mod dedup;
 pub mod flags;
 pub mod format;
+pub mod labels;
 pub mod model;
 pub mod ports;
 pub mod sessions;

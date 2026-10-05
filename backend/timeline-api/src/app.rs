@@ -10,7 +10,8 @@ use axum::Router;
 use crate::dev_state::DevState;
 use crate::routes::activity::{self, ActivityState};
 use crate::routes::{
-    conversations, detect, dev_local_storage, dev_login, dev_reset, export, flags, uploads,
+    conversations, detect, dev_local_storage, dev_login, dev_reset, export, flags, metadata,
+    uploads,
 };
 use crate::state::AppState;
 
@@ -18,9 +19,17 @@ use crate::state::AppState;
 /// and the only router ever present in the Lambda build.
 pub fn build_router(state: AppState) -> Router {
     Router::new()
-        .route("/uploads", post(uploads::create_upload))
+        .route(
+            "/uploads",
+            post(uploads::create_upload).get(metadata::list_uploads),
+        )
         .route("/uploads/{upload_id}", get(uploads::upload_status))
+        .route("/uploads/{upload_id}/metadata", put(metadata::edit_upload))
         .route("/conversations", get(conversations::list_conversations))
+        .route(
+            "/conversations/{conversation_id}/metadata",
+            put(metadata::edit_conversation),
+        )
         .route(
             "/conversations/{conversation_id}/messages/{message_id}/flags",
             get(flags::get_flags).patch(flags::patch_flags),

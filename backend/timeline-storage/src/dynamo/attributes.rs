@@ -158,3 +158,31 @@ pub(crate) fn optional_string<'a>(
             .map_err(|found| wrong_type(item, name, "a string", found)),
     }
 }
+
+/// An attribute holding JSON text written by `json_attribute`, read back as
+/// `T`. The error says where the text stopped making sense (line, column and
+/// kind of problem), never what it contained: these values hold names
+/// people typed.
+pub(crate) fn required_json<T: serde::de::DeserializeOwned>(
+    item: &Item,
+    name: &str,
+) -> Result<T, StoreError> {
+    let text = required_string(item, name)?;
+    serde_json::from_str(text).map_err(|e| {
+        invalid_data(format!(
+            "{}: attribute `{name}` is not the expected JSON ({:?} problem at line {}, column {})",
+            row_label(item),
+            e.classify(),
+            e.line(),
+            e.column()
+        ))
+    })
+}
+
+/// `value` as JSON text, for `required_json` to read back.
+pub(crate) fn json_attribute<T: serde::Serialize>(value: &T) -> AttributeValue {
+    // Unreachable backstop: every type stored this way is plain data
+    // (strings, numbers, dates, lists and tagged variants), which
+    // serde_json always serializes.
+    AttributeValue::S(serde_json::to_string(value).expect("plain data serializes to JSON"))
+}

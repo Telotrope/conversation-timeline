@@ -1,12 +1,14 @@
 //! `POST /uploads` -- issues a presigned S3 PUT URL, per the migration plan
 //! section 1.6. The client then `PUT`s its `conversations.json` straight to
 //! S3, never through this Lambda -- that's what keeps a 60MB export well
-//! clear of API Gateway's 10MB synchronous payload limit. Nothing is
-//! written to any storage port here: per the migration plan's
-//! §V2a-revision, the raw object's key is a pure function of
-//! `(user_id, upload_id)` (see
-//! [`timeline_core::ports::uploads::raw_object_key`]), so there is nothing
-//! to persist before the client's PUT lands.
+//! clear of API Gateway's 10MB synchronous payload limit. The raw object's
+//! key is a pure function of `(user_id, upload_id)` (see
+//! [`timeline_core::ports::uploads::raw_object_key`]), so the key itself is
+//! never stored. What is stored, before the address is handed out, is what
+//! the file itself can't say: its name, when it was last written, the
+//! upload time and the name to give the human, which processing uses to
+//! fill in each conversation's guessed metadata (plan
+//! `docs/plans/2026-10-05-screen-flow.md` §8b-8c).
 //!
 //! `GET /uploads/{upload_id}` tells the page whether processing has
 //! finished. On AWS, processing runs in a separate Lambda once the file lands
@@ -16,9 +18,13 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::Json;
-use serde::Serialize;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use timeline_core::conversation_metadata::UploadFacts;
+use timeline_core::labels::{FileName, PersonName};
 use timeline_core::ports::ids::UploadId;
 use timeline_core::ports::object_store::ObjectStore;
 use timeline_core::ports::uploads::{raw_object_key, UploadOutcome, UploadOutcomeStore};
@@ -40,14 +46,45 @@ pub struct CreateUploadResponse {
     pub upload_url: String,
 }
 
+/// The body of `POST /uploads`. The names are cleaned as they are read
+/// (`timeline_core::labels`); an empty one is refused.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateUploadRequest {
+    pub file_name: FileName,
+    /// The browser's last-written time for the file, when it gives one.
+    #[serde(default)]
+    pub file_written_at: Option<DateTime<Utc>>,
+    /// The signed-in account, which the guessed metadata names as the human.
+    pub human_name: PersonName,
+}
+
 pub async fn create_upload(
     AuthenticatedUser(user_id): AuthenticatedUser,
     State(object_store): State<Arc<dyn ObjectStore>>,
+    State(upload_outcome_store): State<Arc<dyn UploadOutcomeStore>>,
+    body: Result<Json<CreateUploadRequest>, JsonRejection>,
 ) -> Result<Json<CreateUploadResponse>, ApiError> {
+    // axum would answer a malformed body with its own 422; this route
+    // answers 400 with serde's explanation, as the flag route does.
+    let Json(request) = body.map_err(|rejection| ApiError::BadRequest(rejection.body_text()))?;
     let upload_id = UploadId(uuid::Uuid::new_v4());
     // For this request's log line (crate::request_log).
     note("upload_id", upload_id.0.to_string());
     let key = raw_object_key(&user_id, upload_id);
+
+    upload_outcome_store
+        .record_received(
+            &user_id,
+            upload_id,
+            UploadFacts {
+                file_name: request.file_name,
+                uploaded_at: Utc::now(),
+                file_written_at: request.file_written_at,
+                human_name: request.human_name,
+            },
+        )
+        .await?;
 
     let upload_url = object_store.presign_put(&key, UPLOAD_URL_TTL).await?;
 

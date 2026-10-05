@@ -154,7 +154,8 @@ async fn handle_record(
     match result {
         Ok(()) => Ok(()),
         Err(
-            e @ (ProcessingError::RawObjectNotUtf8(_)
+            e @ (ProcessingError::NoUploadRecord
+            | ProcessingError::RawObjectNotUtf8(_)
             | ProcessingError::Format(_)
             | ProcessingError::ReviewField { .. }),
         ) => {

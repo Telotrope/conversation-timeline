@@ -15,14 +15,14 @@ use axum::extract::State;
 use axum::Json;
 use serde::Serialize;
 use serde_json::json;
-use timeline_core::model::{Conversation, ConversationId, MessageId};
+use timeline_core::model::MessageId;
 use timeline_core::ports::conversations::ConversationSummaryStore;
 use timeline_core::ports::message_flags::MessageFlagsReader;
 use timeline_core::ports::object_store::ObjectStore;
-use timeline_core::ports::uploads::raw_object_key;
-use timeline_core::{unwrap_uploaded_json, Sender};
+use timeline_core::Sender;
 
 use crate::auth_extractor::AuthenticatedUser;
+use crate::conversation_rebuild::rebuild_conversations;
 use crate::error::ApiError;
 use crate::flag_handles::{FlagHandle, FlagHandleKey};
 use crate::request_record::note;
@@ -58,39 +58,11 @@ pub async fn export(
 ) -> Result<Json<ExportResponse>, ApiError> {
     let summaries = conversation_summary_store.list_for_user(&user_id).await?;
 
-    let mut upload_ids: Vec<_> = summaries.iter().map(|s| s.upload_id).collect();
-    upload_ids.sort_by_key(|id| id.0);
-    upload_ids.dedup();
-
-    // Re-parse each distinct upload's raw bytes once, even if it produced
-    // several conversations, rather than refetching per conversation. The
-    // raw object's key is recomputed rather than read back from storage --
-    // see `raw_object_key`'s doc comment and the migration plan's
-    // §V2a-revision.
-    let mut conversations_by_id: HashMap<ConversationId, Conversation> = HashMap::new();
-    for upload_id in upload_ids {
-        let key = raw_object_key(&user_id, upload_id);
-        let raw_bytes = object_store.get(&key).await?;
-        let raw_text = String::from_utf8(raw_bytes)
-            .map_err(|e| integrity_error("stored upload was not valid UTF-8", e))?;
-        let parsed = unwrap_uploaded_json(&raw_text)
-            .map_err(|e| integrity_error("stored upload no longer parses", e))?;
-        for conversation in parsed.conversations {
-            conversations_by_id.insert(conversation.uuid, conversation);
-        }
-    }
+    let conversations = rebuild_conversations(object_store.as_ref(), &user_id, &summaries).await?;
 
     let mut annotated = Vec::with_capacity(summaries.len());
     let mut flag_handles = HashMap::new();
-    for summary in &summaries {
-        let mut conversation = conversations_by_id
-            .remove(&summary.conversation_id)
-            .ok_or_else(|| {
-                integrity_error(
-                    "conversation summary has no matching parsed conversation",
-                    summary.conversation_id,
-                )
-            })?;
+    for (summary, mut conversation) in summaries.iter().zip(conversations) {
         for message in &mut conversation.chat_messages {
             if message.sender != Sender::Human {
                 continue;
