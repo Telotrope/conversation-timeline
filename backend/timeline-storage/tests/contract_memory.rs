@@ -14,6 +14,9 @@ mod upload_outcome_contract;
 #[path = "support/upload_progress_contract.rs"]
 mod upload_progress_contract;
 #[macro_use]
+#[path = "support/upload_received_contract.rs"]
+mod upload_received_contract;
+#[macro_use]
 #[path = "support/conversation_summary_contract.rs"]
 mod conversation_summary_contract;
 #[macro_use]
@@ -44,6 +47,13 @@ mod upload_progress {
         (super::InMemoryUploadOutcomeStore::new(), ())
     }
     upload_progress_contract!(make);
+}
+
+mod upload_received {
+    async fn make() -> (super::InMemoryUploadOutcomeStore, ()) {
+        (super::InMemoryUploadOutcomeStore::new(), ())
+    }
+    upload_received_contract!(make);
 }
 
 mod conversation_summaries {

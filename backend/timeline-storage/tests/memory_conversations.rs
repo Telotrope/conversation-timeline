@@ -12,9 +12,32 @@ fn user(id: &str) -> UserId {
 fn summary(n: u128, name: &str) -> ConversationSummary {
     ConversationSummary {
         conversation_id: ConversationId(uuid::Uuid::from_u128(n)),
-        upload_id: UploadId(uuid::Uuid::from_u128(1)),
         name: ConversationName(name.to_string()),
+        source: timeline_core::conversation_metadata::SourceFile {
+            upload_id: UploadId(uuid::Uuid::from_u128(1)),
+            file_name: timeline_core::labels::FileName::parse("conversations.json").unwrap(),
+            uploaded_at: chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+            file_written_at: None,
+        },
+        additions: Vec::new(),
         message_count: 3,
+        message_span: None,
+        participants: timeline_core::conversation_metadata::Participants::new(vec![
+            timeline_core::conversation_metadata::Participant::Claude,
+        ])
+        .unwrap(),
+        medium: timeline_core::conversation_metadata::ConversationMedium::Typed,
+        details_origin: timeline_core::conversation_metadata::MetadataOrigin::Guessed,
+        span: timeline_core::conversation_metadata::ConversationSpan::new(
+            chrono::DateTime::from_timestamp(1_700_000_000, 0)
+                .unwrap()
+                .fixed_offset(),
+            chrono::DateTime::from_timestamp(1_700_003_600, 0)
+                .unwrap()
+                .fixed_offset(),
+        )
+        .unwrap(),
+        span_origin: timeline_core::conversation_metadata::MetadataOrigin::Guessed,
     }
 }
 

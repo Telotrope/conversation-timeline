@@ -90,6 +90,7 @@ async fn a_ready_upload_logs_what_was_read_and_stored_on_its_own_channel() {
         .put(&key, FIXTURE.as_bytes().to_vec())
         .await
         .unwrap();
+    record_upload_facts(stores.upload_outcome_store.as_ref(), &key).await;
 
     let (logged, runs) = process(&stores, notification(&[Some(&key)]), EventLogging::Off).await;
 
@@ -119,6 +120,7 @@ async fn with_notification_logging_on_both_channels_get_their_own_line() {
         .put(&key, FIXTURE.as_bytes().to_vec())
         .await
         .unwrap();
+    record_upload_facts(stores.upload_outcome_store.as_ref(), &key).await;
 
     let (logged, runs) = process(&stores, notification(&[Some(&key)]), EventLogging::On).await;
 
@@ -235,4 +237,27 @@ fn login_settings_read_the_three_cognito_settings_and_name_any_missing() {
             "AWS_REGION"
         ])
     );
+}
+
+/// Records what `POST /uploads` would have recorded, for a file put
+/// straight into storage: processing needs the file's name, upload time and
+/// human name (plan 2026-10-05-screen-flow.md §8b).
+async fn record_upload_facts(
+    store: &dyn timeline_core::ports::uploads::UploadOutcomeStore,
+    key: &str,
+) {
+    let (user, upload) = timeline_core::ports::uploads::parse_raw_object_key(key).unwrap();
+    store
+        .record_received(
+            &user,
+            upload,
+            timeline_core::conversation_metadata::UploadFacts {
+                file_name: timeline_core::labels::FileName::parse("conversations.json").unwrap(),
+                uploaded_at: chrono::Utc::now(),
+                file_written_at: None,
+                human_name: timeline_core::labels::PersonName::parse("Alice").unwrap(),
+            },
+        )
+        .await
+        .unwrap();
 }

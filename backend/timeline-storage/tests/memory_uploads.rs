@@ -126,3 +126,24 @@ async fn outcomes_are_isolated_per_user() {
         "bob must not see alice's upload outcome, even with the same id"
     );
 }
+
+#[tokio::test]
+async fn reset_forgets_recorded_upload_facts() {
+    use timeline_storage::memory::resettable::Resettable;
+    let store = InMemoryUploadOutcomeStore::new();
+    let facts = timeline_core::conversation_metadata::UploadFacts {
+        file_name: timeline_core::labels::FileName::parse("a.json").unwrap(),
+        uploaded_at: chrono::Utc::now(),
+        file_written_at: None,
+        human_name: timeline_core::labels::PersonName::parse("Ada").unwrap(),
+    };
+    store
+        .record_received(&user("alice"), upload(1), facts)
+        .await
+        .unwrap();
+    store.reset();
+    assert_eq!(
+        store.get_received(&user("alice"), upload(1)).await.unwrap(),
+        None
+    );
+}

@@ -203,6 +203,21 @@ impl UploadOutcomeStore for OutcomesFail {
     ) -> Result<Option<UploadProgress>, StoreError> {
         unreachable!("not used by handle_failed_invocation")
     }
+    async fn record_received(
+        &self,
+        _: &UserId,
+        _: UploadId,
+        _: timeline_core::conversation_metadata::UploadFacts,
+    ) -> Result<(), StoreError> {
+        unreachable!("not used by handle_failed_invocation")
+    }
+    async fn get_received(
+        &self,
+        _: &UserId,
+        _: UploadId,
+    ) -> Result<Option<timeline_core::conversation_metadata::UploadFacts>, StoreError> {
+        unreachable!("not used by handle_failed_invocation")
+    }
 }
 
 #[tokio::test]

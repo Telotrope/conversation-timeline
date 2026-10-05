@@ -72,11 +72,13 @@ impl Harness {
         let object_store = InMemoryObjectStore::new();
         let key = raw_object_key(&user_id, upload_id);
         object_store.put(&key, raw.to_vec()).await.unwrap();
+        let upload_outcome_store = InMemoryUploadOutcomeStore::new();
+        record_upload_facts(&upload_outcome_store, &key).await;
         Harness {
             user_id,
             upload_id,
             object_store,
-            upload_outcome_store: InMemoryUploadOutcomeStore::new(),
+            upload_outcome_store,
             conversation_summary_store: InMemoryConversationSummaryStore::new(),
             flags_store: InMemoryMessageFlagsStore::new(),
         }
@@ -342,4 +344,27 @@ async fn an_unreadable_review_fails_the_upload_and_stores_nothing() {
         .await
         .unwrap()
         .is_empty());
+}
+
+/// Records what `POST /uploads` would have recorded, for a file put
+/// straight into storage: processing needs the file's name, upload time and
+/// human name (plan 2026-10-05-screen-flow.md §8b).
+async fn record_upload_facts(
+    store: &dyn timeline_core::ports::uploads::UploadOutcomeStore,
+    key: &str,
+) {
+    let (user, upload) = timeline_core::ports::uploads::parse_raw_object_key(key).unwrap();
+    store
+        .record_received(
+            &user,
+            upload,
+            timeline_core::conversation_metadata::UploadFacts {
+                file_name: timeline_core::labels::FileName::parse("conversations.json").unwrap(),
+                uploaded_at: chrono::Utc::now(),
+                file_written_at: None,
+                human_name: timeline_core::labels::PersonName::parse("Alice").unwrap(),
+            },
+        )
+        .await
+        .unwrap();
 }

@@ -124,7 +124,10 @@ async fn create_upload_returns_an_id_and_a_presigned_url() {
         .method("POST")
         .uri("/uploads")
         .header("Authorization", format!("Bearer {}", test_token("alice")))
-        .body(Body::empty())
+        .header("Content-Type", "application/json")
+        .body(Body::from(
+            r#"{"file_name":"conversations.json","human_name":"Alice"}"#,
+        ))
         .unwrap();
     let response = router.oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -213,7 +216,10 @@ async fn conversations_are_isolated_per_authenticated_user() {
         .method("POST")
         .uri("/uploads")
         .header("Authorization", format!("Bearer {}", test_token("alice")))
-        .body(Body::empty())
+        .header("Content-Type", "application/json")
+        .body(Body::from(
+            r#"{"file_name":"conversations.json","human_name":"Alice"}"#,
+        ))
         .unwrap();
     router.clone().oneshot(create).await.unwrap();
 
@@ -275,7 +281,10 @@ async fn a_failing_object_store_surfaces_as_a_500_not_a_panic_or_silent_success(
         .method("POST")
         .uri("/uploads")
         .header("Authorization", format!("Bearer {}", test_token("alice")))
-        .body(Body::empty())
+        .header("Content-Type", "application/json")
+        .body(Body::from(
+            r#"{"file_name":"conversations.json","human_name":"Alice"}"#,
+        ))
         .unwrap();
     let response = router.oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);

@@ -101,13 +101,23 @@ fn authed(method: &str, uri: &str, token: &str, body: Body) -> Request<Body> {
         .method(method)
         .uri(uri)
         .header("Authorization", format!("Bearer {token}"))
+        .header("Content-Type", "application/json")
         .body(body)
         .unwrap()
 }
 
 /// Starts an upload and PUTs `content` to its address; returns the id.
 async fn upload(router: &Router, token: &str, content: &str) -> String {
-    let (status, created) = send(router, authed("POST", "/uploads", token, Body::empty())).await;
+    let (status, created) = send(
+        router,
+        authed(
+            "POST",
+            "/uploads",
+            token,
+            Body::from(r#"{"file_name":"conversations.json","human_name":"Alice"}"#),
+        ),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let url = created["upload_url"].as_str().unwrap();
     let put = Request::builder()
@@ -138,7 +148,16 @@ async fn an_upload_with_no_outcome_yet_is_processing() {
     let router = local_router();
     let token = dev_login(&router, "alice").await;
     // Started but never PUT: nothing has processed it.
-    let (_, created) = send(&router, authed("POST", "/uploads", &token, Body::empty())).await;
+    let (_, created) = send(
+        &router,
+        authed(
+            "POST",
+            "/uploads",
+            &token,
+            Body::from(r#"{"file_name":"conversations.json","human_name":"Alice"}"#),
+        ),
+    )
+    .await;
     let id = created["upload_id"].as_str().unwrap();
     assert_eq!(
         status_of(&router, &token, id).await,

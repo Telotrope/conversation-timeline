@@ -31,8 +31,8 @@ use timeline_api::aws_settings::{AwsSettings, MissingSettings};
 use timeline_api::aws_state::{build_aws_state, fetch_jwks, AwsClients};
 use timeline_api::dev_only::{generate_dev_keypair, DEV_KEYPAIR};
 use timeline_api::flag_handles::FlagHandleKey;
-use timeline_core::model::{ConversationId, ConversationName};
-use timeline_core::ports::conversations::{ConversationSummary, ConversationSummaryStore};
+use timeline_core::model::ConversationId;
+use timeline_core::ports::conversations::ConversationSummaryStore;
 use timeline_core::ports::ids::{UploadId, UserId};
 use timeline_core::ports::object_store::ObjectStore;
 use timeline_core::ports::uploads::raw_object_key;
@@ -269,23 +269,27 @@ impl World {
             self.dynamodb.clone(),
             self.settings.conversations_table.as_str(),
         );
-        let parsed: Value = serde_json::from_str(FIXTURE).unwrap();
+        let facts = timeline_core::conversation_metadata::UploadFacts {
+            file_name: timeline_core::labels::FileName::parse("conversations.json").unwrap(),
+            uploaded_at: chrono::Utc::now(),
+            file_written_at: None,
+            human_name: timeline_core::labels::PersonName::parse(user).unwrap(),
+        };
+        let parsed = timeline_core::unwrap_uploaded_json(FIXTURE).unwrap();
         let mut ids = Vec::new();
-        for conversation in parsed.as_array().unwrap() {
-            let id = ConversationId(conversation["uuid"].as_str().unwrap().parse().unwrap());
+        for conversation in &parsed.conversations {
             table
                 .put(
                     &user_id,
-                    ConversationSummary {
-                        conversation_id: id,
+                    timeline_core::conversation_metadata::guess_summary(
+                        conversation,
                         upload_id,
-                        name: ConversationName(conversation["name"].as_str().unwrap().to_string()),
-                        message_count: conversation["chat_messages"].as_array().unwrap().len(),
-                    },
+                        &facts,
+                    ),
                 )
                 .await
                 .unwrap();
-            ids.push(id);
+            ids.push(conversation.uuid);
         }
         ids
     }

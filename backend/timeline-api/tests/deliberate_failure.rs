@@ -68,6 +68,7 @@ async fn stored_upload() -> (ProcessingStores, UserId, UploadId, String) {
         .put(&key, FIXTURE.as_bytes().to_vec())
         .await
         .unwrap();
+    record_upload_facts(stores.upload_outcome_store.as_ref(), &key).await;
     (stores, user, upload, key)
 }
 
@@ -159,4 +160,27 @@ fn the_template_switch_is_off_by_default_and_only_the_processing_function_reads_
         .next()
         .unwrap();
     assert!(processing.contains(setting));
+}
+
+/// Records what `POST /uploads` would have recorded, for a file put
+/// straight into storage: processing needs the file's name, upload time and
+/// human name (plan 2026-10-05-screen-flow.md §8b).
+async fn record_upload_facts(
+    store: &dyn timeline_core::ports::uploads::UploadOutcomeStore,
+    key: &str,
+) {
+    let (user, upload) = timeline_core::ports::uploads::parse_raw_object_key(key).unwrap();
+    store
+        .record_received(
+            &user,
+            upload,
+            timeline_core::conversation_metadata::UploadFacts {
+                file_name: timeline_core::labels::FileName::parse("conversations.json").unwrap(),
+                uploaded_at: chrono::Utc::now(),
+                file_written_at: None,
+                human_name: timeline_core::labels::PersonName::parse("Alice").unwrap(),
+            },
+        )
+        .await
+        .unwrap();
 }

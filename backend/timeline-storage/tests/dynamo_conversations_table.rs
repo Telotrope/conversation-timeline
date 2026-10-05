@@ -14,6 +14,9 @@ mod upload_outcome_contract;
 #[path = "support/upload_progress_contract.rs"]
 mod upload_progress_contract;
 #[macro_use]
+#[path = "support/upload_received_contract.rs"]
+mod upload_received_contract;
+#[macro_use]
 #[path = "support/conversation_summary_contract.rs"]
 mod conversation_summary_contract;
 #[path = "support/dynamodb_local.rs"]
@@ -50,6 +53,10 @@ mod upload_outcomes {
 
 mod upload_progress {
     upload_progress_contract!(super::make);
+}
+
+mod upload_received {
+    upload_received_contract!(super::make);
 }
 
 mod conversation_summaries {
@@ -98,9 +105,32 @@ async fn list_for_user_skips_upload_outcome_rows_in_the_same_table() {
         .unwrap();
     let summary = ConversationSummary {
         conversation_id: conversation(),
-        upload_id: upload(),
         name: ConversationName("only me".to_string()),
+        source: timeline_core::conversation_metadata::SourceFile {
+            upload_id: upload(),
+            file_name: timeline_core::labels::FileName::parse("conversations.json").unwrap(),
+            uploaded_at: chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+            file_written_at: None,
+        },
+        additions: Vec::new(),
         message_count: 3,
+        message_span: None,
+        participants: timeline_core::conversation_metadata::Participants::new(vec![
+            timeline_core::conversation_metadata::Participant::Claude,
+        ])
+        .unwrap(),
+        medium: timeline_core::conversation_metadata::ConversationMedium::Typed,
+        details_origin: timeline_core::conversation_metadata::MetadataOrigin::Guessed,
+        span: timeline_core::conversation_metadata::ConversationSpan::new(
+            chrono::DateTime::from_timestamp(1_700_000_000, 0)
+                .unwrap()
+                .fixed_offset(),
+            chrono::DateTime::from_timestamp(1_700_003_600, 0)
+                .unwrap()
+                .fixed_offset(),
+        )
+        .unwrap(),
+        span_origin: timeline_core::conversation_metadata::MetadataOrigin::Guessed,
     };
     ConversationSummaryStore::put(&table, &alice(), summary.clone())
         .await
@@ -198,9 +228,32 @@ async fn every_method_reports_a_missing_table_as_a_backend_error() {
     let table = DynamoConversationsTable::new(dynamodb_local::client(), "no-such-table");
     let summary = ConversationSummary {
         conversation_id: conversation(),
-        upload_id: upload(),
         name: ConversationName("x".to_string()),
+        source: timeline_core::conversation_metadata::SourceFile {
+            upload_id: upload(),
+            file_name: timeline_core::labels::FileName::parse("conversations.json").unwrap(),
+            uploaded_at: chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+            file_written_at: None,
+        },
+        additions: Vec::new(),
         message_count: 1,
+        message_span: None,
+        participants: timeline_core::conversation_metadata::Participants::new(vec![
+            timeline_core::conversation_metadata::Participant::Claude,
+        ])
+        .unwrap(),
+        medium: timeline_core::conversation_metadata::ConversationMedium::Typed,
+        details_origin: timeline_core::conversation_metadata::MetadataOrigin::Guessed,
+        span: timeline_core::conversation_metadata::ConversationSpan::new(
+            chrono::DateTime::from_timestamp(1_700_000_000, 0)
+                .unwrap()
+                .fixed_offset(),
+            chrono::DateTime::from_timestamp(1_700_003_600, 0)
+                .unwrap()
+                .fixed_offset(),
+        )
+        .unwrap(),
+        span_origin: timeline_core::conversation_metadata::MetadataOrigin::Guessed,
     };
     let failed = UploadOutcome::Failed {
         reason: "x".to_string(),
@@ -576,6 +629,145 @@ async fn progress_methods_report_a_missing_table_as_a_backend_error() {
     ));
     assert!(matches!(
         store.get_progress(&user, upload).await,
+        Err(StoreError::Backend(_))
+    ));
+}
+
+// ---- Conversation metadata (plan 2026-10-05-screen-flow.md §8a-8b) --------
+
+/// A record with every new field set to something other than its guess,
+/// so a field the adapter forgot to write or read would show.
+fn full_record() -> ConversationSummary {
+    use timeline_core::conversation_metadata::{
+        ConversationMedium, ConversationSpan, MetadataOrigin, Participant, Participants,
+        SourceFile, TranscriptionService,
+    };
+    use timeline_core::labels::{AiName, FileName, PersonName};
+    let at = |s: &str| chrono::DateTime::parse_from_rfc3339(s).unwrap();
+    ConversationSummary {
+        conversation_id: conversation(),
+        name: ConversationName("a meeting".to_string()),
+        source: SourceFile {
+            upload_id: upload(),
+            file_name: FileName::parse("meeting.json").unwrap(),
+            uploaded_at: at("2026-10-05T12:00:00Z").with_timezone(&chrono::Utc),
+            file_written_at: Some(at("2026-10-04T09:30:00Z").with_timezone(&chrono::Utc)),
+        },
+        additions: vec![
+            UploadId(uuid::Uuid::from_u128(101)),
+            UploadId(uuid::Uuid::from_u128(102)),
+        ],
+        message_count: 42,
+        message_span: Some(
+            ConversationSpan::new(
+                at("2026-10-01T10:00:00+00:00"),
+                at("2026-10-01T11:00:00+00:00"),
+            )
+            .unwrap(),
+        ),
+        participants: Participants::new(vec![
+            Participant::Human {
+                name: PersonName::parse("Ada").unwrap(),
+            },
+            Participant::OtherAi {
+                name: AiName::parse("Le Chat").unwrap(),
+            },
+        ])
+        .unwrap(),
+        medium: ConversationMedium::VirtualVoice {
+            transcription: TranscriptionService::MicrosoftTeams,
+        },
+        details_origin: MetadataOrigin::Confirmed,
+        span: ConversationSpan::new(
+            at("2026-10-01T12:00:00+02:00"),
+            at("2026-10-01T13:30:00+02:00"),
+        )
+        .unwrap(),
+        span_origin: MetadataOrigin::Confirmed,
+    }
+}
+
+#[tokio::test]
+async fn every_metadata_field_survives_a_round_trip() {
+    let (table, _keep) = make().await;
+    ConversationSummaryStore::put(&table, &alice(), full_record())
+        .await
+        .unwrap();
+    assert_eq!(
+        ConversationSummaryStore::get(&table, &alice(), conversation())
+            .await
+            .unwrap(),
+        Some(full_record())
+    );
+    assert_eq!(
+        table.list_for_user(&alice()).await.unwrap(),
+        vec![full_record()]
+    );
+}
+
+/// A row stored before conversations had metadata is refused, with a
+/// message saying why, rather than shown with made-up file facts.
+#[tokio::test]
+async fn a_row_from_before_metadata_is_refused_with_a_message_saying_why() {
+    let (table, raw, name) = make_with_raw_client().await;
+    put_raw(
+        &raw,
+        &name,
+        &conversation_row(&[
+            ("name", s("old chat")),
+            ("message_count", AttributeValue::N("2".to_string())),
+        ]),
+    )
+    .await;
+    assert_backend_error_mentions(
+        ConversationSummaryStore::get(&table, &alice(), conversation()).await,
+        &["stored before conversations had metadata", "uploaded again"],
+    );
+}
+
+/// A JSON attribute that doesn't parse says where it went wrong, never
+/// what it held: these attributes hold names people typed.
+#[tokio::test]
+async fn an_unreadable_json_attribute_is_named_without_its_contents() {
+    let (table, raw, name) = make_with_raw_client().await;
+    put_raw(
+        &raw,
+        &name,
+        &[
+            ("pk", s("alice")),
+            ("sk", s(&conversation_sk())),
+            ("name", s("chat")),
+            ("message_count", AttributeValue::N("2".to_string())),
+            ("source", s(r#"{"secret": "Ada Lovelace""#)),
+        ],
+    )
+    .await;
+    let err = ConversationSummaryStore::get(&table, &alice(), conversation())
+        .await
+        .unwrap_err();
+    let text = err.to_string();
+    assert!(
+        text.contains("`source`") && text.contains("line 1"),
+        "{text}"
+    );
+    assert!(!text.contains("Ada"), "{text}");
+}
+
+#[tokio::test]
+async fn upload_facts_report_a_missing_table_as_a_backend_error() {
+    let table = DynamoConversationsTable::new(dynamodb_local::client(), "no-such-table");
+    let facts = timeline_core::conversation_metadata::UploadFacts {
+        file_name: timeline_core::labels::FileName::parse("a.json").unwrap(),
+        uploaded_at: chrono::Utc::now(),
+        file_written_at: None,
+        human_name: timeline_core::labels::PersonName::parse("Ada").unwrap(),
+    };
+    assert!(matches!(
+        table.record_received(&alice(), upload(), facts).await,
+        Err(StoreError::Backend(_))
+    ));
+    assert!(matches!(
+        table.get_received(&alice(), upload()).await,
         Err(StoreError::Backend(_))
     ));
 }

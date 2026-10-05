@@ -25,6 +25,7 @@ use timeline_api::state::AppState;
 use timeline_auth::cognito::CognitoVerifier;
 use timeline_core::ports::conversations::ConversationSummaryStore;
 use timeline_core::ports::object_store::ObjectStore;
+use timeline_core::ports::uploads::UploadOutcomeStore;
 use timeline_core::unwrap_uploaded_json;
 use timeline_storage::memory::conversations::InMemoryConversationSummaryStore;
 use timeline_storage::memory::message_flags::InMemoryMessageFlagsStore;
@@ -39,6 +40,11 @@ fn test_router() -> Router {
     let conversation_summary_store: Arc<dyn ConversationSummaryStore> =
         Arc::new(InMemoryConversationSummaryStore::new());
 
+    // One store for both halves, as the real local server shares it
+    // (src/main.rs): POST /uploads records facts that processing reads.
+    let upload_outcome_store: Arc<dyn UploadOutcomeStore> =
+        Arc::new(InMemoryUploadOutcomeStore::new());
+
     let app_state = AppState {
         flag_handle_key: Arc::new(FlagHandleKey::generate()),
         object_store: object_store.clone(),
@@ -46,7 +52,7 @@ fn test_router() -> Router {
         flags_reader: flags_store.clone(),
         user_flag_writer: flags_store.clone(),
         auto_flag_writer: flags_store.clone(),
-        upload_outcome_store: Arc::new(InMemoryUploadOutcomeStore::new()),
+        upload_outcome_store: upload_outcome_store.clone(),
         verifier: Arc::new(CognitoVerifier::new(
             jwks.clone(),
             DEV_ONLY_ISSUER,
@@ -55,7 +61,7 @@ fn test_router() -> Router {
     };
     let dev_state = DevState {
         object_store,
-        upload_outcome_store: Arc::new(InMemoryUploadOutcomeStore::new()),
+        upload_outcome_store: upload_outcome_store.clone(),
         conversation_summary_store,
         user_flag_writer: flags_store.clone(),
         auto_flag_writer: flags_store,
@@ -106,7 +112,10 @@ async fn export_embeds_the_auto_flags_that_detection_computed() {
         .method("POST")
         .uri("/uploads")
         .header("Authorization", format!("Bearer {token}"))
-        .body(Body::empty())
+        .header("Content-Type", "application/json")
+        .body(Body::from(
+            r#"{"file_name":"conversations.json","human_name":"Alice"}"#,
+        ))
         .unwrap();
     let create_response = router.clone().oneshot(create_request).await.unwrap();
     let upload_url = body_json(create_response).await["upload_url"]

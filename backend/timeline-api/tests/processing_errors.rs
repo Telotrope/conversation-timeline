@@ -117,16 +117,11 @@ async fn run(
         .put(&raw_object_key(&user_id, upload_id), export().into_bytes())
         .await
         .unwrap();
-    process_upload(
-        &objects,
-        &InMemoryUploadOutcomeStore::new(),
-        summaries,
-        flags,
-        &user_id,
-        upload_id,
-    )
-    .await
-    .unwrap_err()
+    let outcomes = InMemoryUploadOutcomeStore::new();
+    record_upload_facts(&outcomes, &raw_object_key(&user_id, upload_id)).await;
+    process_upload(&objects, &outcomes, summaries, flags, &user_id, upload_id)
+        .await
+        .unwrap_err()
 }
 
 #[tokio::test]
@@ -164,4 +159,27 @@ async fn a_failed_summary_save_names_the_conversation_its_number_and_the_total()
     );
     let source = std::error::Error::source(&err).expect("the store error");
     assert_eq!(source.to_string(), "item not found");
+}
+
+/// Records what `POST /uploads` would have recorded, for a file put
+/// straight into storage: processing needs the file's name, upload time and
+/// human name (plan 2026-10-05-screen-flow.md §8b).
+async fn record_upload_facts(
+    store: &dyn timeline_core::ports::uploads::UploadOutcomeStore,
+    key: &str,
+) {
+    let (user, upload) = timeline_core::ports::uploads::parse_raw_object_key(key).unwrap();
+    store
+        .record_received(
+            &user,
+            upload,
+            timeline_core::conversation_metadata::UploadFacts {
+                file_name: timeline_core::labels::FileName::parse("conversations.json").unwrap(),
+                uploaded_at: chrono::Utc::now(),
+                file_written_at: None,
+                human_name: timeline_core::labels::PersonName::parse("Alice").unwrap(),
+            },
+        )
+        .await
+        .unwrap();
 }

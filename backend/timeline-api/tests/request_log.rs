@@ -113,7 +113,16 @@ async fn signed_in_with_upload(router: &Router, sub: &str) -> (String, Value) {
     )
     .await;
     let token = login["token"].as_str().unwrap().to_string();
-    let (_, created) = send(router, request("POST", "/uploads", Some(&token), None)).await;
+    let (_, created) = send(
+        router,
+        request(
+            "POST",
+            "/uploads",
+            Some(&token),
+            Some(json!({ "file_name": "conversations.json", "human_name": "Alice" })),
+        ),
+    )
+    .await;
     let put = Request::builder()
         .method("PUT")
         .uri(created["upload_url"].as_str().unwrap())
