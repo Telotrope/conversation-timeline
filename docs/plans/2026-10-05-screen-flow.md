@@ -862,7 +862,7 @@ Existing browser tests that drive the old load screen
 steps changed to the new pages. Per the project rules, that's changing committed tests, so the
 list of tests to change, with each change, comes to the user for approval before coding (C7).
 
-### 10b. Existing tests this plan changes (for the user's approval, C7)
+### 10b. Existing tests this plan changes (approved by the user 2026-10-05, B3's removal included)
 
 Gathered 2026-10-05 by searching every test for what the plan changes. To keep this list short, the
 elements that move keep their ids: the file chooser (`#loadConvFile`), the Load button (`#loadBtn`,
