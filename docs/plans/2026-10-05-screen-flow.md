@@ -454,13 +454,17 @@ added since. The user decided (2026-10-05) that such a conversation is recognize
 second time, and any new messages in it are added.
 
 **How it's recognized:** by the conversation's id (the `uuid` every conversation in a Claude file
-carries, [model.rs:170](../../backend/timeline-core/src/model.rs#L170)). The stored time range and
-message count live on the conversation's summary row, so recognizing a conversation and choosing
-its new messages reads only the new file and that row, never an earlier file.
+carries, [model.rs:170](../../backend/timeline-core/src/model.rs#L170)). **Only the pair is
+compared** (the user, 2026-10-05, C16): a new conversation that shares an id with a stored one is
+compared with that one stored conversation, to find its new messages; no other stored conversation
+is looked at. The comparison is by timeframe (below), so it needs only the stored conversation's
+time range and message count, which are kept on its summary row; the earlier file itself isn't
+opened.
 
 **Conversations without ids** (the user's rule, 2026-10-05, C16): an earlier conversation is
 re-read only when (a) the new conversation has no id, (b) the stored one has no id either, and (c)
-their time ranges overlap. Every other case is decided from ids and the stored rows. No format the
+their time ranges overlap. A conversation with an id that matches no stored one is new, and is
+compared with nothing. No format the
 server reads today has conversations without ids (the parser requires `uuid`), so this rule is
 built by the first plan that reads such a format, not here, where nothing could reach it.
 
@@ -694,7 +698,7 @@ The server never learns a file's name today; only the browser knows it. With the
 that the original file name is part of each conversation's metadata, the server must know it
 before processing.
 **Resolution:** `POST /uploads` takes the file name and the human's name, recorded on the upload's
-row and read by processing; see [§8b (line 437)](2026-10-05-screen-flow.md#L437) and [§8c (line 510)](2026-10-05-screen-flow.md#L510).
+row and read by processing; see [§8b (line 437)](2026-10-05-screen-flow.md#L437) and [§8c (line 514)](2026-10-05-screen-flow.md#L514).
 
 ### C4 [OPEN]: Back across real Cognito's pages is unmeasured
 The stand-in Cognito skips the login form, so the browser tests can't show what Back does on
@@ -720,7 +724,7 @@ sessionStorage. Trigger: the user reports losing answers, or the renewal item is
 ### C7 [OPEN]: Existing browser tests drive the old load screen
 Their page-driving steps (pick a file, press Load, wait for `#mainContent`) won't match the new
 pages.
-**Mitigation in plan:** [§10 (line 607)](2026-10-05-screen-flow.md#L607) commits to bringing the
+**Mitigation in plan:** [§10 (line 611)](2026-10-05-screen-flow.md#L611) commits to bringing the
 list of changes to the user before coding. **Open:** the list is written when the plan is approved.
 
 ### C8 [RESOLVED]: A conversation in two files
@@ -737,7 +741,7 @@ stored time range are added, and stored messages are never compared one by one (
 Names and file names come from the user and are shown back on the page.
 **Resolution:** trimmed, cleaned of control and invisible characters and limited in length when the
 request is read ([§8a (line 375)](2026-10-05-screen-flow.md#L375)); shown on the page only as text,
-never as markup; kept out of the activity log ([§9 (line 547)](2026-10-05-screen-flow.md#L547)).
+never as markup; kept out of the activity log ([§9 (line 551)](2026-10-05-screen-flow.md#L551)).
 
 ### C10 [RESOLVED]: The first diagram was not a diagram of pages
 The first draft's diagram mixed the five pages with brief checks, sending, and every failure as
@@ -791,16 +795,17 @@ that plan.
 ### C16 [RESOLVED]: The export would re-read every file that held each conversation
 The previous draft rebuilt each conversation at export time from every file that ever held it, so
 repeated full exports of one account (the project's own was 64.7 MB) multiplied the reading.
-**Resolution:** the user ruled (2026-10-05) that earlier conversations are re-read only when
-neither side has an id and their time ranges overlap. With ids, recognition uses only the stored
-summary row, and the messages a later file adds are saved on their own at upload, so the export
+**Resolution:** the user ruled (2026-10-05) that a new conversation sharing an id with a stored
+one is compared with that one only, and that conversations without ids are compared only when
+neither side has an id and their time ranges overlap. The id comparison uses the stored
+conversation's summary row (its time range), and the messages a later file adds are saved on their own at upload, so the export
 reads the first file plus small addition objects; see [§8b-2 (line 450)](2026-10-05-screen-flow.md#L450).
 The id-less case is built with the first format that has one.
 
 ### C17 [RESOLVED]: Question numbers didn't match what the reader saw
 §12 wrote open questions as a Markdown numbered list starting at 1, 3, 4, 8…; Markdown renumbers
 such lists on display, so the user saw 1–5 and couldn't find Q3, Q4, Q8 or Q12.
-**Resolution:** every question is labelled "Q" with its number as text; see [§12 (line 627)](2026-10-05-screen-flow.md#L627).
+**Resolution:** every question is labelled "Q" with its number as text; see [§12 (line 631)](2026-10-05-screen-flow.md#L631).
 
 ### C18 [OPEN]: Judging new messages by timeframe misses messages inside the range
 With the user's rule (Q18), a message timed inside the stored range is assumed present. A message
