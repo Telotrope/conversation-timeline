@@ -14,6 +14,7 @@
 
 import { localDateKey } from '../../core/blocks.js';
 import { PAGE_ROWS, countLabel, createPaging, pagesLabel, partQuery, reviewQuery } from '../../core/review-query.js';
+import { effectiveFlag } from '../../core/flags.js';
 import { messageOf, overridesOf } from '../../core/review-rows.js';
 import { viewName } from '../../core/session-counts.js';
 import { state } from '../../core/state.js';
@@ -34,6 +35,7 @@ let convFilter = null;    // conversation id, or null for all conversations
 let rangeFilter = null;   // { start, end } in ms, or null for no time restriction
 let dayFilter = null;     // 'YYYY-MM-DD' (local), or null — mutually exclusive with conv/range
 let highlightIds = null;  // message ids to flash/scroll to once shown
+let highlightFlag = null; // or: 'all' (every message of yours shown) or a flag, flashed once shown
 
 // --- What the page keeps of the results ---
 let QUERY = null;          // the filters the results are for (core/review-query.js)
@@ -265,12 +267,15 @@ export function searchChanged(){
 // session time span, a file, or a "chat message review" link), optionally
 // restricted to one conversation (`conv`, its index) and/or one time range,
 // with the flag filter `flagType`, optionally with Claude's replies shown and
-// specific rows flashed/scrolled into view once shown.
-export function jumpToReview({conv=null, rangeStart=null, rangeEnd=null, flagType='all', highlightIds: ids=null, showReplies=false} = {}){
+// rows flashed/scrolled into view once shown: specific ones (`highlightIds`),
+// or, since a session arrives without its messages' ids, every message of
+// yours (`highlightFlag` 'all') or those with one flag in effect.
+export function jumpToReview({conv=null, rangeStart=null, rangeEnd=null, flagType='all', highlightIds: ids=null, highlightFlag: flag=null, showReplies=false} = {}){
   convFilter = conv === null ? null : state.conversations[conv].id;
   rangeFilter = (rangeStart != null && rangeEnd != null) ? {start: rangeStart, end: rangeEnd} : null;
   dayFilter = null;
   highlightIds = ids;
+  highlightFlag = flag;
   if(showReplies){
     state.showReplies = true;
     document.getElementById('toggleShowReplies').checked = true;
@@ -289,6 +294,7 @@ export function jumpToReviewDay(dateKey){
   convFilter = null;
   rangeFilter = null;
   highlightIds = null;
+  highlightFlag = null;
   document.getElementById('reviewSearch').value = '';
   document.getElementById('reviewFilter').value = 'all';
   switchTab('review');
@@ -307,6 +313,7 @@ function clearReviewFilters(){
   rangeFilter = null;
   dayFilter = null;
   highlightIds = null;
+  highlightFlag = null;
   document.getElementById('reviewFilter').value = 'all';
   startReviewQuery();
 }
@@ -409,6 +416,15 @@ export function renderReviewTable(){
 
 // Flashes the rows asked for once they are on screen, then forgets them.
 function showHighlights(){
+  if(highlightFlag){
+    // Waits for a part of the page that holds one.
+    const ids = [...MESSAGES.values()]
+      .filter((msg) => highlightFlag === 'all' || effectiveFlag(msg, highlightFlag))
+      .map((msg) => msg.id);
+    if(!ids.length) return;
+    highlightFlag = null;
+    highlightIds = ids;
+  }
   if(!highlightIds || !highlightIds.length || ROWS.length === 0) return;
   const ids = highlightIds;
   highlightIds = null;

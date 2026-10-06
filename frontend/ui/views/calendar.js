@@ -104,9 +104,9 @@ export function renderCalendar(){
 }
 
 // Opens Review on a session's span: all its messages, or only those with
-// the flag of the icon clicked.
+// the flag of the icon clicked; either way the session's rows are flashed.
 export function reviewSession(b, flagType){
-  jumpToReview({ conv: b.conv, rangeStart: new Date(b.start).getTime(), rangeEnd: new Date(b.end).getTime(), flagType });
+  jumpToReview({ conv: b.conv, rangeStart: new Date(b.start).getTime(), rangeEnd: new Date(b.end).getTime(), flagType, highlightFlag: flagType });
 }
 
 // One click handler for the whole Calendar, set once by main.js: a flag

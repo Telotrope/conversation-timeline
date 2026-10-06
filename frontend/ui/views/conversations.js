@@ -282,6 +282,7 @@ export function connectConversations(){
       rangeStart: new Date(b.start).getTime(),
       rangeEnd: new Date(b.end).getTime(),
       flagType: icon ? icon.dataset.flagType : 'all',
+      highlightFlag: icon ? icon.dataset.flagType : 'all',
     });
   });
 }
