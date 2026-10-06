@@ -58,6 +58,16 @@ Parameters:
       counting the attempt, so the retries and the final "failed" can be
       watched on the page (plan 2026-10-02-upload-processing-failures.md
       §2b). For that test only; leave off.
+  ProcessingMemory:
+    Type: Number
+    Default: 512
+    AllowedValues: [512, 1769]
+    Description: >
+      Memory, in MB, of the upload-processing function. AWS gives a
+      function processing power in proportion to its memory; 1769 is one
+      full processor. Processing is measured at both (plan
+      2026-10-06-load-only-what-the-page-shows.md §7, step 12) and the
+      cheaper per upload kept.
   RecordActivity:
     Type: String
     Default: "on"
@@ -233,22 +243,6 @@ Resources:
         - AttributeName: sk
           KeyType: RANGE
 
-  MessageFlagsTable:
-    Type: AWS::DynamoDB::Table
-    Properties:
-      TableName: !Sub "timeline-message-flags-${Stage}"
-      BillingMode: PAY_PER_REQUEST
-      AttributeDefinitions:
-        - AttributeName: pk
-          AttributeType: S
-        - AttributeName: sk
-          AttributeType: S
-      KeySchema:
-        - AttributeName: pk
-          KeyType: HASH
-        - AttributeName: sk
-          KeyType: RANGE
-
   UsersTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -356,7 +350,6 @@ Resources:
         Variables:
           TIMELINE_UPLOADS_BUCKET: !Sub "timeline-uploads-${Stage}-${AWS::AccountId}"
           TIMELINE_CONVERSATIONS_TABLE: !Ref ConversationsTable
-          TIMELINE_MESSAGE_FLAGS_TABLE: !Ref MessageFlagsTable
           TIMELINE_USERS_TABLE: !Ref UsersTable
           TIMELINE_COGNITO_USER_POOL_ID: !Ref UserPool
           TIMELINE_COGNITO_CLIENT_ID: !Ref UserPoolClient
@@ -367,8 +360,6 @@ Resources:
             BucketName: !Sub "timeline-uploads-${Stage}-${AWS::AccountId}"
         - DynamoDBCrudPolicy:
             TableName: !Ref ConversationsTable
-        - DynamoDBCrudPolicy:
-            TableName: !Ref MessageFlagsTable
         - DynamoDBCrudPolicy:
             TableName: !Ref UsersTable
       # One route per method rather than ANY, so no route matches the
@@ -394,6 +385,15 @@ Resources:
             ApiId: !Ref HttpApi
             Path: /{proxy+}
             Method: PATCH
+        # Editing a file's or a conversation's details (PUT .../metadata).
+        # Missing until 2026-10-06, so those edits never reached the
+        # function on AWS.
+        PutRequest:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /{proxy+}
+            Method: PUT
 
   # Started by S3 when a raw upload lands; runs `src/bin/process_upload.rs`.
   # Its permissions and settings name the bucket by its fixed pattern, not
@@ -414,25 +414,22 @@ Resources:
       Handler: bootstrap
       LoggingConfig:
         LogGroup: !Ref ProcessUploadLogGroup
-      MemorySize: 512
+      MemorySize: !Ref ProcessingMemory
       Timeout: 300
       Environment:
         Variables:
           TIMELINE_UPLOADS_BUCKET: !Sub "timeline-uploads-${Stage}-${AWS::AccountId}"
           TIMELINE_CONVERSATIONS_TABLE: !Ref ConversationsTable
-          TIMELINE_MESSAGE_FLAGS_TABLE: !Ref MessageFlagsTable
           TIMELINE_LOG_S3_EVENTS: !Ref LogS3Events
           TIMELINE_FAIL_PROCESSING: !Ref FailProcessing
       Policies:
-        # Reads the raw upload, and writes the messages a later file adds to
-        # a conversation already stored (additions/..., plan
-        # docs/plans/2026-10-05-screen-flow.md §8b-2).
+        # Reads the raw upload and deletes it once processed, and writes the
+        # files kept from conversations (files/..., plan
+        # docs/plans/2026-10-06-load-only-what-the-page-shows.md §3, §7).
         - S3CrudPolicy:
             BucketName: !Sub "timeline-uploads-${Stage}-${AWS::AccountId}"
         - DynamoDBCrudPolicy:
             TableName: !Ref ConversationsTable
-        - DynamoDBCrudPolicy:
-            TableName: !Ref MessageFlagsTable
         - LambdaInvokePolicy:
             FunctionName: !Ref RecordFailedUploadFunction
       # The first attempt plus 2 retries: 3 in all, the number the page
@@ -543,19 +540,19 @@ Resources:
               - !Sub ["https://${Host}", {Host: !If [HasPageDomain, !Ref PageDomain, !GetAtt PageDistribution.DomainName]}]
               - !Join ["", [!Select [0, !Split ["/", !Ref FrontendUrl]], "//", !Select [2, !Split ["/", !Ref FrontendUrl]]]]
             AllowHeaders: [authorization, content-type, x-timeline-session]
-            AllowMethods: [GET, POST, PATCH]
+            AllowMethods: [GET, POST, PATCH, PUT]
             ExposeHeaders: [apigw-requestid]
             MaxAge: 600
           - AllowOrigins:
               - !Sub ["https://${Host}", {Host: !If [HasPageDomain, !Ref PageDomain, !GetAtt PageDistribution.DomainName]}]
             AllowHeaders: [authorization, content-type, x-timeline-session]
-            AllowMethods: [GET, POST, PATCH]
+            AllowMethods: [GET, POST, PATCH, PUT]
             ExposeHeaders: [apigw-requestid]
             MaxAge: 600
         - AllowOrigins:
             - !Join ["", [!Select [0, !Split ["/", !Ref FrontendUrl]], "//", !Select [2, !Split ["/", !Ref FrontendUrl]]]]
           AllowHeaders: [authorization, content-type, x-timeline-session]
-          AllowMethods: [GET, POST, PATCH]
+          AllowMethods: [GET, POST, PATCH, PUT]
           ExposeHeaders: [apigw-requestid]
           MaxAge: 600
       Auth:
