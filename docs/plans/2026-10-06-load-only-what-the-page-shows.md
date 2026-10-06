@@ -129,14 +129,36 @@ text; the export doesn't say why it was sent.)
 started by the user (none by a retried reply from Claude); each holds at most 4 messages, sent
 within 15 seconds of each other.
 
-**The note.** Each replaced branch becomes one note row in the conversation: "A branch here was
-replaced: N messages, from HH:MM to HH:MM". It sits where the branch began, and its start and end
+**The note.** Each replaced branch becomes one note row in the conversation. Review shows it as a
+message in its own row, worded: "An earlier branch of this conversation was pruned here: N messages
+(W words) from HH:MM to HH:MM, replaced by the message below." (the user, 2026-10-06; not just a
+line). It sits where the branch began, and its start and end
 count as activity when sessions are cut, so removing a branch can't split a session that the user
 was in fact working through (the user's suggestion). Measured: removing the branches alone cuts one
 session in two (300 sessions become 299, with a false gap inside one); with the notes, the sessions
 are the same 300 as before. Notes are not messages: they count in no message total, flag count or
-analysis. Review shows them as a thin line between messages. The annotated download leaves them
-out, since the export format has nothing like them.
+analysis. The annotated download leaves them out, since the export format has nothing like them.
+
+**Measured on the 32 replaced branches here:** every one is one or two messages of yours, and the
+three Claude replies inside them have no text (their answers apparently never arrived, so these look
+like failed sends that were resent; inferred, as the export records no failures). 26 of them carry a
+review of yours, because this file was saved by this tool's annotated download.
+
+**Branches worth keeping as their own conversation** (the user, 2026-10-06, answering C12). When a
+replaced branch holds an important amount of the conversation (Q5), it is not reduced to a note:
+it is kept as a conversation of its own, named "{name}: earlier branch from {date, time}", holding
+the branch's own messages from the branch point on, and linked to the conversation it branched from
+(both show the link). It holds only the branch's messages, not the start the two share, so no
+message is counted twice on the Calendar or in the analyses. The note in the main conversation
+then reads "…was kept as its own conversation", with a link to it.
+
+**A later export that revives a pruned branch** (C12). If a later export's newest messages continue a
+branch that an earlier upload had pruned, that branch now holds the latest message, so it becomes
+the conversation's path. Processing finds this by looking up each new message's parent among the
+stored rows: a parent that isn't at the end of the stored path marks a branch point. What the stored
+path held after that point becomes the replaced branch: a note, or its own conversation if it is
+important (Q5). The revived branch's earlier messages come from the new export, which holds every
+branch.
 
 **Where it happens.** In processing, on the server, as one pure function in `timeline-core`
 (`prune_replaced_branches`: a conversation in, the kept path and its notes out), before the existing
@@ -305,20 +327,28 @@ coding.
 ## 11. Questions for the user
 
 **Answered on 2026-10-06:** Q1 (withdrawn: flags move onto the message rows, §3); Q2 (the upload is
-deleted once processed, §7); Q3 (SVGs drawn; web pages and code shown without running anything, with
+deleted once processed, §7); Q4 (the path to each conversation's latest message is kept, §4d); Q3 (SVGs drawn; web pages and code shown without running anything, with
 a download link, §4). The session files of the previous draft are dropped (the user).
 
 **Still open:**
 
-- **Q4 — Which branch is kept.** The path to each conversation's latest message (§4d), instead of
-  "the newer reply wins", which would have dropped 117 messages of a real conversation in favour of
-  a dead end. Agreed?
+- **Q5 — When is a replaced branch kept as its own conversation?** Candidate measures, and how
+  many of the 32 replaced branches here each would keep (proposed: the first two together):
+
+  | Measure | Kept here | What it protects |
+  |---|---|---|
+  | **Claude replied with text** in the branch | 0 of 32 | an answer that was actually given and then replaced |
+  | **Two or more messages of yours** in the branch | 2 of 32 | a line of conversation you followed, not just a resent message |
+  | 100 words or more in the branch (the user's suggestion) | 1 of 32 | a long edit; it can't tell a long resend from a real exchange |
+  | 5 minutes or more between the branch's first and last message | 0 of 32 | time actually spent there |
+  | A file Claude made, or a citation, in the branch | 0 of 32 | work products that would otherwise be lost |
+  | A review of yours that states a flag | 26 of 32 | your flags; but here they sit on resent copies whose kept twin is reviewed too, so this measure keeps mostly noise |
 
 ## Self-critique log
 
 ### C1 [OPEN]: Two files of a batch processed at once can lose each other's messages
 Present in the code built on 2026-10-05 as well. **Mitigation in plan:** versioned conditional
-writes with a retry ([§7 (line 179)](2026-10-06-load-only-what-the-page-shows.md#L179)). **Open:** until
+writes with a retry ([§7 (line 201)](2026-10-06-load-only-what-the-page-shows.md#L201)). **Open:** until
 this plan is built, a batch whose files share conversations can lose added messages on AWS. Trigger:
 this plan's step 2.
 
@@ -330,7 +360,7 @@ this plan's step 2.
 measures them.
 
 ### C4 [RESOLVED]: The first estimates table mixed kinds of numbers
-**Resolution:** one table, the same four columns, absolute times ([§9 (line 242)](2026-10-06-load-only-what-the-page-shows.md#L242)).
+**Resolution:** one table, the same four columns, absolute times ([§9 (line 264)](2026-10-06-load-only-what-the-page-shows.md#L264)).
 
 ### C5 [RESOLVED]: Files and rows both holding messages
 **Resolution:** rows hold every message's text; the session files are dropped, and tool calls,
@@ -339,7 +369,7 @@ tool results and thinking are not kept (the user, 2026-10-06). Only files of §4
 
 ### C6 [RESOLVED]: The Calendar needed messages only to split a session's flags by day
 **Resolution:** a session's flags show on every day it touches; the counts are stored with the
-session ([§6 (line 169)](2026-10-06-load-only-what-the-page-shows.md#L169)).
+session ([§6 (line 191)](2026-10-06-load-only-what-the-page-shows.md#L191)).
 
 ### C7 [OPEN]: Deleting the upload loses what isn't kept, for good
 Tool calls, tool results and thinking are gone once the upload is deleted, and the annotated
@@ -363,7 +393,7 @@ user finds marked files wrong often, drop the replay and keep only the first ver
 They put opening the timeline on AWS at 9 s and processing at 5 s, from a guessed slow-down. The
 activity run of 2026-10-05 had measured 37 s and 6 s, and sending the file, 26 s, was missing
 altogether. **Resolution:** §9 now starts from those measurements, lists what you wait for step by
-step, and derives the slow-down from them ([§9 (line 242)](2026-10-06-load-only-what-the-page-shows.md#L242)).
+step, and derives the slow-down from them ([§9 (line 264)](2026-10-06-load-only-what-the-page-shows.md#L264)).
 
 ### C11 [OPEN]: Slimming is measured in Node, not in a browser
 Parsing the 63.5 MB file took 0.3–0.7 s in Node on this machine; a browser on a slower computer may
@@ -371,11 +401,9 @@ take several seconds, and holds the whole file in memory meanwhile, as it alread
 **Open:** step 7 measures it in the user's browser. Trigger: if preparing takes over 10 s, slim on
 the server instead (sending the full file again).
 
-### C12 [OPEN]: A later export can continue a branch that was pruned, or prune one that was kept
-The path is decided per upload. If a later export's newest messages answer a message that an earlier
-upload's path did not end on, the branch kept earlier was itself replaced. **Mitigation in plan:**
-none yet. **Open:** processing would need to compare each new message's parent with the stored
-rows, remove the stored messages after the branch point and add a note: a comparison of stored
-messages the user had ruled out for finding new messages (§7), though here only by the parent
-link of each new message. Trigger: Q4's answer, and the user's view on this comparison.
-
+### C12 [RESOLVED, gated]: A later export can continue a branch that was pruned
+The path is decided per upload, so a later export can show that the branch kept earlier was itself
+replaced. **Resolution:** the user decided (2026-10-06) that a replaced branch worth keeping becomes a
+conversation of its own; processing finds a revived branch by each new message's parent among the
+stored rows ([§4d (line 112)](2026-10-06-load-only-what-the-page-shows.md#L112)). Gated on Q5,
+which decides what is worth keeping.
