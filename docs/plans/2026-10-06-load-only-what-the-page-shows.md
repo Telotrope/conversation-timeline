@@ -599,6 +599,40 @@ flag was saved elsewhere), so the page starts that request over from the beginni
 request has already answered). A half-computed analysis row is carried on by the next request
 with the same options.
 
+**Every analysis can stop part-way and carry on** (the user, 2026-10-06):
+
+- **The two on the server** (rate over time, time of day): their partial result and cursor are in
+  the analysis row, as above. Leaving Analytics, or the page, stops them; the next request with the
+  same options carries on; a changed data version starts them over.
+- **The three in the page** (friction ranking, session length, idle time): they run in the page's
+  50 ms turns (§8b) over the sessions it holds. Each keeps its partial result and where it stopped
+  in the page's memory, keyed like the server's (analysis, options, view, and the data version of
+  the sessions it holds). Leaving the tab stops it; coming back carries on from where it stopped. A
+  reload loses the partial result, and the analysis starts over from the sessions, which the page
+  loads again anyway; nothing is fetched for it.
+
+**How the time limit is made testable.** A test can't rely on a computer being slow enough to hit a
+time limit. So every loop of §8b takes its limit as a `WorkBudget` (Rust) or `workBudget` (page): a
+value that answers "may I do another step?". The real one answers by the clock (9 s on the server;
+50 ms or 0.5 s in the page); the tests' one answers by counting steps, so a test can stop a request
+after exactly one, two or N steps. The loop's code is the same either way; only the budget handed to
+it differs. The server reads which to use from a setting that only the local test server sets (as
+the scan's shorter limit was going to be).
+
+**Tests that resumption works, in every case.** For each request that answers in parts, and each
+page analysis:
+
+| What is tested | How |
+|---|---|
+| Parts add up to the whole | with a budget of 1, 2 and 3 steps, the joined parts equal the one-request answer: the same records, sessions, matches in the same order, flags written, analysis numbers, download file |
+| A cursor stops anywhere | the stop falls in the middle of a session, at a session's last entry, at a conversation's end, and at the very end (the last answer carries no cursor) |
+| Nothing is done twice or skipped | every entry is read, scanned or written exactly once across the parts (the scan's write count; the search's match ids) |
+| A changed data version starts over | a flag saved between two parts; the next answer says so and the page restarts |
+| A bad cursor is refused | text that isn't a cursor, a cursor of another request kind, a cursor naming a session that no longer exists: each a 400 naming why |
+| Another user's data can't be reached | a cursor made from user A's request, sent by user B, reads only B's rows |
+| Stop and carry on | an analysis stopped after one part and asked again later carries on from its saved row (server) or its kept partial result (page) and ends with the same numbers |
+| In the browser | Review paging forward and back through more than 50 matches with a 1-step budget; a search whose result count grows across parts; the scan's bar reaching 100% over several parts |
+
 ## 9. Expected times
 
 **What is measured.** On AWS, from the deployment checks of 2026-10-02 and the activity run of
@@ -670,7 +704,8 @@ DynamoDB writes of about 8,000 write units, roughly $0.005–0.01; about 50 S3 w
 6. **The page.** The timeline from conversations and sessions; Review a page at a time from
    `GET /messages`; two analyses from `GET /analyses`, three from the sessions; the same session flags on each day a session
    touches; `state.humanMessages`, the page's filtering and the two moved analyses removed.
-7. **Tests and measurements.** Every step tested as in the screen-flow plan; then §9 measured
+7. **Tests and measurements.** Every step tested as in the screen-flow plan, including the
+   resumption tests of §8c for every request in parts and every analysis; then §9 measured
    locally and, after a deployment, on AWS, with processing at 512 MB and 1,769 MB, and written up
    as an analysis.
 
