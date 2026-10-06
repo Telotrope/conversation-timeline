@@ -590,7 +590,7 @@ avoids a behaviour change nobody asked for):
 | `synthetic-export.js` | chains each message's parent to the one before; options to make branches, citations, attachments and file tool calls | today every message is a first message, so pruning would treat all but one as replaced |
 | `upload-flow.spec.js` L285 (a file over 2 MB) | sends the large file without slimming, through the plain-upload path, so the size limit is still tested | |
 | `upload-flow.spec.js` L327 | checks the row's reviewed state after reload, not the "Loaded N flags" line | |
-| `upload-flow.spec.js` L348 | **remove**: the timeline download it tests no longer exists | |
+| `upload-flow.spec.js` L348 | **rewritten** for what opening the timeline now fetches: conversation records and sessions, answered without a stated size, show what has arrived (the user, 2026-10-06) | |
 | `activity.spec.js` L146 | expects the scan's new request shape | |
 | `cognito-login.spec.js` L308, `views.spec.js` L399, L669, L683, L802 | hold or fail `GET /sessions` instead of `GET /export` | |
 | `views.spec.js` L173 | tests search, filters and paging through `GET /messages`, with more than 50 messages | |
@@ -629,7 +629,7 @@ Each new test names the one it replaces in its doc comment.
 | … `list_for_conversation_excludes_other_conversations` | contract: reading a span leaves out other conversations at the same times |
 | … `flags_are_isolated_per_user` | contract: one user's rows are invisible to another (both stores) |
 | `raw_object_key.rs` `added_messages_are_kept_under_their_user_conversation_and_upload` | a stored file is kept under its user, conversation, message and number, and no file name becomes part of the key |
-| `flags.test.js` L49 `attachFlags files each message under its session, or the nearest one` | each of your messages is counted in exactly the session that holds it. **Only half can be matched:** "or the nearest one" covered a message falling between sessions, which the server can't produce (sessions are cut from the messages themselves) |
+| `flags.test.js` L49 `attachFlags files each message under its session, or the nearest one` | each of your messages is counted in exactly the session that holds it; in a conversation placed by its start and end (§4e), timed messages outside that span are counted in its one session (the "nearest one" case: the page's fallback existed for exactly these messages) |
 | `flags.test.js` L79 `only messages with a value under the switches count toward rates` | `FlagView::counts_toward_rates` under all four views |
 | `blocks.test.js` L13 `a gap of 15 minutes or more starts a new session` | `cut_sessions`: a pause of 15 minutes starts a session, 14:59 does not |
 | `blocks.test.js` L27 `a session continues across midnight, and never spans two conversations` | `cut_sessions`: one session across midnight; two conversations at the same times give separate sessions |
@@ -647,7 +647,7 @@ Each new test names the one it replaces in its doc comment.
 | `analyses.test.js` L55 `the trend buckets by week by default, or by month` | trend analysis: weeks by default, months on request, in the viewer's time zone |
 | … L70 `time of day counts by hour and weekday` | time-of-day analysis: counts by local hour and weekday |
 | … L111, its trend and time-of-day parts | both server analyses, with only your flags shown, count reviewed messages only |
-| `upload-flow.spec.js` L348 `a timeline download without a stated size reports what has arrived` | **Can't be matched.** It tested the page reading the 64 MB timeline download as it arrived; that download no longer exists, and no server behaviour corresponds to it |
+| `upload-flow.spec.js` L348 `a timeline download without a stated size reports what has arrived` | replaced by a browser test, not a backend one (the user, 2026-10-06): loading the timeline's conversation records and sessions, answered without a stated size, shows in the loading modal what has arrived. The 64 MB timeline download it tested no longer happens; the records and sessions are what opening the timeline now fetches |
 
 ## 11. Questions for the user
 
