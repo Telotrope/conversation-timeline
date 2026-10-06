@@ -163,9 +163,11 @@ export function toDescribe(subject, push = true){
 // Done (saved) or Cancel: after an upload, to the timeline; otherwise back
 // to the tab it came from, with the saved details read back (a changed start
 // and end moves a conversation's sessions, so the timeline is read again).
+// A read-back that fails stays on Describe and says so there: the details
+// were saved, and Done can be pressed again.
 export async function leaveDescribe(subject, saved){
   if(subject.kind === 'batch') return openTimeline();
-  if(saved && !(await loadBehindModal())) return;
+  if(saved && !(await loadBehindModal(readBackFailed))) return;
   showPage('timeline');
   if(subject.kind === 'file') return arriveAtTab('files');
   const idx = state.conversations.findIndex((c) => c.id === subject.conversationId);
@@ -187,8 +189,9 @@ export async function openTimeline(){
 // Reads and draws the timeline behind the loading modal (plan
 // docs/plans/2026-10-06-load-only-what-the-page-shows.md §8b: records,
 // then sessions, received in parts, then drawn in turns). Resolves to
-// whether it was loaded; a failure is shown in the modal, with Try again.
-async function loadBehindModal(){
+// whether it was loaded; a failure is shown in the modal, with Try again,
+// unless `failed` says otherwise.
+async function loadBehindModal(failed = loadFailed){
   openLoadingModal();
   setLoadStatus(null);
   showLoadProgress();
@@ -196,7 +199,7 @@ async function loadBehindModal(){
   try{
     if(!(await DEPS.loadTimeline(await token()))) throw new Error('your timeline has no conversations');
   } catch(err){
-    loadFailed(err);
+    failed(err);
     return false;
   }
   hideLoadProgress();
@@ -214,6 +217,14 @@ function loadFailed(err){
   failLoadProgress();
   setLoadStatus(...DEPS.describeLoadFailure(err));
   offerLoadingModalChoices(() => openTimeline(), () => signOut());
+}
+
+function readBackFailed(err){
+  console.error(err);
+  hideLoadProgress();
+  closeLoadingModal();
+  if(expired(err)) return toSignIn('signIn.ran_out');
+  setDescribeStatus('describe.load_failed', { detail: err.message, status: errorStatusOf(err), error_kind: errorKindOf(err) });
 }
 
 // Arriving at the timeline: the view the address names, or the Calendar,

@@ -121,5 +121,7 @@ test("saved details read the timeline again, then return to the file's or the co
   console.error = () => {};
   await flow.leaveDescribe({ kind: 'conversation', conversationId: 'c0' }, true);
   console.error = error;
-  assert.equal(page.el('loadingModal').hidden, false, 'a failed reading stays in the modal');
+  assert.equal(page.el('loadingModal').hidden, true, 'a failed reading back closes the modal');
+  assert.match(page.el('describeStatus').textContent, /^Could not read your files' details: nope/);
+  assert.equal(window.location.hash, '#conversations/0', 'and stays where it was');
 });
