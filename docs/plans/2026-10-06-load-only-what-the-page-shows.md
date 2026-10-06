@@ -131,8 +131,9 @@ within 15 seconds of each other.
 
 **The note.** Each replaced branch becomes one note row in the conversation. Review shows it as a
 message in its own row, worded: "An earlier branch of this conversation was pruned here: N messages
-(W words) from HH:MM to HH:MM, replaced by the message below." (the user, 2026-10-06; not just a
-line). It sits where the branch began, and its start and end
+(W words not repeated below) from HH:MM to HH:MM, replaced by the message below." (the user,
+2026-10-06; not just a line). When every message in the branch is repeated on the kept path, it
+reads instead: "An earlier copy of the message below was pruned here (sent HH:MM)." It sits where the branch began, and its start and end
 count as activity when sessions are cut, so removing a branch can't split a session that the user
 was in fact working through (the user's suggestion). Measured: removing the branches alone cuts one
 session in two (300 sessions become 299, with a false gap inside one); with the notes, the sessions
@@ -144,8 +145,12 @@ three Claude replies inside them have no text (their answers apparently never ar
 like failed sends that were resent; inferred, as the export records no failures). 26 of them carry a
 review of yours, because this file was saved by this tool's annotated download.
 
-**Branches worth keeping as their own conversation** (the user, 2026-10-06, answering C12). When a
-replaced branch holds an important amount of the conversation (Q5), it is not reduced to a note:
+**Branches worth keeping as their own conversation** (the user, 2026-10-06, answering C12 and Q5).
+A replaced branch is important when it holds **100 words or more once its duplicates are removed**:
+a message in the branch is a duplicate when a message on the kept path of the same conversation has
+the same sender and the same text (after collapsing runs of spaces and line breaks). Measured here:
+23 of the 32 branches are nothing but duplicates (0 words left); one is kept, two messages of 155
+words in "C-Corporation banking setup for payroll". An important branch is not reduced to a note:
 it is kept as a conversation of its own, named "{name}: earlier branch from {date, time}", holding
 the branch's own messages from the branch point on, and linked to the conversation it branched from
 (both show the link). It holds only the branch's messages, not the start the two share, so no
@@ -327,22 +332,12 @@ coding.
 ## 11. Questions for the user
 
 **Answered on 2026-10-06:** Q1 (withdrawn: flags move onto the message rows, §3); Q2 (the upload is
-deleted once processed, §7); Q4 (the path to each conversation's latest message is kept, §4d); Q3 (SVGs drawn; web pages and code shown without running anything, with
+deleted once processed, §7); Q4 (the path to each conversation's latest message is kept, §4d); Q5
+(a replaced branch is kept as its own conversation at 100 words or more once messages repeated on
+the kept path are removed, §4d); Q3 (SVGs drawn; web pages and code shown without running anything, with
 a download link, §4). The session files of the previous draft are dropped (the user).
 
-**Still open:**
-
-- **Q5 — When is a replaced branch kept as its own conversation?** Candidate measures, and how
-  many of the 32 replaced branches here each would keep (proposed: the first two together):
-
-  | Measure | Kept here | What it protects |
-  |---|---|---|
-  | **Claude replied with text** in the branch | 0 of 32 | an answer that was actually given and then replaced |
-  | **Two or more messages of yours** in the branch | 2 of 32 | a line of conversation you followed, not just a resent message |
-  | 100 words or more in the branch (the user's suggestion) | 1 of 32 | a long edit; it can't tell a long resend from a real exchange |
-  | 5 minutes or more between the branch's first and last message | 0 of 32 | time actually spent there |
-  | A file Claude made, or a citation, in the branch | 0 of 32 | work products that would otherwise be lost |
-  | A review of yours that states a flag | 26 of 32 | your flags; but here they sit on resent copies whose kept twin is reviewed too, so this measure keeps mostly noise |
+**Still open:** none.
 
 ## Self-critique log
 
@@ -401,9 +396,9 @@ take several seconds, and holds the whole file in memory meanwhile, as it alread
 **Open:** step 7 measures it in the user's browser. Trigger: if preparing takes over 10 s, slim on
 the server instead (sending the full file again).
 
-### C12 [RESOLVED, gated]: A later export can continue a branch that was pruned
+### C12 [RESOLVED]: A later export can continue a branch that was pruned
 The path is decided per upload, so a later export can show that the branch kept earlier was itself
 replaced. **Resolution:** the user decided (2026-10-06) that a replaced branch worth keeping becomes a
 conversation of its own; processing finds a revived branch by each new message's parent among the
-stored rows ([§4d (line 112)](2026-10-06-load-only-what-the-page-shows.md#L112)). Gated on Q5,
-which decides what is worth keeping.
+stored rows ([§4d (line 112)](2026-10-06-load-only-what-the-page-shows.md#L112)). What is worth
+keeping was decided with Q5.
