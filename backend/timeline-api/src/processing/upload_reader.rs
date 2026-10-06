@@ -32,7 +32,8 @@ use timeline_core::FormatError;
 /// gzip's first two bytes.
 const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
 
-/// Why an upload couldn't be read.
+/// Why an upload couldn't be read. Turned into a `ProcessingError`, whose
+/// wording names each case.
 #[derive(Debug)]
 pub enum ReadError {
     /// It started like gzip but didn't decompress.
@@ -40,19 +41,6 @@ pub enum ReadError {
     NotUtf8(std::str::Utf8Error),
     Format(FormatError),
     Keep(KeepError),
-}
-
-impl fmt::Display for ReadError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ReadError::Decompress(e) => {
-                write!(f, "the compressed file could not be decompressed: {e}")
-            }
-            ReadError::NotUtf8(e) => write!(f, "uploaded file was not valid UTF-8: {e}"),
-            ReadError::Format(e) => write!(f, "{e}"),
-            ReadError::Keep(e) => write!(f, "{e}"),
-        }
-    }
 }
 
 /// Decompresses `bytes` if they are gzip; returns them as they are

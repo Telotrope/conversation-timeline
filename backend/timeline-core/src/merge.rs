@@ -13,7 +13,9 @@
 //! branch an earlier upload pruned, that branch now holds the latest
 //! message, so it becomes the conversation's path. It is found by the first
 //! new message's parent: a parent that is stored but isn't the stored
-//! path's last message marks a branch point. What the stored path held after
+//! path's last message marks a branch point, provided something the stored
+//! path held after it is no longer on the file's path (otherwise the file
+//! only adds to the stored path). What the stored path held after
 //! that point becomes the replaced branch, a note or (if important) a
 //! conversation of its own, and the new path's messages from the branch
 //! point on are added from the file, which holds every branch.
@@ -190,14 +192,15 @@ fn plan_revival(
         .iter()
         .filter(|m| m.time() == MessageTime::Unknown)
         .count();
+    // A revival replaces something: if everything the stored path held after
+    // the branch point is still on the file's path, the file only adds to
+    // it, and the time rule decides what.
+    let first = *replaced.first()?;
     let mut plan = take_from_file(file, |entry| match entry {
         Entry::Message(m) => new_ids.contains(&m.key.id),
         Entry::Note(n) => n.key > branch_point.key && !stored_ids.contains(&n.key.id),
     });
     plan.untimed_skipped = untimed_skipped;
-    let Some(first) = replaced.first() else {
-        return Some(plan);
-    };
     plan.remove = replaced.iter().map(|m| m.key).collect();
     let replaced_texts: Vec<(Sender, String)> = replaced
         .iter()

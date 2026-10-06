@@ -261,7 +261,20 @@ pub async fn process_upload(
     user_id: &UserId,
     upload_id: UploadId,
 ) -> Result<(), ProcessingError> {
-    let result = process(stores, user_id, upload_id).await;
+    process_upload_reporting(stores, user_id, upload_id, PROGRESS_EVERY).await
+}
+
+/// [`process_upload`], writing the progress row every `every` rather than
+/// every [`PROGRESS_EVERY`]: as with the request time limit (plan §8c), the
+/// interval is handed in, so a test can report at every step whatever the
+/// computer's speed.
+pub async fn process_upload_reporting(
+    stores: &ProcessingStores,
+    user_id: &UserId,
+    upload_id: UploadId,
+    every: Duration,
+) -> Result<(), ProcessingError> {
+    let result = process(stores, user_id, upload_id, every).await;
     if let Err(e) = &result {
         if e.is_unusable_file() {
             stores
@@ -283,6 +296,7 @@ async fn process(
     stores: &ProcessingStores,
     user_id: &UserId,
     upload_id: UploadId,
+    every: Duration,
 ) -> Result<(), ProcessingError> {
     let key = raw_object_key(user_id, upload_id);
     if let Some(UploadOutcome::Ready { .. }) = stores
@@ -317,7 +331,7 @@ async fn process(
     let kept = loop {
         tokio::select! {
             joined = &mut parse => break joined,
-            () = tokio::time::sleep(PROGRESS_EVERY) => {
+            () = tokio::time::sleep(every) => {
                 report_progress(stores, user_id, upload_id, ProcessingProgress {
                     bytes_read: bytes_read.load(Ordering::Relaxed),
                     bytes_total,
@@ -367,7 +381,7 @@ async fn process(
     let mut last_report = Instant::now();
     while let Some(result) = writes.next().await {
         all.push(result?);
-        if last_report.elapsed() >= PROGRESS_EVERY {
+        if last_report.elapsed() >= every {
             last_report = Instant::now();
             report_progress(
                 stores,
@@ -486,19 +500,17 @@ fn refuse_oversized(kept: &[Kept]) -> Result<(), ProcessingError> {
         .iter()
         .flat_map(|k| std::iter::once(&k.main).chain(k.branches.iter().map(|b| &b.conversation)));
     for conversation in conversations {
-        for entry in &conversation.entries {
+        // Notes hold a few numbers, never anything large.
+        for message in conversation.entries.iter().filter_map(Entry::as_message) {
             // Unreachable backstop: stored entries are plain data, which
             // always serializes.
-            let bytes = serde_json::to_vec(entry)
-                .expect("an entry serializes")
+            let bytes = serde_json::to_vec(message)
+                .expect("a message serializes")
                 .len();
             if bytes > LARGEST_ROW {
                 return Err(ProcessingError::MessageTooLarge {
                     conversation_id: conversation.conversation_id,
-                    message_id: match entry {
-                        Entry::Message(m) => m.key.id,
-                        Entry::Note(n) => n.key.id,
-                    },
+                    message_id: message.key.id,
                     bytes,
                 });
             }

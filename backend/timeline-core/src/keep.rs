@@ -22,7 +22,6 @@ use crate::dedup::dedup_chat_messages;
 use crate::flag_values::{FlagOverrides, MessageFlags};
 use crate::kept_files::{base_name, kind_of, tool_call, FileReplay};
 use crate::labels::FileName;
-use crate::message_time::MessageTime;
 use crate::model::{
     ChatMessage, Conversation, ConversationId, ConversationName, MessageId, PieceType, Sender,
 };
@@ -169,10 +168,9 @@ fn keep_branch(
 ) -> Result<KeptBranch, KeepError> {
     let first = &branch.messages[0];
     let id = branch_conversation_id(conversation.uuid, first.uuid);
-    let when = match first.time() {
-        MessageTime::Known(at) => at.format("%Y-%m-%d %H:%M UTC").to_string(),
-        MessageTime::Unknown => "an unknown time".to_string(),
-    };
+    // Pruning leaves a conversation with any message of unknown time whole,
+    // so a branch's messages all have times.
+    let when = first.created_at.format("%Y-%m-%d %H:%M UTC");
     let name = ConversationName(format!(
         "{}: earlier branch from {when}",
         conversation.name.0

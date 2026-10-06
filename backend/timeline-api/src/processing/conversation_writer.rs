@@ -351,7 +351,11 @@ async fn merge(
     let plan = plan_merge(&stored, record.message_span.as_ref(), &record.name, kept);
     written.untimed_skipped = plan.untimed_skipped;
     let stored_messages = stored.iter().filter(|e| e.as_message().is_some()).count();
-    if plan.changes_nothing() {
+    // Nothing to add, and the record already counts every row: done. When
+    // the rows hold more than the record counts (an attempt that lost a
+    // race wrote rows before it lost), the record is brought into line
+    // below even though this file adds nothing more.
+    if plan.changes_nothing() && stored_messages == record.message_count {
         written.fewer_than_file = stored_messages < kept.main.kept_path.len();
         return Ok(true);
     }

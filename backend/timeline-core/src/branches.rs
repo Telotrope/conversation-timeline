@@ -14,11 +14,15 @@
 //!
 //! A conversation is left whole when its links can't be trusted: when any
 //! message has no parent field (an older export, or a file made by hand),
-//! or names a parent that isn't in the conversation (a cut-down copy).
+//! or names a parent that isn't in the conversation (a cut-down copy). It is
+//! left whole too when any message's time is unknown (plan §4e): the most
+//! recent message can't be found then, and a message of unknown time would
+//! otherwise look like the oldest, never on the path.
 
 use std::collections::{HashMap, HashSet};
 
 use crate::dedup::extract_text;
+use crate::message_time::MessageTime;
 use crate::model::{ChatMessage, Conversation, MessageId, ParentLink, Sender};
 
 /// A branch worth keeping as its own conversation holds at least this many
@@ -65,6 +69,9 @@ pub fn prune_replaced_branches(conversation: &Conversation) -> PrunedConversatio
         kept: messages.clone(),
         branches: Vec::new(),
     };
+    if messages.iter().any(|m| m.time() == MessageTime::Unknown) {
+        return whole();
+    }
     let ids: HashSet<MessageId> = messages.iter().map(|m| m.uuid).collect();
     let mut parent_of: HashMap<MessageId, Option<MessageId>> = HashMap::new();
     for m in messages {
