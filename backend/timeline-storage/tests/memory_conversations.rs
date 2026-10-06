@@ -13,6 +13,7 @@ fn summary(n: u128, name: &str) -> ConversationSummary {
     ConversationSummary {
         conversation_id: ConversationId(uuid::Uuid::from_u128(n)),
         name: ConversationName(name.to_string()),
+        version: 0,
         source: timeline_core::conversation_metadata::SourceFile {
             upload_id: UploadId(uuid::Uuid::from_u128(1)),
             file_name: timeline_core::labels::FileName::parse("conversations.json").unwrap(),
@@ -21,6 +22,7 @@ fn summary(n: u128, name: &str) -> ConversationSummary {
         },
         additions: Vec::new(),
         message_count: 3,
+        untimed: 0,
         message_span: None,
         participants: timeline_core::conversation_metadata::Participants::new(vec![
             timeline_core::conversation_metadata::Participant::Claude,
@@ -38,6 +40,8 @@ fn summary(n: u128, name: &str) -> ConversationSummary {
         )
         .unwrap(),
         span_origin: timeline_core::conversation_metadata::MetadataOrigin::Guessed,
+        branch_of: None,
+        branches: Vec::new(),
     }
 }
 
@@ -98,13 +102,16 @@ async fn get_does_not_leak_across_users() {
 async fn put_through_the_trait_method_is_visible_to_list_and_get() {
     let store = InMemoryConversationSummaryStore::new();
     let s = summary(1, "alice's chat");
-    ConversationSummaryStore::put(&store, &user("alice"), s.clone())
+    let stored = ConversationSummaryStore::put(&store, &user("alice"), s.clone())
         .await
         .unwrap();
 
     assert_eq!(
         store.get(&user("alice"), s.conversation_id).await.unwrap(),
-        Some(s.clone())
+        Some(stored.clone())
     );
-    assert_eq!(store.list_for_user(&user("alice")).await.unwrap(), vec![s]);
+    assert_eq!(
+        store.list_for_user(&user("alice")).await.unwrap(),
+        vec![stored]
+    );
 }

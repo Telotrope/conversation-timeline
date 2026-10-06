@@ -67,5 +67,19 @@ macro_rules! object_store_contract {
             let get_url = store.presign_get("k", ttl).await.unwrap();
             assert_ne!(put_url, get_url);
         }
+
+        #[tokio::test]
+        async fn a_deleted_object_is_gone_and_deleting_a_missing_one_is_no_error() {
+            let (store, _keep) = $make().await;
+            store.put("gone", b"x".to_vec()).await.unwrap();
+            store.put("kept", b"y".to_vec()).await.unwrap();
+            store.delete("gone").await.unwrap();
+            store.delete("never-written").await.unwrap();
+            assert!(matches!(
+                store.get("gone").await,
+                Err(timeline_core::ports::errors::ObjectStoreError::NotFound)
+            ));
+            assert_eq!(store.get("kept").await.unwrap(), b"y");
+        }
     };
 }

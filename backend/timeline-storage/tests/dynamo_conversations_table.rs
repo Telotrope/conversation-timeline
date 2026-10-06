@@ -106,6 +106,7 @@ async fn list_for_user_skips_upload_outcome_rows_in_the_same_table() {
     let summary = ConversationSummary {
         conversation_id: conversation(),
         name: ConversationName("only me".to_string()),
+        version: 0,
         source: timeline_core::conversation_metadata::SourceFile {
             upload_id: upload(),
             file_name: timeline_core::labels::FileName::parse("conversations.json").unwrap(),
@@ -114,6 +115,7 @@ async fn list_for_user_skips_upload_outcome_rows_in_the_same_table() {
         },
         additions: Vec::new(),
         message_count: 3,
+        untimed: 0,
         message_span: None,
         participants: timeline_core::conversation_metadata::Participants::new(vec![
             timeline_core::conversation_metadata::Participant::Claude,
@@ -131,11 +133,14 @@ async fn list_for_user_skips_upload_outcome_rows_in_the_same_table() {
         )
         .unwrap(),
         span_origin: timeline_core::conversation_metadata::MetadataOrigin::Guessed,
+        branch_of: None,
+        branches: Vec::new(),
     };
-    ConversationSummaryStore::put(&table, &alice(), summary.clone())
+    let stored = ConversationSummaryStore::put(&table, &alice(), summary.clone())
         .await
         .unwrap();
-    assert_eq!(table.list_for_user(&alice()).await.unwrap(), vec![summary]);
+    assert_eq!(stored.version, 1);
+    assert_eq!(table.list_for_user(&alice()).await.unwrap(), vec![stored]);
 }
 
 #[tokio::test]
@@ -229,6 +234,7 @@ async fn every_method_reports_a_missing_table_as_a_backend_error() {
     let summary = ConversationSummary {
         conversation_id: conversation(),
         name: ConversationName("x".to_string()),
+        version: 0,
         source: timeline_core::conversation_metadata::SourceFile {
             upload_id: upload(),
             file_name: timeline_core::labels::FileName::parse("conversations.json").unwrap(),
@@ -237,6 +243,7 @@ async fn every_method_reports_a_missing_table_as_a_backend_error() {
         },
         additions: Vec::new(),
         message_count: 1,
+        untimed: 0,
         message_span: None,
         participants: timeline_core::conversation_metadata::Participants::new(vec![
             timeline_core::conversation_metadata::Participant::Claude,
@@ -254,6 +261,8 @@ async fn every_method_reports_a_missing_table_as_a_backend_error() {
         )
         .unwrap(),
         span_origin: timeline_core::conversation_metadata::MetadataOrigin::Guessed,
+        branch_of: None,
+        branches: Vec::new(),
     };
     let failed = UploadOutcome::Failed {
         reason: "x".to_string(),
@@ -276,6 +285,10 @@ async fn every_method_reports_a_missing_table_as_a_backend_error() {
     ));
     assert!(matches!(
         ConversationSummaryStore::put(&table, &alice(), summary).await,
+        Err(StoreError::Backend(_))
+    ));
+    assert!(matches!(
+        table.list_page(&alice(), None, 5).await,
         Err(StoreError::Backend(_))
     ));
 }
@@ -647,6 +660,7 @@ fn full_record() -> ConversationSummary {
     ConversationSummary {
         conversation_id: conversation(),
         name: ConversationName("a meeting".to_string()),
+        version: 0,
         source: SourceFile {
             upload_id: upload(),
             file_name: FileName::parse("meeting.json").unwrap(),
@@ -658,6 +672,7 @@ fn full_record() -> ConversationSummary {
             UploadId(uuid::Uuid::from_u128(102)),
         ],
         message_count: 42,
+        untimed: 5,
         message_span: Some(
             ConversationSpan::new(
                 at("2026-10-01T10:00:00+00:00"),
@@ -684,25 +699,31 @@ fn full_record() -> ConversationSummary {
         )
         .unwrap(),
         span_origin: MetadataOrigin::Confirmed,
+        branch_of: Some(ConversationId(uuid::Uuid::from_u128(201))),
+        branches: vec![ConversationId(uuid::Uuid::from_u128(202))],
     }
 }
 
 #[tokio::test]
 async fn every_metadata_field_survives_a_round_trip() {
     let (table, _keep) = make().await;
-    ConversationSummaryStore::put(&table, &alice(), full_record())
+    let stored = ConversationSummaryStore::put(&table, &alice(), full_record())
         .await
         .unwrap();
+    assert_eq!(
+        stored,
+        ConversationSummary {
+            version: 1,
+            ..full_record()
+        }
+    );
     assert_eq!(
         ConversationSummaryStore::get(&table, &alice(), conversation())
             .await
             .unwrap(),
-        Some(full_record())
+        Some(stored.clone())
     );
-    assert_eq!(
-        table.list_for_user(&alice()).await.unwrap(),
-        vec![full_record()]
-    );
+    assert_eq!(table.list_for_user(&alice()).await.unwrap(), vec![stored]);
 }
 
 /// A row stored before conversations had metadata is refused, with a

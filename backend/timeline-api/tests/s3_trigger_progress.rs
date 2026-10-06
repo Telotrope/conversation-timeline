@@ -67,7 +67,8 @@ async fn a_successful_attempt_is_counted_once_and_ends_ready() {
         progress,
         Some(UploadProgress {
             attempts: 1,
-            last_error: None
+            last_error: None,
+            processing: None,
         })
     );
     let outcome = stores
@@ -104,7 +105,8 @@ async fn each_failed_attempt_is_counted_and_its_error_kept_for_the_page() {
             progress,
             Some(UploadProgress {
                 attempts: attempt,
-                last_error: Some("object not found".to_string())
+                last_error: Some("object not found".to_string()),
+                processing: None,
             })
         );
     }

@@ -41,7 +41,8 @@ macro_rules! upload_progress_contract {
                 store.get_progress(&user, upload).await.unwrap(),
                 Some(UploadProgress {
                     attempts: 2,
-                    last_error: None
+                    last_error: None,
+                    processing: None,
                 })
             );
         }
@@ -60,7 +61,8 @@ macro_rules! upload_progress_contract {
                 store.get_progress(&user, upload).await.unwrap(),
                 Some(UploadProgress {
                     attempts: 2,
-                    last_error: Some("first".to_string())
+                    last_error: Some("first".to_string()),
+                    processing: None,
                 })
             );
             store
@@ -91,7 +93,8 @@ macro_rules! upload_progress_contract {
                 store.get_progress(&user, upload).await.unwrap(),
                 Some(UploadProgress {
                     attempts: 0,
-                    last_error: Some("early".to_string())
+                    last_error: Some("early".to_string()),
+                    processing: None,
                 })
             );
         }
@@ -142,6 +145,62 @@ macro_rules! upload_progress_contract {
                     .unwrap()
                     .attempts,
                 1
+            );
+        }
+
+        /// How far the running attempt has got (plan
+        /// 2026-10-06-load-only-what-the-page-shows.md §8b): written every
+        /// second, each write replacing the last, beside the attempt count.
+        #[tokio::test]
+        async fn processing_progress_is_kept_beside_the_attempts_and_replaced_by_each_write() {
+            let (store, _keep) = $make().await;
+            let alice = progress_user("alice");
+            let early = timeline_core::ports::uploads::ProcessingProgress {
+                bytes_read: 100,
+                bytes_total: 1000,
+                conversations_written: 0,
+                conversations_total: 0,
+            };
+            store
+                .record_processing_progress(&alice, progress_upload(1), early)
+                .await
+                .unwrap();
+            assert_eq!(
+                store
+                    .get_progress(&alice, progress_upload(1))
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .processing,
+                Some(early)
+            );
+            store
+                .record_attempt(&alice, progress_upload(1))
+                .await
+                .unwrap();
+            let later = timeline_core::ports::uploads::ProcessingProgress {
+                bytes_read: 1000,
+                bytes_total: 1000,
+                conversations_written: 3,
+                conversations_total: 7,
+            };
+            store
+                .record_processing_progress(&alice, progress_upload(1), later)
+                .await
+                .unwrap();
+            let got = store
+                .get_progress(&alice, progress_upload(1))
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(got.attempts, 1);
+            assert_eq!(got.processing, Some(later));
+            assert_eq!(
+                store
+                    .get_progress(&progress_user("bob"), progress_upload(1))
+                    .await
+                    .unwrap(),
+                None
             );
         }
     };

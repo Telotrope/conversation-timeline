@@ -126,15 +126,56 @@ fn malformed_timestamp_fails_to_parse() {
     assert!(!err.to_string().is_empty());
 }
 
-/// A missing `created_at` (not just a malformed one) is caught the same
-/// way, since the field isn't `#[serde(default)]`.
+/// Rewritten as approved in plan
+/// 2026-10-06-load-only-what-the-page-shows.md §10b (it was
+/// `missing_timestamp_fails_to_parse`): a missing `created_at`, or `null`,
+/// is read with the time unknown (§4e), written down as the zero date and
+/// left out again when the message is written back. A malformed one is
+/// still refused (`malformed_timestamp_fails_to_parse`, unchanged).
 #[test]
-fn missing_timestamp_fails_to_parse() {
+fn a_missing_or_null_timestamp_is_read_as_unknown_and_left_out_when_written() {
+    for raw in [
+        serde_json::json!({
+            "uuid": "3f846bbc-6941-49df-b8cf-9864e7d7dcea",
+            "sender": "human",
+        }),
+        serde_json::json!({
+            "uuid": "3f846bbc-6941-49df-b8cf-9864e7d7dcea",
+            "sender": "human",
+            "created_at": null,
+        }),
+    ] {
+        let message = serde_json::from_value::<ChatMessage>(raw).unwrap();
+        assert_eq!(message.time(), timeline_core::MessageTime::Unknown);
+        assert_eq!(message.created_at, timeline_core::UNKNOWN_TIME);
+        let written = serde_json::to_value(&message).unwrap();
+        assert!(written.get("created_at").is_none(), "{written}");
+    }
+}
+
+#[test]
+fn a_known_timestamp_reads_back_as_known_and_is_written_out() {
     let raw = serde_json::json!({
         "uuid": "3f846bbc-6941-49df-b8cf-9864e7d7dcea",
         "sender": "human",
+        "created_at": "2026-01-01T00:00:00Z",
     });
-    assert!(serde_json::from_value::<ChatMessage>(raw).is_err());
+    let message = serde_json::from_value::<ChatMessage>(raw).unwrap();
+    let at = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    assert_eq!(message.time(), timeline_core::MessageTime::Known(at));
+    assert_eq!(message.time().known(), Some(at));
+    assert_eq!(message.time().written(), at);
+    assert_eq!(
+        serde_json::to_value(&message).unwrap()["created_at"],
+        "2026-01-01T00:00:00Z"
+    );
+    assert_eq!(timeline_core::MessageTime::Unknown.known(), None);
+    assert_eq!(
+        timeline_core::MessageTime::Unknown.written(),
+        timeline_core::UNKNOWN_TIME
+    );
 }
 
 /// `sender` being present but the wrong JSON type (a number, not a string)

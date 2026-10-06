@@ -27,6 +27,7 @@ macro_rules! conversation_summary_contract {
             SummaryRecord {
                 conversation_id: SummaryConversationId(uuid::Uuid::from_u128(id)),
                 name: SummaryConversationName(name.to_string()),
+                version: 0,
                 source: timeline_core::conversation_metadata::SourceFile {
                     upload_id: SummaryUploadId(uuid::Uuid::from_u128(500)),
                     file_name: timeline_core::labels::FileName::parse("conversations.json")
@@ -36,6 +37,7 @@ macro_rules! conversation_summary_contract {
                 },
                 additions: Vec::new(),
                 message_count: message_count,
+                untimed: 0,
                 message_span: None,
                 participants: timeline_core::conversation_metadata::Participants::new(vec![
                     timeline_core::conversation_metadata::Participant::Claude,
@@ -53,7 +55,15 @@ macro_rules! conversation_summary_contract {
                 )
                 .unwrap(),
                 span_origin: timeline_core::conversation_metadata::MetadataOrigin::Guessed,
+                branch_of: None,
+                branches: Vec::new(),
             }
+        }
+
+        /// `s` as `put` stores it: the version read, raised by one.
+        fn as_stored(mut s: SummaryRecord) -> SummaryRecord {
+            s.version += 1;
+            s
         }
 
         fn sorted(mut list: Vec<SummaryRecord>) -> Vec<SummaryRecord> {
@@ -77,14 +87,18 @@ macro_rules! conversation_summary_contract {
         #[tokio::test]
         async fn put_then_get_round_trips_every_field() {
             let (store, _keep) = $make().await;
-            let s = summary(1, "Starting a business — “quotes” & ünïcode", 42);
-            SummaryStore::put(&store, &summary_user("alice"), s.clone())
+            let mut s = summary(1, "Starting a business — “quotes” & ünïcode", 42);
+            s.untimed = 3;
+            s.branch_of = Some(SummaryConversationId(uuid::Uuid::from_u128(77)));
+            s.branches = vec![SummaryConversationId(uuid::Uuid::from_u128(78))];
+            let returned = SummaryStore::put(&store, &summary_user("alice"), s.clone())
                 .await
                 .unwrap();
+            assert_eq!(returned, as_stored(s.clone()));
             let got = SummaryStore::get(&store, &summary_user("alice"), s.conversation_id)
                 .await
                 .unwrap();
-            assert_eq!(got, Some(s));
+            assert_eq!(got, Some(as_stored(s)));
         }
 
         #[tokio::test]
@@ -97,7 +111,7 @@ macro_rules! conversation_summary_contract {
             let got = SummaryStore::get(&store, &summary_user("alice"), s.conversation_id)
                 .await
                 .unwrap();
-            assert_eq!(got, Some(s));
+            assert_eq!(got, Some(as_stored(s)));
         }
 
         #[tokio::test]
@@ -112,7 +126,7 @@ macro_rules! conversation_summary_contract {
                 .await
                 .unwrap();
             let got = store.list_for_user(&summary_user("alice")).await.unwrap();
-            assert_eq!(sorted(got), vec![a, b]);
+            assert_eq!(sorted(got), vec![as_stored(a), as_stored(b)]);
         }
 
         #[tokio::test]
@@ -143,18 +157,76 @@ macro_rules! conversation_summary_contract {
             assert_eq!(got, None);
         }
 
+        /// Replaces `put_again_replaces_the_earlier_summary` (plan
+        /// 2026-10-06-load-only-what-the-page-shows.md §10b): a write with
+        /// the version read replaces the record; a stale one is refused and
+        /// changes nothing (§7, C1).
         #[tokio::test]
-        async fn put_again_replaces_the_earlier_summary() {
+        async fn a_write_with_the_version_read_replaces_it_and_a_stale_one_is_refused() {
             let (store, _keep) = $make().await;
-            SummaryStore::put(&store, &summary_user("alice"), summary(1, "old", 1))
+            let first = SummaryStore::put(&store, &summary_user("alice"), summary(1, "old", 1))
                 .await
                 .unwrap();
-            let newer = summary(1, "new", 5);
-            SummaryStore::put(&store, &summary_user("alice"), newer.clone())
+            assert_eq!(first.version, 1);
+            // A second writer that read nothing (version 0) is refused.
+            let stale_new =
+                SummaryStore::put(&store, &summary_user("alice"), summary(1, "rival", 2)).await;
+            assert!(
+                matches!(
+                    stale_new,
+                    Err(timeline_core::ports::errors::StoreError::Conflict)
+                ),
+                "got {stale_new:?}"
+            );
+            let mut newer = first.clone();
+            newer.name = SummaryConversationName("new".to_string());
+            newer.message_count = 5;
+            let second = SummaryStore::put(&store, &summary_user("alice"), newer.clone())
                 .await
                 .unwrap();
+            assert_eq!(second, as_stored(newer));
+            // Writing again from the first read is stale now.
+            let stale = SummaryStore::put(&store, &summary_user("alice"), first).await;
+            assert!(
+                matches!(
+                    stale,
+                    Err(timeline_core::ports::errors::StoreError::Conflict)
+                ),
+                "got {stale:?}"
+            );
             let got = store.list_for_user(&summary_user("alice")).await.unwrap();
-            assert_eq!(got, vec![newer]);
+            assert_eq!(got, vec![second]);
+        }
+
+        #[tokio::test]
+        async fn a_page_of_records_starts_after_the_id_given_and_holds_at_most_max() {
+            let (store, _keep) = $make().await;
+            for n in [3, 1, 4, 2, 5] {
+                SummaryStore::put(&store, &summary_user("alice"), summary(n, "c", 1))
+                    .await
+                    .unwrap();
+            }
+            SummaryStore::put(&store, &summary_user("bob"), summary(9, "b", 1))
+                .await
+                .unwrap();
+            let ids = |list: Vec<SummaryRecord>| -> Vec<u128> {
+                list.iter().map(|s| s.conversation_id.0.as_u128()).collect()
+            };
+            let first = store
+                .list_page(&summary_user("alice"), None, 2)
+                .await
+                .unwrap();
+            assert_eq!(ids(first.clone()), vec![1, 2]);
+            let next = store
+                .list_page(&summary_user("alice"), Some(first[1].conversation_id), 2)
+                .await
+                .unwrap();
+            assert_eq!(ids(next.clone()), vec![3, 4]);
+            let last = store
+                .list_page(&summary_user("alice"), Some(next[1].conversation_id), 2)
+                .await
+                .unwrap();
+            assert_eq!(ids(last), vec![5]);
         }
     };
 }

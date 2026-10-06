@@ -1,8 +1,7 @@
 //! Runs every storage contract against the in-memory fakes -- the same
 //! checks the real S3 and DynamoDB adapters must pass (see
-//! `s3_object_store.rs`, `dynamo_conversations_table.rs`,
-//! `dynamo_message_flags.rs`). If a fake and a real adapter disagree, one
-//! of the two suites fails.
+//! `s3_object_store.rs` and the `dynamo_*.rs` files). If a fake and a real
+//! adapter disagree, one of the two suites fails.
 
 #[macro_use]
 #[path = "support/object_store_contract.rs"]
@@ -20,13 +19,21 @@ mod upload_received_contract;
 #[path = "support/conversation_summary_contract.rs"]
 mod conversation_summary_contract;
 #[macro_use]
-#[path = "support/message_flags_contract.rs"]
-mod message_flags_contract;
+#[path = "support/message_rows_contract.rs"]
+mod message_rows_contract;
+#[macro_use]
+#[path = "support/session_contract.rs"]
+mod session_contract;
+#[macro_use]
+#[path = "support/user_record_contract.rs"]
+mod user_record_contract;
 
 use timeline_storage::memory::conversations::InMemoryConversationSummaryStore;
-use timeline_storage::memory::message_flags::InMemoryMessageFlagsStore;
+use timeline_storage::memory::messages::InMemoryMessageStore;
 use timeline_storage::memory::object_store::InMemoryObjectStore;
+use timeline_storage::memory::sessions::InMemorySessionStore;
 use timeline_storage::memory::uploads::InMemoryUploadOutcomeStore;
+use timeline_storage::memory::user_records::InMemoryUserRecordStore;
 
 mod object_store {
     async fn make() -> (super::InMemoryObjectStore, ()) {
@@ -63,9 +70,23 @@ mod conversation_summaries {
     conversation_summary_contract!(make);
 }
 
-mod message_flags {
-    async fn make() -> (super::InMemoryMessageFlagsStore, ()) {
-        (super::InMemoryMessageFlagsStore::new(), ())
+mod message_rows {
+    async fn make() -> (super::InMemoryMessageStore, ()) {
+        (super::InMemoryMessageStore::new(), ())
     }
-    message_flags_contract!(make);
+    message_rows_contract!(make);
+}
+
+mod sessions {
+    async fn make() -> (super::InMemorySessionStore, ()) {
+        (super::InMemorySessionStore::new(), ())
+    }
+    session_contract!(make);
+}
+
+mod user_records {
+    async fn make() -> (super::InMemoryUserRecordStore, ()) {
+        (super::InMemoryUserRecordStore::new(), ())
+    }
+    user_record_contract!(make);
 }

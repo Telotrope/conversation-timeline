@@ -32,14 +32,20 @@ fn keys_the_writer_cannot_produce_are_not_parsed() {
     }
 }
 
+/// Replaces `added_messages_are_kept_under_their_user_conversation_and_upload`
+/// (plan 2026-10-06-load-only-what-the-page-shows.md §10b): the additions
+/// objects are gone; files kept from a conversation are stored under their
+/// user, conversation, message and number, and no file name becomes part
+/// of the key.
 #[test]
-fn added_messages_are_kept_under_their_user_conversation_and_upload() {
+fn a_stored_file_is_kept_under_its_user_conversation_message_and_number() {
     let user = UserId("alice".to_string());
     let conversation = timeline_core::ConversationId(uuid::Uuid::from_u128(5));
-    let key = timeline_core::ports::uploads::addition_object_key(&user, conversation, upload_id());
+    let message = timeline_core::MessageId(uuid::Uuid::from_u128(6));
+    let key = timeline_core::ports::uploads::file_object_key(&user, conversation, message, 2);
     assert_eq!(
         key,
-        format!("additions/alice/00000000-0000-0000-0000-000000000005/{UPLOAD}.json")
+        "files/alice/00000000-0000-0000-0000-000000000005/00000000-0000-0000-0000-000000000006/2"
     );
     // Never mistaken for a raw upload, whose arrival starts processing.
     assert_eq!(parse_raw_object_key(&key), None);

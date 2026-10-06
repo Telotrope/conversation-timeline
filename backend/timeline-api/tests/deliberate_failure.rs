@@ -102,6 +102,7 @@ async fn when_on_each_attempt_is_counted_and_fails_on_purpose_without_processing
             Some(UploadProgress {
                 attempts: attempt,
                 last_error: Some("failing on purpose (FailProcessing is on)".to_string()),
+                processing: None,
             })
         );
     }
