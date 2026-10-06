@@ -238,7 +238,7 @@ the same set as the messages you reviewed (`isReviewed`, line 66). (Claude descr
    Two questions it answers:
    - `admits_session(&session)`: can this session hold a match? No if it is another conversation,
      if its start and end miss the span, or if its stored count for the chosen flag under the chosen
-     view is zero (§6). Search can't rule a session out: only an index of words could (C17).
+     view is zero (§6); for "Flagged", if all three of its flag counts under the view are zero. Search can't rule a session out: only an index of words could (C17).
    - `admits_message(&message)`: does this message match? Every filter again, message by message,
      since a session with one flagged message holds unflagged ones too.
 2. **`FlagView`'s rules** (new, `timeline-core/src/flag_view.rs`): whether a flag is in effect under
@@ -273,13 +273,17 @@ sessions that can match. It grows with how much you have written; C17 says when 
 ## 5c. Analytics on the server, saved
 
 The five analyses ([analyses.js](../../frontend/core/analyses.js)) are computed by the server and
-saved (the user, 2026-10-06); the page draws their charts. What each needs, as read in that file:
+saved (the user, 2026-10-06); the page draws their charts. Every flag rate is "messages with any of
+the three flags" over the counted messages (`isFlagged` and `countsTowardRates`,
+[flags.js:76-85](../../frontend/core/flags.js#L76-L85)); the session counts don't store "any of the
+three" (§6), so every analysis reads messages the first time it is computed after a change, and the
+saved result serves the rest. What each needs, as read in that file:
 
 | Analysis | Needs | From |
 |---|---|---|
-| Friction ranking, by conversation or by session | flagged and counted messages per conversation or session | the session counts (§6) alone |
-| Session length vs. flag rate | each session's length and rate | the session counts alone |
-| Idle time before a session | gaps between a conversation's sessions, and rates | the session counts alone |
+| Friction ranking, by conversation or by session | flagged (any of the three) and counted messages per conversation or session | `find_messages`, view only, counted per session |
+| Session length vs. flag rate | each session's length and rate | sessions, and `find_messages` for the rates |
+| Idle time before a session | gaps between a conversation's sessions, and rates | sessions, and `find_messages` for the rates |
 | Flag rate over time (week or month) | each message's local date and flags | `find_messages`, view only |
 | Time of day and day of week | each message's local hour and weekday and flags | `find_messages`, view only |
 
@@ -302,19 +306,24 @@ headings depend on the viewer's language settings. The page keeps `pearsonR`, th
 
 ## 6. Session flag counts
 
-Each session row stores the numbers that the filter (§5b) and the analyses (§5c) need, so that the
-Calendar, the Conversations tab, a flag filter and three of the analyses never read messages:
+Each session row stores eleven numbers, so that the Calendar, the Conversations tab and the flag
+filter (§5b) never read messages:
 
 - **your messages** in the session;
 - **your reviewed messages** (with a value of yours for any flag; the same set as "overridden",
-  §5b), which is also the rate's denominator when only your flags are shown;
+  §5b), which is also a rate's denominator when only your flags are shown;
 - for each view that shows anything (automatic only, yours only, both with yours winning), the
-  messages with **critical**, **angry**, **ALL-CAPS**, and **any of the three**: twelve numbers.
-  "Any of the three" is stored, not added up, since one message can carry two flags.
+  messages with **critical**, **angry** and **ALL-CAPS**: nine numbers.
 
-Fourteen numbers. With neither switch on, every count is zero and the rate has no denominator, as
-today. (The first draft stored nine numbers, without "any" or "reviewed", which could serve
-neither the "Flagged" filter nor a rate; C14.)
+With neither switch on, every count is zero and there is no rate, as today.
+
+"Any of the three" is not stored (the user, 2026-10-06). The page never shows it as a count: the
+Calendar and the Conversations tab show each flag's count separately
+([conversations.js:81-89](../../frontend/ui/views/conversations.js#L81-L89),
+[calendar.js:50](../../frontend/ui/views/calendar.js#L50)). It is used in two places only: the
+"Flagged" filter, which can still rule out a session whose three flag counts are all zero (§5b);
+and every analysis's flag rate, which the server computes from messages and saves (§5c). It can't
+be added up from the three counts, since one message can carry two flags.
 
 They change whenever a flag does:
 
@@ -463,7 +472,7 @@ DynamoDB writes of about 8,000 write units, roughly $0.005–0.01; about 50 S3 w
    up to 16 batches at a time; step durations in its log line; the files of §4 extracted; the upload
    deleted when done; the additions and `conversation_rebuild.rs` replaced.
 3. **Flags and their counts.** `FlagView`'s rules on the server; flag saves and the scan writing
-   message rows; the fourteen session counts kept current; the data version raised.
+   message rows; the eleven session counts kept current; the data version raised.
 4. **Finding messages** (§5b). `MessageFilter` and `find_messages`, then the routes on them:
    `GET /messages`, `GET /sessions`, `GET /conversations/{id}/files`, `GET /files/…`; the annotated
    download rebuilt from rows.
@@ -502,7 +511,7 @@ reads messages (§5b); analyses are computed on the server and saved, charts dra
 
 ### C1 [OPEN]: Two files of a batch processed at once can lose each other's messages
 Present in the code built on 2026-10-05 as well. **Mitigation in plan:** versioned conditional
-writes with a retry ([§7 (line 326)](2026-10-06-load-only-what-the-page-shows.md#L326)). **Open:** until
+writes with a retry ([§7 (line 335)](2026-10-06-load-only-what-the-page-shows.md#L335)). **Open:** until
 this plan is built, a batch whose files share conversations can lose added messages on AWS. Trigger:
 this plan's step 2.
 
@@ -514,7 +523,7 @@ this plan's step 2.
 measures them.
 
 ### C4 [RESOLVED]: The first estimates table mixed kinds of numbers
-**Resolution:** one table, the same four columns, absolute times ([§9 (line 410)](2026-10-06-load-only-what-the-page-shows.md#L410)).
+**Resolution:** one table, the same four columns, absolute times ([§9 (line 419)](2026-10-06-load-only-what-the-page-shows.md#L419)).
 
 ### C5 [RESOLVED]: Files and rows both holding messages
 **Resolution:** rows hold every message's text; the session files are dropped, and tool calls,
@@ -523,7 +532,7 @@ tool results and thinking are not kept (the user, 2026-10-06). Only files of §4
 
 ### C6 [RESOLVED]: The Calendar needed messages only to split a session's flags by day
 **Resolution:** a session's flags show on every day it touches; the counts are stored with the
-session ([§6 (line 303)](2026-10-06-load-only-what-the-page-shows.md#L303)).
+session ([§6 (line 307)](2026-10-06-load-only-what-the-page-shows.md#L307)).
 
 ### C7 [OPEN]: Deleting the upload loses what isn't kept, for good
 Tool calls, tool results and thinking are gone once the upload is deleted, and the annotated
@@ -547,7 +556,7 @@ user finds marked files wrong often, drop the replay and keep only the first ver
 They put opening the timeline on AWS at 9 s and processing at 5 s, from a guessed slow-down. The
 activity run of 2026-10-05 had measured 37 s and 6 s, and sending the file, 26 s, was missing
 altogether. **Resolution:** §9 now starts from those measurements, lists what you wait for step by
-step, and derives the slow-down from them ([§9 (line 410)](2026-10-06-load-only-what-the-page-shows.md#L410)).
+step, and derives the slow-down from them ([§9 (line 419)](2026-10-06-load-only-what-the-page-shows.md#L419)).
 
 ### C11 [OPEN]: Slimming is measured in Node, not in a browser
 Parsing the 63.5 MB file took 0.3–0.7 s in Node on this machine; a browser on a slower computer may
@@ -572,13 +581,15 @@ draw; Review a page at a time, Analytics as saved numbers
 
 ### C14 [RESOLVED]: Nine session counts could not serve the "Flagged" filter or a rate
 "Flagged" is any of three flags, which can't be added up from per-flag counts, and a rate with only
-your flags shown is over your reviewed messages, which weren't counted. **Resolution:** fourteen
-numbers ([§6 (line 303)](2026-10-06-load-only-what-the-page-shows.md#L303)).
+your flags shown is over your reviewed messages, which weren't counted. **Resolution:** the
+messages and your reviewed messages are counted; "any of the three" is not stored (the user,
+2026-10-06), since it is never shown as a count, the "Flagged" filter can use the three flag
+counts, and the analyses compute rates from messages and save them: eleven numbers ([§6 (line 307)](2026-10-06-load-only-what-the-page-shows.md#L307)).
 
 ### C15 [RESOLVED]: Processing on AWS was put at 6 s after the change without a reason
 **Resolution:** the estimate is derived (parsing at the measured AWS ratio, parallel writes), the
 log line gains step durations, and step 7 tries more memory
-([§7 (line 326)](2026-10-06-load-only-what-the-page-shows.md#L326)).
+([§7 (line 335)](2026-10-06-load-only-what-the-page-shows.md#L335)).
 
 ### C16 [RESOLVED]: Analyses on the server don't know the viewer's day, week or hour
 **Resolution:** the page sends its time zone; results are saved per time zone
