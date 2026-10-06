@@ -458,31 +458,43 @@ rule of §8b, and each request well inside the deployment's 30-second limit
 ([template.yaml:148](../../infra/template.yaml#L148)). Tests start the server with a shorter
 budget, so a small scan still takes several requests.
 
-## 8b. The display changes at least every 10 seconds while you wait
+## 8b. The progress bar moves at least every 10 seconds while you wait
 
-The user's rule (2026-10-06): while the user waits, what the page shows changes at least every ten
-seconds. The published guidance agrees on the threshold and says nothing finer: ten seconds is
-about how long attention stays on a task, and past it users want a percent-done indicator, or they
-assume the system has stopped (Nielsen's response-time limits); a bar that moves steadily is
-preferred to one that stalls, and a stall with an explanation is better than a silent one
-(Harrison and others' progress-bar studies). No source found gives a required update interval
-below that. Since ten seconds is the limit itself, not a margin, every wait here changes its
-display far more often:
+The user's rule (2026-10-06, clarified the same day): while the user waits, **the progress bar
+moves, on real progress, at least every ten seconds**. A clock alone doesn't satisfy it. The
+published guidance agrees on the threshold and says nothing finer: ten seconds is about how long
+attention stays on a task, and past it users want a percent-done indicator, or they assume the
+system has stopped (Nielsen's response-time limits); a bar that moves steadily is preferred to one
+that stalls, and a stall with an explanation is better than a silent one (Harrison and others'
+progress-bar studies). Waits that always end within ten seconds meet the rule without a bar.
 
-| Wait | What changes | How often |
+So every wait that can last longer is split into steps that can be measured, each expected to take
+well under ten seconds:
+
+| Wait | What the bar measures | Longest expected gap between moves |
 |---|---|---|
-| Preparing the file (§7b) | which step has finished ("reading", "slimming", "compressing"), and a clock; no percentage inside a step, since none can be measured | the clock every second; the step after each one |
-| Sending | bytes and percentage (exists) | as bytes go, at least every second |
-| Processing | which attempt, and a clock (exists, `showWaitProgress`) | every second |
-| The scan | conversations done of total, and the percentage | each request, about every 5 s; a clock every second between them |
-| Opening the timeline | the conversation records and sessions: what has arrived of each, a percentage when the size is stated, and a clock | every second |
-| A page of Review, an analysis from the server | "Loading…" with a clock, after the first second | every second |
+| Preparing the file (§7b) | bytes of the file read (`File.stream`), then bytes parsed, then conversations slimmed of the total, then bytes compressed. Parsing is done with **@streamparser/json** (MIT; to be confirmed from its licence file when vendored), which reads the file as a stream and reports how far it has got; a plain `JSON.parse` is one step that can't report anything, and could take several seconds on a slow computer (C11). All in a Web Worker | well under a second |
+| Sending | bytes sent (exists) | under a second |
+| Processing | the server records its steps in the upload's progress row, which the page already reads every second (`GET /uploads/{id}`): file read, parsed, conversations written of the total | parsing, about 2.5 s on AWS (estimated, §9) |
+| The scan | conversations done of the total, after each request | one request: the 5-second budget plus one conversation's work |
+| Opening the timeline | bytes of the conversation records, then of the sessions (both answers state their size) | under a second: about 160 KB in all |
+| The annotated download | conversations written of the total while the server builds it (reported like the scan: the page asks in parts), then bytes received | one part |
+| A page of Review, a server analysis | nothing: expected 0.3–2 s on AWS (§9). A search reading every message is the one that could grow past ten seconds (C17) | |
 
-**What happens today** (read in the code, 2026-10-06): opening the timeline shows
-"Preparing…" with an animated bar and fixed text for the whole `GET /export` (12.3 s measured on
-AWS) before any bytes arrive, so its text doesn't change for over ten seconds; the records request
-runs beside it with no display of its own. The scan updates after each page of 5 conversations,
-about every 3 s on AWS. The processing wait already ticks every second.
+**What happens today** (read in the code, 2026-10-06):
+
+- **Signing in, reading the file, processing:** a striped, animated bar at full width
+  (`setLoadProgressIndeterminate`) that measures nothing. Processing took about 6 s on AWS.
+- **Sending:** a real bar, bytes sent ([status-indicators.js:170](../../frontend/ui/widgets/status-indicators.js#L170)).
+- **Opening the timeline:** the striped full bar for the whole `GET /export` (12.3 s measured on
+  AWS), so nothing moves for over ten seconds; then bytes received, as a real bar when the size is
+  stated, otherwise a full bar with the bytes in the label.
+- **The scan:** the bar's width moves after each request of 5 conversations (about every 3 s on
+  AWS). But the striped animation set for processing is never removed (`showScanProgress` changes
+  only the width, [status-indicators.js:185](../../frontend/ui/widgets/status-indicators.js#L185)),
+  so the measured bar is drawn as if it measured nothing, and until the first answer it stays at
+  full width (inferred from the code; not seen on screen). Fixed by this plan: every measured bar
+  clears the striped state.
 
 **The clock is not progress, and is labelled so.** Real progress is known only at certain moments:
 as bytes are sent or received, and when a server request answers (the scan's done-of-total). In
@@ -497,9 +509,10 @@ activity record notes the label once, not each tick (as now, `setLoadProgressLab
 busy, it redraws nothing, clock included. Preparing the file reads the whole 63.5 MB export in one
 step (`JSON.parse`, 0.3–0.7 s in Node here, possibly much longer in a browser on a slower computer,
 C11), and nothing can interrupt that step to report how far it got. So preparing the file runs in a
-Web Worker (a second thread the browser provides, built in; no library), which sends back each
-step as it finishes; the page's thread stays free, and the clock keeps ticking. Measured in step 7:
-the longest gap between two changes of the display, in each wait, on the user's computer.
+Web Worker (a second thread the browser provides, built in; no library), which sends back its
+progress as it goes; the page's thread stays free, and the bar and clock keep moving. Measured in
+step 7: the longest gap between two moves of the bar, in each wait, on the user's computer and on
+AWS; any gap over ten seconds is a failure of this plan.
 
 ## 9. Expected times
 
