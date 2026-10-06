@@ -793,6 +793,7 @@ avoids a behaviour change nobody asked for):
 | `timeline-api/tests/s3_trigger.rs` `processing_an_event_twice_stores_the_same_data_as_once` | keeps its assertions; passes because the second event is skipped | |
 | `timeline-api/tests/storage_settings.rs`, `aws_state.rs`, `support/aws_world.rs` | the message-flags table setting goes (six settings become five) | |
 | `timeline-api/tests/aws_state.rs` `export_and_a_flag_save_on_one_instance_are_visible_on_another` | stores message rows, not only a raw file | the export reads rows |
+| Every test that reads `GET /conversations` or `GET /uploads` (16 calls in `app.rs`, `conversation_metadata.rs`, `aws_state.rs`, `request_log.rs`, `dev_routes.rs`, `lambda_router.rs`; the routes in `e2e/screen-flow.spec.js`; the Files-tab test `the_file_list_counts_each_files_conversations_and_says_varies`) | read the records or files from inside the new reply, which also carries the total, the cursor and the data version | the replies answer in parts (§8c); approved by the user, 2026-10-06 |
 | Every test router and store set (`app.rs`, `export.rs`, `detect.rs`, `flag_saves.rs`, `conversation_metadata.rs`, `dev_routes.rs`, `lambda_router.rs`, `upload_status.rs`, `request_log.rs`, `s3_*`, `deliberate_failure.rs`, `run_log_lines.rs`) | setup only: the flags store is replaced by the message store; `FaultyObjectStore` gains `delete` | |
 
 **Page unit tests.**
