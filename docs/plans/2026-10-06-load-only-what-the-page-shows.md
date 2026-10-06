@@ -501,6 +501,71 @@ Existing tests that read the downloaded export, the flags table, the page's own 
 analysis arithmetic, or a flag drawn on only one day of a session crossing midnight will need
 changes. The list comes to the user for approval before coding.
 
+## 10b. Changes to existing tests (for the user's approval)
+
+Found by reading every test on 2026-10-06. Choices made first, to keep the list short (each also
+avoids a behaviour change nobody asked for):
+
+- **Plain uploads still accepted.** Processing decompresses a gzip-compressed upload and reads any
+  other as plain JSON, so tests that store plain JSON keep working.
+- **Flag handles unchanged.** `GET /messages` issues them; `GET /export` still does too. A save
+  finds its message among the conversation's rows by id, so a save's body is unchanged.
+- **`GET …/flags` kept**, read from the message rows.
+- **The annotated download keeps `_claude_timeline_auto`** for scanned messages.
+- **The `additions` field stays** on the conversation record (the uploads that added messages; the
+  file list's "gained messages" reads it); only the `additions/…` objects go.
+- **A later file still adds only messages outside the stored time range** (Q18).
+- **An upload already processed is skipped**: since the original is deleted, a repeated S3 event
+  would otherwise fail and overwrite "ready" with "failed".
+
+**Backend (Rust).**
+
+| Test | Change | Why |
+|---|---|---|
+| `timeline-storage/tests/memory_message_flags.rs`, `dynamo_message_flags.rs`, `support/message_flags_contract.rs` (all) | **remove** | the `MessageFlags` table and its port go; equivalent contracts are written for flags on message rows |
+| `timeline-storage/tests/contract_memory.rs` | drop the flags contract module | same |
+| `timeline-storage/tests/support/conversation_summary_contract.rs`, `memory_conversations.rs`, `dynamo_conversations_table.rs` | records gain `version`; `put_again_replaces_the_earlier_summary` becomes "a write with the version read replaces it; a stale one is refused" | versioned writes (§7, C1) |
+| `timeline-core/tests/raw_object_key.rs` `added_messages_are_kept_under_their_user_conversation_and_upload` | **remove** | `addition_object_key` goes |
+| `timeline-api/tests/processing.rs` | harness without the flags store; `processing_an_upload_writes_no_automatic_flags`, `reviews_embedded_in_an_upload_are_stored_as_yours`, `an_empty_review_is_not_stored`, `detection_after_upload_keeps_the_imported_review`, `an_unreadable_review_fails_the_upload_and_stores_nothing` read flags from message rows | flags move onto rows |
+| `timeline-api/tests/processing_merge.rs` | harness; `processing_the_same_file_again_adds_nothing_twice` keeps its assertions | |
+| `timeline-api/tests/processing_errors.rs` | `a_failed_review_save_names_the_review_its_number_and_the_total` becomes "a failed message-row write names how many rows were left"; the failing summary store implements the versioned write | reviews are written with the rows, in batches |
+| `timeline-api/tests/detect.rs` | `paging_covers_every_conversation_exactly_once` rewritten for the time budget (the next conversation to start from, done of total); other tests' response fields renamed | §8 |
+| `timeline-api/tests/conversation_metadata.rs` | `the_scan_reads_messages_a_later_file_added` and `damaged_stored_data_is_a_server_error` rewritten: the export and scan read rows, so damage is a damaged row, not a damaged stored file | `conversation_rebuild.rs` goes |
+| `timeline-api/tests/request_log.rs` | `detection_uploads_and_exports_log_their_facts`: the scan's logged facts change | §8 |
+| `timeline-api/tests/run_log_lines.rs` | `a_ready_upload_logs_what_was_read_and_stored_on_its_own_channel`: the logged facts gain each step's duration | §7 |
+| `timeline-api/tests/s3_trigger.rs` `processing_an_event_twice_stores_the_same_data_as_once` | keeps its assertions; passes because the second event is skipped | |
+| `timeline-api/tests/storage_settings.rs`, `aws_state.rs`, `support/aws_world.rs` | the message-flags table setting goes (six settings become five) | |
+| `timeline-api/tests/aws_state.rs` `export_and_a_flag_save_on_one_instance_are_visible_on_another` | stores message rows, not only a raw file | the export reads rows |
+| Every test router and store set (`app.rs`, `export.rs`, `detect.rs`, `flag_saves.rs`, `conversation_metadata.rs`, `dev_routes.rs`, `lambda_router.rs`, `upload_status.rs`, `request_log.rs`, `s3_*`, `deliberate_failure.rs`, `run_log_lines.rs`) | setup only: the flags store is replaced by the message store; `FaultyObjectStore` gains `delete` | |
+
+**Page unit tests.**
+
+| Test | Change | Why |
+|---|---|---|
+| `analyses.test.js` | the fixtures build sessions with counts instead of messages; the trend and time-of-day tests (L55, L70, and those parts of L111) **move to Rust** | §5c |
+| `flags.test.js` L49 (`attachFlags`), L79 (`countsTowardRates`) | **remove**; the rules are tested in Rust | sessions come counted from the server |
+| `blocks.test.js` L13, L27; `blocks-span.test.js` (all) | **remove**; session cutting is tested in Rust. Placing a conversation with no message times by its start and end is not carried over: the server refuses messages without a time, so no such conversation can exist (screen-flow analysis, deviation 5) | |
+| `export-format.test.js` | all but L69 **removed** or rewritten as tests of slimming (L32, L69 kept on the slimming function) | the page no longer reads an export into its state |
+| `annotated-export.test.js` L13, `api-client-unit.test.js` L57, L67, L77 | rewritten: the download comes from `GET /export`; handles come from `GET /messages` | |
+| `page-messages.test.js` L34 | wording list follows the changed messages ("Loaded N of your confirmed flags" goes; "Preparing the file" comes) | |
+| `fixtures.js` | builds sessions with counts; drops the parsed-export fields | |
+
+**Browser tests.**
+
+| Test | Change | Why |
+|---|---|---|
+| `synthetic-export.js` | chains each message's parent to the one before; options to make branches, citations, attachments and file tool calls | today every message is a first message, so pruning would treat all but one as replaced |
+| `upload-flow.spec.js` L285 (a file over 2 MB) | sends the large file without slimming, through the plain-upload path, so the size limit is still tested | |
+| `upload-flow.spec.js` L327 | checks the row's reviewed state after reload, not the "Loaded N flags" line | |
+| `upload-flow.spec.js` L348 | **remove**: the timeline download it tests no longer exists | |
+| `activity.spec.js` L146 | expects the scan's new request shape | |
+| `cognito-login.spec.js` L308, `views.spec.js` L399, L669, L683, L802 | hold or fail `GET /sessions` instead of `GET /export` | |
+| `views.spec.js` L173 | tests search, filters and paging through `GET /messages`, with more than 50 messages | |
+| `views.spec.js` L235, L699 | check the rebuilt download (text, flags, file names) | |
+| `screen-flow.spec.js` L489 | the backend is started with a shorter scan budget for tests, so the scan takes several requests | |
+| `views.spec.js` `waitForAnalysis`, L150, L647 | wait for the analysis's request or its drawn chart | two analyses now come from the server |
+| `views.spec.js` L842 | extended: the same flags on both days of a session crossing midnight | |
+
 ## 11. Questions for the user
 
 **Answered on 2026-10-06:** Q1 (withdrawn: flags move onto the message rows, §3); Q2 (the upload is
