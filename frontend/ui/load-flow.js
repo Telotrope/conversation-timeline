@@ -132,12 +132,14 @@ export async function uploadOneFile(token, file, scan, humanName, on){
 // request, but then there would be nothing to report: paging is what makes
 // the progress bar show real, earned progress rather than a spinner.
 // onProgress(covered, total) after each page; resolves to how many
-// messages were scanned.
-export async function runDetectionPass(token, onProgress){
+// messages were scanned. stopped(), checked before each page, ends the pass
+// early (the Upload page's Stop).
+export async function runDetectionPass(token, onProgress, stopped = () => false){
   let offset = 0;
   let detected = 0;
   const limit = 5;
   for(;;){
+    if(stopped()) return detected;
     const res = await apiFetch('/detect', {
       method: 'POST',
       token,
@@ -205,6 +207,10 @@ export function downloadWithBar(token){
 let CHOSEN = [];
 let FLOW = null;
 let BATCH = null;
+// From Upload pressed until the page moves on: sending, waiting and the
+// scan. While it lasts only Stop shows, and Back is refused.
+let BUSY = false;
+let SCAN_STOPPED = false;
 
 // flow: { hasData(), dataArrived(), toSignIn(messageId), afterUpload(result) }, from
 // ui/page-flow.js through main.js.
@@ -212,9 +218,9 @@ export function connectUploadPage(flow){
   FLOW = flow;
 }
 
-// Whether files are being sent or processed now.
+// Whether files are being sent, processed or scanned now.
 export function uploading(){
-  return BATCH !== null;
+  return BUSY;
 }
 
 // Empties the page for a new batch: no files, no messages, no bar. "Back to
@@ -261,8 +267,11 @@ function showChosenFiles(){
   }));
 }
 
+// Stop: cancels the files still being sent or processed; during the scan,
+// ends it after the request under way (the files are already uploaded).
 export function stopUpload(){
   if(BATCH) BATCH.stop();
+  else SCAN_STOPPED = true;
 }
 
 // Upload pressed: sign-in token, every file at once, the scan if ticked,
@@ -279,12 +288,19 @@ export async function handleUploadClick(){
   showLoadProgress();
   const token = await signInForUpload();
   if(!token) return;
-  showUploadButtons(true, false);
+  setBusy(true);
   const result = await sendBatch(token, files, scan);
   if(result.processed.length > 0) FLOW.dataArrived();
-  showUploadButtons(false, FLOW.hasData());
+  const goOn = result.processed.length > 0 && await finishBatch(token, scan);
+  setBusy(false);
   if(result.processed.length === 0) return reportNothingProcessed(files, result);
-  if(await finishBatch(token, scan)) FLOW.afterUpload({ token, files, ...result });
+  if(goOn) FLOW.afterUpload({ token, files, ...result });
+}
+
+function setBusy(busy){
+  BUSY = busy;
+  SCAN_STOPPED = false;
+  showUploadButtons(busy, FLOW.hasData());
 }
 
 async function signInForUpload(){
@@ -378,7 +394,7 @@ async function finishBatch(token, scan){
   try{
     if(scan){
       setLoadStatus('load.scanning');
-      await runDetectionPass(token, showScanProgress);
+      await runDetectionPass(token, showScanProgress, () => SCAN_STOPPED);
     }
     if((await fetchConversationRecords(token)).length === 0){
       setLoadStatus('load.no_conversations');
