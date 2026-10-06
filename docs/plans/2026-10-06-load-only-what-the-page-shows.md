@@ -39,7 +39,7 @@ Measured on `real-flags.json` (61.8 MB):
 | Conversation records | DynamoDB `Conversations`, `CONV#…` (exists) | unchanged, plus a version number (§7) |
 | **Sessions** | `Conversations`, new `SESS#{conversation}#{n}` rows | conversation, start, end, message counts, flag counts (§6) |
 | **Messages**, and the notes of §4d | `Conversations`, new `MSG#{conversation}#{time}#{message}` rows: the time in the key puts a session's messages in one unbroken run of keys, read with one range query (§5b) | conversation, session, sender (or "note"), time, the message it answers, and its content in order: text pieces with their citations, and markers for the files it presented, where it presented them (§4). For yours, **its flags**: the automatic ones and your own as separate attributes |
-| **Files** | S3, new `files/{user}/{conversation}/{message}/{name}` | the files of §4 |
+| **Files** | S3, new `files/{user}/{conversation}/{message}/{number}` | the files of §4; numbered within their message, with the name kept on the message row, so no name from an upload ever becomes part of a storage key |
 | The `MessageFlags` table | **removed**: flags move onto the message rows | (its data was cleared on 2026-10-06) |
 | The uploaded file | S3 `raw/…` | **deleted once processed** (the user) |
 | **Analysis results** | `Conversations`, new `ANALYSIS#{name}#{options}` rows | the numbers of one analysis, and the data version they were computed from (§5c) |
@@ -88,7 +88,7 @@ the file's name and type. So the files appear where Claude put them:
 - **In the Conversations tab,** the open conversation lists every file Claude presented in it, each
   linking to the reply that presented it in Review. So files can be found without reading replies.
 
-Opening a card (`GET /files/{conversation}/{message}/{name}` answers with a short-lived download
+Opening a card (`GET /files/{conversation}/{message}/{number}` answers with a short-lived download
 address) shows the file on the page, **never running any code it contains** (the user, Q3), with a
 download link beside it:
 
@@ -971,11 +971,12 @@ log line gains step durations, and step 7 tries more memory
 ([§5c (line 273)](2026-10-06-load-only-what-the-page-shows.md#L273)).
 
 ### C17 [OPEN]: A search with no other filter reads every message
-**Mitigation in plan:** every other filter narrows sessions first (§5b). **Open:** an index of words
+**Mitigation in plan:** every other filter narrows sessions first (§5b), and a long search answers
+in parts with the bar moving (§8b, §8c), so it is slow but never silent. **Open:** an index of words
 (rows per word written in processing, or the `tantivy` search library, MIT) would avoid the full
 read, but matches whole words where today's search matches letters inside words, so it changes what
-search finds. Trigger: a search with no other filter taking over 2 s on AWS in step 7, or a user's
-messages passing 10 MB.
+search finds. Trigger: a search with no other filter taking more than one request (9 s of work) on
+AWS in step 12, or a user's messages passing 10 MB.
 
 ### C18 [OPEN]: Lowercasing may differ between the page and the server
 Today's search lowercases in JavaScript; the server would use Rust's `to_lowercase`. They agree for
