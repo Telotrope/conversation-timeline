@@ -155,7 +155,9 @@ branches: two of them were such cut-off starts). An empty message is included in
 copies of one message within a branch are each included, so neither adds words. The same count
 gives the "W words not repeated below" in the note. Measured here: 26 of the 32 branches are
 nothing but repeats (0 words left); five keep 1 to 10 words; one is kept, two messages of 155 words
-in "C-Corporation banking setup for payroll". An important branch is not reduced to a note:
+in "C-Corporation banking setup for payroll". The user confirmed (2026-10-06) that this
+branch is a real loss: two dictated messages that Claude never answered, after which the user asked
+again in a new message, so keeping it is the rule working as intended. An important branch is not reduced to a note:
 it is kept as a conversation of its own, named "{name}: earlier branch from {date, time}", holding
 the branch's own messages from the branch point on, and linked to the conversation it branched from
 (both show the link). It holds only the branch's messages, not the start the two share, so no
