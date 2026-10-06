@@ -471,7 +471,7 @@ display far more often:
 
 | Wait | What changes | How often |
 |---|---|---|
-| Preparing the file (§7b) | "Preparing your file — reading" / "slimming" / "compressing", each with a clock | every second |
+| Preparing the file (§7b) | which step has finished ("reading", "slimming", "compressing"), and a clock; no percentage inside a step, since none can be measured | the clock every second; the step after each one |
 | Sending | bytes and percentage (exists) | as bytes go, at least every second |
 | Processing | which attempt, and a clock (exists, `showWaitProgress`) | every second |
 | The scan | conversations done of total, and the percentage | each request, about every 5 s; a clock every second between them |
@@ -484,10 +484,22 @@ AWS) before any bytes arrive, so its text doesn't change for over ten seconds; t
 runs beside it with no display of its own. The scan updates after each page of 5 conversations,
 about every 3 s on AWS. The processing wait already ticks every second.
 
-**The clock** is one shared piece of the status line (`status-indicators.js`): any wait that has
-shown no new numbers for a second shows "— N s" after its label, rewritten every second, as the
-processing wait already does. The activity record notes the label once, not each tick (as now,
-`setLoadProgressLabel`).
+**The clock is not progress, and is labelled so.** Real progress is known only at certain moments:
+as bytes are sent or received, and when a server request answers (the scan's done-of-total). In
+between, inside one request or one step of preparing the file, nothing can be measured: the page
+can't see how far the server has got. What changes every second there is a clock the page keeps
+itself, worded as time spent, not as work done: "Scanning your messages — 41 of 117 conversations
+(35%) · 12 s so far". The bar moves only on real progress. One shared piece of the status line
+(`status-indicators.js`) does this for every wait, as the processing wait already does; the
+activity record notes the label once, not each tick (as now, `setLoadProgressLabel`).
+
+**The clock must be able to tick.** A browser page runs its own code on one thread: while it is
+busy, it redraws nothing, clock included. Preparing the file reads the whole 63.5 MB export in one
+step (`JSON.parse`, 0.3–0.7 s in Node here, possibly much longer in a browser on a slower computer,
+C11), and nothing can interrupt that step to report how far it got. So preparing the file runs in a
+Web Worker (a second thread the browser provides, built in; no library), which sends back each
+step as it finishes; the page's thread stays free, and the clock keeps ticking. Measured in step 7:
+the longest gap between two changes of the display, in each wait, on the user's computer.
 
 ## 9. Expected times
 
