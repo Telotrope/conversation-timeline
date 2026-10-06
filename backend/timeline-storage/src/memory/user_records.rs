@@ -35,15 +35,22 @@ impl UserRecordStore for InMemoryUserRecordStore {
             .unwrap_or_default())
     }
 
-    async fn record_change(
+    async fn raise_version(&self, user_id: &UserId) -> Result<UserRecord, StoreError> {
+        let mut records = self.records.lock().expect("in-memory store mutex poisoned");
+        let record = records.entry(user_id.clone()).or_default();
+        record.data_version += 1;
+        Ok(*record)
+    }
+
+    async fn record_totals(
         &self,
         user_id: &UserId,
-        change: Totals,
+        totals: Totals,
     ) -> Result<UserRecord, StoreError> {
         let mut records = self.records.lock().expect("in-memory store mutex poisoned");
         let record = records.entry(user_id.clone()).or_default();
         record.data_version += 1;
-        record.totals = record.totals.plus(change);
+        record.totals = totals;
         Ok(*record)
     }
 }

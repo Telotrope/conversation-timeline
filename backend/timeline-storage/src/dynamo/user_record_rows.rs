@@ -2,9 +2,9 @@
 //! `ANALYSIS#{analysis and options}`) in the `Conversations` table (plan
 //! `docs/plans/2026-10-06-load-only-what-the-page-shows.md` §5c, §8b).
 //!
-//! The record's numbers are changed with DynamoDB's `ADD`, applied by
-//! DynamoDB itself, so two writers can't both read the old value; the new
-//! values come back in the same reply.
+//! The data version is raised with DynamoDB's `ADD`, applied by DynamoDB
+//! itself, so two writers can't both read the old value; the new values
+//! come back in the same reply.
 
 use async_trait::async_trait;
 use aws_sdk_dynamodb::types::{AttributeValue, ReturnValue};
@@ -38,8 +38,8 @@ fn analysis_sort_key(key: &AnalysisKey) -> String {
     format!("ANALYSIS#{key}")
 }
 
-/// A signed whole number written by `ADD`; missing means never added to.
-fn number(item: &Item, name: &str) -> Result<i64, StoreError> {
+/// A whole number of 0 or more; missing means never written.
+fn number(item: &Item, name: &str) -> Result<usize, StoreError> {
     match item.get(name) {
         None => Ok(0),
         Some(value) => {
@@ -48,9 +48,9 @@ fn number(item: &Item, name: &str) -> Result<i64, StoreError> {
                     "user record: attribute `{name}` should be a number"
                 ))
             })?;
-            text.parse::<i64>().map_err(|_| {
+            text.parse::<usize>().map_err(|_| {
                 invalid_data(format!(
-                    "user record: attribute `{name}` should be a whole number but is {text:?}"
+                    "user record: attribute `{name}` should be a whole number of 0 or more but is {text:?}"
                 ))
             })
         }
@@ -58,11 +58,8 @@ fn number(item: &Item, name: &str) -> Result<i64, StoreError> {
 }
 
 fn record_from_item(item: &Item) -> Result<UserRecord, StoreError> {
-    let version = number(item, "data_version")?;
     Ok(UserRecord {
-        data_version: u64::try_from(version).map_err(|_| {
-            invalid_data(format!("user record: data_version is negative ({version})"))
-        })?,
+        data_version: number(item, "data_version")? as u64,
         totals: Totals {
             conversations: number(item, "conversations")?,
             sessions: number(item, "sessions")?,
@@ -90,27 +87,51 @@ impl UserRecordStore for DynamoUserRecordStore {
             .map_or(Ok(UserRecord::default()), |item| record_from_item(&item))
     }
 
-    async fn record_change(
+    async fn raise_version(&self, user_id: &UserId) -> Result<UserRecord, StoreError> {
+        self.update(user_id, "ADD data_version :one", &[]).await
+    }
+
+    async fn record_totals(
         &self,
         user_id: &UserId,
-        change: Totals,
+        totals: Totals,
     ) -> Result<UserRecord, StoreError> {
-        let n = |v: i64| AttributeValue::N(v.to_string());
-        let output = self
+        let n = |v: usize| AttributeValue::N(v.to_string());
+        self.update(
+            user_id,
+            "ADD data_version :one SET conversations = :c, sessions = :s, your_messages = :y, messages = :m",
+            &[
+                (":c", n(totals.conversations)),
+                (":s", n(totals.sessions)),
+                (":y", n(totals.your_messages)),
+                (":m", n(totals.messages)),
+            ],
+        )
+        .await
+    }
+}
+
+impl DynamoUserRecordStore {
+    /// Applies `expression` to the user's record and returns it as stored.
+    async fn update(
+        &self,
+        user_id: &UserId,
+        expression: &str,
+        values: &[(&str, AttributeValue)],
+    ) -> Result<UserRecord, StoreError> {
+        let mut request = self
             .client
             .update_item()
             .table_name(&self.table_name)
             .key("pk", AttributeValue::S(user_id.to_string()))
             .key("sk", AttributeValue::S(USER_SORT_KEY.to_string()))
-            .update_expression(
-                "ADD data_version :one, conversations :c, sessions :s, your_messages :y, messages :m",
-            )
-            .expression_attribute_values(":one", n(1))
-            .expression_attribute_values(":c", n(change.conversations))
-            .expression_attribute_values(":s", n(change.sessions))
-            .expression_attribute_values(":y", n(change.your_messages))
-            .expression_attribute_values(":m", n(change.messages))
-            .return_values(ReturnValue::AllNew)
+            .update_expression(expression)
+            .expression_attribute_values(":one", AttributeValue::N("1".to_string()))
+            .return_values(ReturnValue::AllNew);
+        for (name, value) in values {
+            request = request.expression_attribute_values(*name, value.clone());
+        }
+        let output = request
             .send()
             .await
             .map_err(backend_error("DynamoDB.UpdateItem"))?;
