@@ -4,6 +4,12 @@
 //! a match (so sessions that can't are never read), and does a message
 //! match. The rules are the page's `getFilteredHumanMessages`
 //! (`frontend/ui/views/review.js`), moved here.
+//!
+//! Messages of unknown time (§4e) belong to a session placed by its
+//! conversation's start and end. A time span from a session or an analysis
+//! finds every message of such a session through the session (the span
+//! overlapping it); a Calendar day finds only its timed messages, by their
+//! own time, as the page has always behaved ("counted but not placed").
 
 use std::fmt;
 
@@ -12,9 +18,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::flag_values::FlagKind;
 use crate::flag_view::FlagView;
+use crate::message_time::MessageTime;
 use crate::model::{ConversationId, Sender};
 use crate::stored_message::Entry;
-use crate::stored_session::StoredSession;
+use crate::stored_session::{Placement, StoredSession};
 
 /// The most characters a search keeps.
 pub const SEARCH_CAP: usize = 200;
@@ -102,11 +109,29 @@ pub enum FlagFilter {
     Overridden,
 }
 
+/// Where a time span came from, which decides how it treats a session
+/// placed by its conversation's start and end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpanKind {
+    /// A session's or an analysis point's start and end.
+    Range,
+    /// A Calendar day: the viewer's local midnight to midnight.
+    Day,
+}
+
+/// A time span and where it came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpanFilter {
+    pub span: TimeSpan,
+    pub kind: SpanKind,
+}
+
 /// Which messages a request wants.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MessageFilter {
     pub conversation: Option<ConversationId>,
-    pub span: Option<TimeSpan>,
+    pub span: Option<SpanFilter>,
     pub flag: FlagFilter,
     pub search: Option<SearchText>,
     pub view: FlagView,
@@ -114,6 +139,10 @@ pub struct MessageFilter {
     /// span alone. Review lists your messages only; the scan, a session
     /// recount and the annotated download read every entry.
     pub every_entry: bool,
+    /// Whether, with your messages only, branch notes are listed among
+    /// them. Notes are not messages: they match no flag and no search, so
+    /// they are listed only with the flag menu on "All" and no search.
+    pub notes: bool,
 }
 
 impl MessageFilter {
@@ -126,6 +155,17 @@ impl MessageFilter {
             search: None,
             view: FlagView::Both,
             every_entry: true,
+            notes: false,
+        }
+    }
+
+    /// Your messages of every conversation, as the scan and the two server
+    /// analyses read them.
+    pub fn your_messages(view: FlagView) -> Self {
+        Self {
+            view,
+            every_entry: false,
+            ..Self::everything()
         }
     }
 
@@ -137,15 +177,22 @@ impl MessageFilter {
         }
     }
 
-    /// Every entry of one session.
+    /// Every entry of one session, and of no other.
     pub fn session(session: &StoredSession) -> Self {
-        Self {
-            conversation: Some(session.conversation_id),
+        let span = match session.placement {
+            // The conversation's only session: the conversation is enough.
+            Placement::Span => None,
             // Unreachable backstop: a stored session never ends before it
             // starts, since it is cut from times in order.
-            span: Some(
-                TimeSpan::new(session.start, session.end).expect("sessions end after starting"),
-            ),
+            Placement::Gaps => Some(SpanFilter {
+                span: TimeSpan::new(session.start, session.end)
+                    .expect("sessions end after starting"),
+                kind: SpanKind::Range,
+            }),
+        };
+        Self {
+            conversation: Some(session.conversation_id),
+            span,
             ..Self::everything()
         }
     }
@@ -159,11 +206,19 @@ impl MessageFilter {
         {
             return false;
         }
-        if self
-            .span
-            .is_some_and(|s| !s.overlaps(session.start, session.end))
-        {
-            return false;
+        if let Some(filter) = self.span {
+            let reachable = match (filter.kind, session.placement) {
+                (_, Placement::Gaps) | (SpanKind::Range, Placement::Span) => {
+                    filter.span.overlaps(session.start, session.end)
+                }
+                // A day finds a placed session's timed messages by their own
+                // time, which can lie outside the session; so it can't rule
+                // the session out by its start and end.
+                (SpanKind::Day, Placement::Span) => true,
+            };
+            if !reachable {
+                return false;
+            }
         }
         let counts = session.counts.view(self.view);
         match self.flag {
@@ -174,20 +229,33 @@ impl MessageFilter {
         }
     }
 
-    /// Whether `entry` matches every filter.
-    pub fn admits(&self, entry: &Entry) -> bool {
+    fn lists_notes(&self) -> bool {
+        self.flag == FlagFilter::All && self.search.is_none()
+    }
+
+    /// Whether `entry`, which belongs to `session`, matches every filter.
+    pub fn admits(&self, entry: &Entry, session: &StoredSession) -> bool {
         let key = entry.key();
         if self.conversation.is_some_and(|c| c != key.conversation_id) {
             return false;
         }
-        if self.span.is_some_and(|s| !s.contains(key.at)) {
-            return false;
+        if let Some(filter) = self.span {
+            let inside = match (filter.kind, session.placement, key.time()) {
+                (SpanKind::Range, Placement::Span, _) => {
+                    filter.span.overlaps(session.start, session.end)
+                }
+                (_, _, MessageTime::Known(at)) => filter.span.contains(at),
+                (_, _, MessageTime::Unknown) => false,
+            };
+            if !inside {
+                return false;
+            }
         }
         if self.every_entry {
             return true;
         }
         let Some(message) = entry.as_message() else {
-            return false;
+            return self.notes && self.lists_notes();
         };
         if message.sender != Sender::Human {
             return false;

@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use super::errors::StoreError;
 use super::ids::{UploadId, UserId};
 use crate::conversation_metadata::UploadFacts;
-use crate::model::ConversationId;
+use crate::model::{ConversationId, MessageId};
 
 /// The raw upload's object-store key is a pure function of `(user_id,
 /// upload_id)` -- `raw/{user_id}/{upload_id}.json` -- so it is never
@@ -31,16 +31,18 @@ pub fn raw_object_key(user_id: &UserId, upload_id: UploadId) -> String {
     format!("raw/{user_id}/{upload_id}.json")
 }
 
-/// Where the messages a later file added to an earlier conversation are
-/// kept: `additions/{user_id}/{conversation_id}/{upload_id}.json`, a JSON
-/// list of messages (plan `2026-10-05-screen-flow.md` §8b-2). Like
-/// [`raw_object_key`], recomputed rather than stored.
-pub fn addition_object_key(
+/// Where one file kept from a conversation is stored (plan
+/// `docs/plans/2026-10-06-load-only-what-the-page-shows.md` §3, §4):
+/// `files/{user_id}/{conversation_id}/{message_id}/{number}`. The file is
+/// numbered within its message and its name stays on the message's row, so
+/// no name from an upload ever becomes part of a storage key.
+pub fn file_object_key(
     user_id: &UserId,
     conversation_id: ConversationId,
-    upload_id: UploadId,
+    message_id: MessageId,
+    number: usize,
 ) -> String {
-    format!("additions/{user_id}/{conversation_id}/{upload_id}.json")
+    format!("files/{user_id}/{conversation_id}/{message_id}/{number}")
 }
 
 /// The inverse of [`raw_object_key`]: the user and upload a raw upload's key
@@ -73,11 +75,24 @@ pub enum UploadOutcome {
 /// How far processing has got on AWS before an outcome exists (plan
 /// `2026-10-02-upload-processing-failures.md` §3): how many attempts have
 /// started, and the last one's error if an attempt failed. Only the
-/// S3-triggered path records this; the local server processes in one go.
+/// S3-triggered path counts attempts; the local server processes in one go.
+/// `processing` is how far the running attempt has got (plan
+/// `2026-10-06-load-only-what-the-page-shows.md` §8b), written every second.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UploadProgress {
     pub attempts: usize,
     pub last_error: Option<String>,
+    pub processing: Option<ProcessingProgress>,
+}
+
+/// How far an attempt has got: bytes of the file read, then conversations
+/// written, each of its total.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct ProcessingProgress {
+    pub bytes_read: u64,
+    pub bytes_total: u64,
+    pub conversations_written: usize,
+    pub conversations_total: usize,
 }
 
 #[async_trait]
@@ -117,7 +132,15 @@ pub trait UploadOutcomeStore: Send + Sync {
         error: String,
     ) -> Result<(), StoreError>;
 
-    /// `None` until the first attempt starts.
+    /// Records how far the running attempt has got.
+    async fn record_processing_progress(
+        &self,
+        user_id: &UserId,
+        upload_id: UploadId,
+        progress: ProcessingProgress,
+    ) -> Result<(), StoreError>;
+
+    /// `None` until the first attempt starts or reports progress.
     async fn get_progress(
         &self,
         user_id: &UserId,

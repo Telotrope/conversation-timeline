@@ -8,17 +8,18 @@
 //! re-serialized without silently dropping data the frontend still needs.
 //!
 //! One consequence of parsing `created_at` at this boundary: a message with
-//! an unparseable timestamp now fails deserialization outright (surfaced as
-//! `FormatError::InvalidConversation`) instead of being silently skipped
-//! later, deep inside `sessions::build_blocks`, the way it used to be. If
-//! that turns out to be too strict in practice — if real exports commonly
-//! contain messages with malformed timestamps — the fix belongs here, at
-//! this same boundary (e.g. substituting a fallback value during parsing),
-//! not as a second, looser check downstream. That's deliberately not
-//! built yet; there's no evidence yet that it's needed.
+//! an unparseable timestamp fails deserialization outright (surfaced as
+//! `FormatError::InvalidConversation`): it is a damaged file, not a missing
+//! fact. A message with no `created_at` at all, or `null`, is read with its
+//! time unknown (plan `docs/plans/2026-10-06-load-only-what-the-page-shows.md`
+//! §4e): `created_at` then holds the zero-date sentinel, which
+//! [`ChatMessage::time`] reads back as [`MessageTime::Unknown`], and writing
+//! the message out again leaves the field out.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+use crate::message_time::{MessageTime, UNKNOWN_TIME};
 
 /// Who sent a message. Anthropic's export format only uses `"human"` and
 /// `"assistant"` today; `Other` is a catchall for any future value, per
@@ -160,9 +161,30 @@ pub struct ChatMessage {
     #[serde(default)]
     pub content: Vec<ContentPiece>,
     pub sender: Sender,
+    /// The zero-date sentinel when the export gave no time; read it through
+    /// [`ChatMessage::time`].
+    #[serde(
+        default = "unknown_time",
+        deserialize_with = "time_or_unknown",
+        skip_serializing_if = "is_unknown_time"
+    )]
     pub created_at: DateTime<Utc>,
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+fn unknown_time() -> DateTime<Utc> {
+    UNKNOWN_TIME
+}
+
+fn is_unknown_time(at: &DateTime<Utc>) -> bool {
+    MessageTime::from_written(*at) == MessageTime::Unknown
+}
+
+/// `null` is read as unknown, like a missing field; anything else must be a
+/// time.
+fn time_or_unknown<'de, D: Deserializer<'de>>(deserializer: D) -> Result<DateTime<Utc>, D::Error> {
+    Ok(Option::<DateTime<Utc>>::deserialize(deserializer)?.unwrap_or(UNKNOWN_TIME))
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -195,6 +217,11 @@ pub enum ParentLink {
 pub const ROOT_PARENT: uuid::Uuid = uuid::uuid!("00000000-0000-4000-8000-000000000000");
 
 impl ChatMessage {
+    /// When the message was sent, if the export said.
+    pub fn time(&self) -> MessageTime {
+        MessageTime::from_written(self.created_at)
+    }
+
     /// This message's parent link. A field that is present but isn't an id
     /// counts as unstated: nothing can be built on it.
     pub fn parent(&self) -> ParentLink {

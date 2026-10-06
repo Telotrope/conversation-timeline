@@ -15,6 +15,7 @@ use chrono::{DateTime, Duration, FixedOffset, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::labels::{AiName, FileName, PersonName, ServiceName};
+use crate::message_time::MessageTime;
 use crate::model::Conversation;
 use crate::ports::conversations::ConversationSummary;
 use crate::ports::ids::UploadId;
@@ -217,10 +218,13 @@ pub struct UploadFacts {
 /// lasted, so none is zero length (the user, 2026-10-05).
 pub const UNDATED_LENGTH_HOURS: i64 = 1;
 
-/// The span of a conversation's message times, or `None` when it has no
-/// messages.
+/// The span of a conversation's known message times, or `None` when no
+/// message has a time.
 pub fn message_span(conversation: &Conversation) -> Option<ConversationSpan> {
-    let mut times = conversation.chat_messages.iter().map(|m| m.created_at);
+    let mut times = conversation
+        .chat_messages
+        .iter()
+        .filter_map(|m| m.time().known());
     let first = times.next()?;
     let (start, end) = times.fold((first, first), |(s, e), t| (s.min(t), e.max(t)));
     Some(ConversationSpan {
@@ -236,8 +240,8 @@ pub fn message_span(conversation: &Conversation) -> Option<ConversationSpan> {
 /// - Participants: one human named with the signed-in account, and Claude
 ///   (the only export format read today is Claude's).
 /// - Typed, so no transcription service.
-/// - Start and end: the earliest and latest message times; with none, an
-///   hour ending when the file was last written, or else when it was
+/// - Start and end: the earliest and latest known message times; with none,
+///   an hour ending when the file was last written, or else when it was
 ///   uploaded.
 pub fn guess_summary(
     conversation: &Conversation,
@@ -255,6 +259,7 @@ pub fn guess_summary(
     ConversationSummary {
         conversation_id: conversation.uuid,
         name: conversation.name.clone(),
+        version: 0,
         source: SourceFile {
             upload_id,
             file_name: facts.file_name.clone(),
@@ -263,6 +268,11 @@ pub fn guess_summary(
         },
         additions: Vec::new(),
         message_count: conversation.chat_messages.len(),
+        untimed: conversation
+            .chat_messages
+            .iter()
+            .filter(|m| m.time() == MessageTime::Unknown)
+            .count(),
         message_span: messages,
         participants: Participants(vec![
             Participant::Human {
@@ -274,6 +284,8 @@ pub fn guess_summary(
         details_origin: MetadataOrigin::Guessed,
         span,
         span_origin: MetadataOrigin::Guessed,
+        branch_of: None,
+        branches: Vec::new(),
     }
 }
 

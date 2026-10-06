@@ -10,16 +10,25 @@ use serde::{Deserialize, Serialize};
 
 use crate::flag_values::MessageFlags;
 use crate::labels::FileName;
+use crate::message_time::MessageTime;
 use crate::model::{ConversationId, MessageId, Sender};
 
 /// Where an entry sits: its conversation, its time and its own id. Entries
 /// are stored and read in this order, so a session's entries are one
-/// unbroken run between its start and end (§3).
+/// unbroken run between its start and end (§3). `at` is the zero-date
+/// sentinel when the time is unknown (§4e); read it through
+/// [`EntryKey::time`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct EntryKey {
     pub conversation_id: ConversationId,
     pub at: DateTime<Utc>,
     pub id: MessageId,
+}
+
+impl EntryKey {
+    pub fn time(&self) -> MessageTime {
+        MessageTime::from_written(self.at)
+    }
 }
 
 /// The web address a citation points to. Only `http` and `https`

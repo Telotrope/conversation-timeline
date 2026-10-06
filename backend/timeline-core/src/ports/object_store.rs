@@ -16,11 +16,10 @@
 //! placeholder string.
 //!
 //! **Key namespacing is a caller convention, not something this trait
-//! enforces or even knows about.** The two prefixes this codebase actually
-//! uses: `raw/{user_id}/{upload_id}.json` for an upload's original
-//! submitted bytes (see `crate::ports::uploads`), and
-//! `export/{user_id}/{export_id}.json` for a server-generated annotated
-//! export (see `timeline-api::routes::export`).
+//! enforces or even knows about.** The two prefixes this codebase uses:
+//! `raw/{user_id}/{upload_id}.json` for an upload's submitted bytes, deleted
+//! once processed, and `files/{user_id}/{conversation_id}/{message_id}/{n}`
+//! for the files kept from a conversation (see `crate::ports::uploads`).
 
 use std::time::Duration;
 
@@ -50,6 +49,9 @@ pub trait ObjectStore: Send + Sync {
     /// processing step, not by anything the client calls directly.
     async fn get(&self, key: &str) -> Result<Vec<u8>, ObjectStoreError>;
 
-    /// Writes an object — used server-side to produce a generated export.
+    /// Writes an object, replacing any under the same key.
     async fn put(&self, key: &str, data: Vec<u8>) -> Result<(), ObjectStoreError>;
+
+    /// Removes an object; a key with no object is not an error.
+    async fn delete(&self, key: &str) -> Result<(), ObjectStoreError>;
 }

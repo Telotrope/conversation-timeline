@@ -13,15 +13,20 @@ pub mod flags;
 pub mod format;
 pub mod labels;
 pub mod message_filter;
+pub mod message_time;
 pub mod model;
 pub mod ports;
+pub mod server_analyses;
 pub mod sessions;
 pub mod stored_message;
 pub mod stored_session;
 pub mod vader;
+pub mod walk_cursor;
+pub mod work_budget;
 
 pub use dedup::{dedup_chat_messages, dedup_conversations, extract_text};
 pub use format::{unwrap_uploaded_json, unwrap_uploaded_value, FormatError, UnwrapResult};
+pub use message_time::{MessageTime, UNKNOWN_TIME};
 pub use model::{
     ChatMessage, ContentPiece, Conversation, ConversationId, ConversationName, MessageId,
     PieceType, Sender,

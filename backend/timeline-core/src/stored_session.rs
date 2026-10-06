@@ -8,12 +8,18 @@
 //! ([`GAP_THRESHOLD_SEC`]), over entries rather than a parsed export, and a
 //! branch note's whole span counts as activity, so pruning a branch never
 //! splits a session the user was working through.
+//!
+//! A conversation with any message of unknown time is not cut: it is one
+//! session from its start to its end as its record gives them (§4e), placed
+//! where the user put it or where the upload guessed ([`Placement::Span`]).
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::conversation_metadata::ConversationSpan;
 use crate::flag_values::{FlagKind, MessageFlags};
 use crate::flag_view::FlagView;
+use crate::message_time::MessageTime;
 use crate::model::ConversationId;
 use crate::sessions::GAP_THRESHOLD_SEC;
 use crate::stored_message::Entry;
@@ -103,6 +109,25 @@ impl SessionCounts {
     }
 }
 
+/// How a session's start and end were decided.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Placement {
+    /// Cut from its messages' times at pauses of 15 minutes or more.
+    Gaps,
+    /// The conversation's one session, from its start to its end as its
+    /// record gives them, because some of its messages have no time (§4e).
+    /// Its messages are read by conversation, not by a range of times.
+    Span,
+}
+
+/// Names one session: its conversation and its number within it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct SessionKey {
+    pub conversation_id: ConversationId,
+    pub number: usize,
+}
+
 /// One stored session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredSession {
@@ -111,16 +136,61 @@ pub struct StoredSession {
     pub number: usize,
     pub start: DateTime<Utc>,
     pub end: DateTime<Utc>,
+    pub placement: Placement,
     /// Every message in the session, yours and Claude's.
     pub message_count: usize,
     pub counts: SessionCounts,
 }
 
 impl StoredSession {
+    pub fn key(&self) -> SessionKey {
+        SessionKey {
+            conversation_id: self.conversation_id,
+            number: self.number,
+        }
+    }
+
     /// Whether `at` falls within the session, ends included.
     pub fn contains(&self, at: DateTime<Utc>) -> bool {
         self.start <= at && at <= self.end
     }
+
+    /// Length in whole seconds, as the page shows it.
+    pub fn duration_sec(&self) -> i64 {
+        (self.end - self.start).num_seconds()
+    }
+}
+
+/// A conversation's sessions: one placed by `span` when any of its messages
+/// has no time, otherwise cut by pauses. A conversation with no messages
+/// has none.
+pub fn sessions_for(
+    conversation_id: ConversationId,
+    entries: &[Entry],
+    span: &ConversationSpan,
+) -> Vec<StoredSession> {
+    let messages = entries.iter().filter_map(Entry::as_message);
+    let mut any = false;
+    let mut untimed = false;
+    for m in messages {
+        any = true;
+        untimed |= m.key.time() == MessageTime::Unknown;
+    }
+    if !any {
+        return Vec::new();
+    }
+    if !untimed {
+        return cut_sessions(conversation_id, entries);
+    }
+    vec![StoredSession {
+        conversation_id,
+        number: 0,
+        start: span.start().with_timezone(&Utc),
+        end: span.end().with_timezone(&Utc),
+        placement: Placement::Span,
+        message_count: entries.iter().filter(|e| e.as_message().is_some()).count(),
+        counts: SessionCounts::of(entries),
+    }]
 }
 
 /// Cuts one conversation's entries into sessions, oldest first: a pause of
@@ -167,6 +237,7 @@ pub fn cut_sessions(conversation_id: ConversationId, entries: &[Entry]) -> Vec<S
                 number,
                 start,
                 end,
+                placement: Placement::Gaps,
                 message_count: run.iter().filter(|e| e.as_message().is_some()).count(),
                 counts: SessionCounts::of(run.iter().copied()),
             }

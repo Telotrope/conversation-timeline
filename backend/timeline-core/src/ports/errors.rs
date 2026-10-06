@@ -21,6 +21,12 @@ pub enum StoreError {
     /// problem, ...); the source is preserved so the caller can log or
     /// inspect what actually happened, not just that something did.
     Backend(BoxError),
+    /// A versioned write found a newer version stored than the one the
+    /// writer read: someone else wrote first. Re-read and redo.
+    Conflict,
+    /// A batch write gave up with rows DynamoDB still returned unwritten
+    /// after every retry: `left` of `total`.
+    Unwritten { left: usize, total: usize },
 }
 
 impl fmt::Display for StoreError {
@@ -28,6 +34,11 @@ impl fmt::Display for StoreError {
         match self {
             StoreError::NotFound => write!(f, "item not found"),
             StoreError::Backend(e) => write!(f, "storage backend error: {e}"),
+            StoreError::Conflict => write!(f, "someone else changed this record first"),
+            StoreError::Unwritten { left, total } => write!(
+                f,
+                "{left} of {total} rows were still unwritten after every retry"
+            ),
         }
     }
 }
@@ -35,7 +46,7 @@ impl fmt::Display for StoreError {
 impl StdError for StoreError {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match self {
-            StoreError::NotFound => None,
+            StoreError::NotFound | StoreError::Conflict | StoreError::Unwritten { .. } => None,
             StoreError::Backend(e) => Some(e.as_ref()),
         }
     }
