@@ -448,13 +448,11 @@ than Node; C11.
 
 ## 8. The scan
 
-`POST /detect` reads your message rows instead of the file, and works for up to **5 seconds**
-before answering with how many conversations it has done of how many in total (the user's
-suggestion, at first 10 seconds). The page asks again until all are done, so its bar shows a real
-percentage. The budget is checked before starting each conversation, so a request can run past it
-by one conversation's work (on AWS, a whole page of 5 conversations, up to 366 messages, took at
-most 4.2 s, measured 2026-10-05, though that included re-reading the file); 5 seconds keeps the percentage moving well inside the 10-second
-rule of §8b, and each request well inside the deployment's 30-second limit
+`POST /detect` reads your message rows instead of the file, and works for up to **2 seconds**
+before answering with how many sessions it has done of how many in total, and where to carry on
+(the user's suggestion, at first 10 seconds; shortened by §8b, which gives every request the same
+budget). The page asks again until all are done, so its bar shows a real percentage. Each request
+stays far inside the deployment's 30-second limit
 ([template.yaml:148](../../infra/template.yaml#L148)). Tests start the server with a shorter
 budget, so a small scan still takes several requests.
 
