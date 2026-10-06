@@ -1,7 +1,7 @@
 # Load only what the page shows
 
-**Status:** proposed 2026-10-06, revised twice the same day with the user's answers; not approved.
-Open questions are in §11.
+**Status:** proposed 2026-10-06, revised several times the same day with the user's answers; not
+approved. Open questions are in §11.
 
 ## 1. The problem
 
@@ -37,10 +37,12 @@ Measured on `real-flags.json` (61.8 MB):
 |---|---|---|
 | Conversation records | DynamoDB `Conversations`, `CONV#…` (exists) | unchanged, plus a version number (§7) |
 | **Sessions** | `Conversations`, new `SESS#{conversation}#{n}` rows | conversation, start, end, message counts, flag counts (§6) |
-| **Messages**, and the notes of §4d | `Conversations`, new `MSG#{conversation}#{message}` rows | conversation, session, sender (or "note"), time, the message it answers, and its content in order: text pieces with their citations, and markers for the files it presented, where it presented them (§4). For yours, **its flags**: the automatic ones and your own as separate attributes |
+| **Messages**, and the notes of §4d | `Conversations`, new `MSG#{conversation}#{time}#{message}` rows: the time in the key puts a session's messages in one unbroken run of keys, read with one range query (§5b) | conversation, session, sender (or "note"), time, the message it answers, and its content in order: text pieces with their citations, and markers for the files it presented, where it presented them (§4). For yours, **its flags**: the automatic ones and your own as separate attributes |
 | **Files** | S3, new `files/{user}/{conversation}/{message}/{name}` | the files of §4 |
 | The `MessageFlags` table | **removed**: flags move onto the message rows | (its data was cleared on 2026-10-06) |
 | The uploaded file | S3 `raw/…` | **deleted once processed** (the user) |
+| **Analysis results** | `Conversations`, new `ANALYSIS#{name}#{options}` rows | the numbers of one analysis, and the data version they were computed from (§5c) |
+| **Data version** | an attribute on the user's existing record | a number raised by every upload, flag save and scan (§5c) |
 
 **Flags on the message rows** (the user, 2026-10-06). The migration plan kept the automatic and your
 own flags apart so that the scan could never overwrite yours (§4.1). That stays true with both on
@@ -179,35 +181,146 @@ show as branches.
 
 ## 5. What the page loads
 
+**Nothing loads all messages.** The first draft of this plan loaded every message of yours in the
+background and every reply of Claude's at once (C13); the user (2026-10-06) asked for messages to
+load only as a view shows them. Each view asks the server for what it draws:
+
 | When | Request | Returns | Size here |
 |---|---|---|---|
 | Opening the timeline | `GET /conversations` (exists) | conversation records | 73 KB |
-| | `GET /sessions` (new) | every session, with its flag counts | ~70 KB |
-| Right after, in the background | `GET /messages` (new) | your messages with their flags and flag handles | ~0.8 MB |
-| With "Show Claude's replies" on | `GET /messages?replies` (new) | Claude's messages' text and file names | 5.8 MB, loaded once |
+| | `GET /sessions` (new) | every session, with its flag counts | ~90 KB |
+| Opening Review, or changing its filters, search or page | `GET /messages?…` (new, §5b) | one page of 50 of your messages with their flags, the number of pages, and, with "Show Claude's replies" on, the reply that follows each of the 50 | ~15 KB; with replies ~150 KB |
+| Opening Analytics, or changing an analysis's options | `GET /analyses/{name}?…` (new, §5c) | that analysis's numbers | < 50 KB |
+| Opening a conversation in the Conversations tab | `GET /conversations/{id}/files` (new) | the files Claude presented in it (§4) | small |
 | A file's link in Review | `GET /files/…` (new) | a download address for it | |
 | "Download annotated…" | `GET /export` (exists, rebuilt) | conversations from the rows: text, flags and file names | ~6.5 MB |
 
 The Calendar and the Conversations tab are drawn from conversations and sessions alone. A session
 that crosses midnight shows the same flags on each day it touches (the user's decision); today the
-Calendar shows each day only its own messages' flags. Review and Analytics need your messages; if
-opened before they finish loading, they say "Loading your messages…". Each request is one query,
-paged through past DynamoDB's 1 MB per call (which also fixes the silent cut-off of `list_for_user`
-noted in the screen-flow analysis).
+Calendar shows each day only its own messages' flags. Each request pages through past DynamoDB's
+1 MB per call (which also fixes the silent cut-off of `list_for_user` noted in the screen-flow
+analysis).
+
+**What changes for the page.** It no longer holds `state.humanMessages` or any message text beyond
+the page of Review on screen. A flag checkbox saves as now, then asks for the same page again (and
+the sessions, whose counts changed). The Review code that filters, sorts and pages
+([review.js:44](../../frontend/ui/views/review.js#L44), `getFilteredHumanMessages`) and the
+analyses' arithmetic ([analyses.js](../../frontend/core/analyses.js)) move to the server; drawing
+the table and the charts (SVG) stays in the page.
 
 **The annotated download changes.** It no longer reproduces the export, since tool calls, tool
 results and thinking are not kept. It holds every conversation's messages as text, with your flags
 and the names of their files. It can still be uploaded again: messages of text alone are a valid
 export, and uploading it brings back your flags.
 
+## 5b. Finding messages: one filter, shared by every route that reads messages
+
+Review's filters today, as read in [review.js:44-67](../../frontend/ui/views/review.js#L44-L67):
+
+- **where:** one conversation, a time span (from a session, an analysis point, or a Calendar day,
+  which the page sends as its local midnight to midnight, since the server doesn't know the
+  viewer's time zone), or both, or neither;
+- **flag:** all, flagged (any of the three), ALL-CAPS, angry, critical, or "overridden";
+- **search:** letters your message's text must contain, ignoring capitals;
+- **view:** the show switches (automatic flags, yours, both, or neither), which decide what
+  "flagged" means.
+
+"Overridden" in the code (`isOverridden`, [flags.js:28](../../frontend/core/flags.js#L28)) means a
+message has a value of yours for any flag, even one that agrees with the automatic flag; that is
+the same set as the messages you reviewed (`isReviewed`, line 66). (Claude described it on
+2026-10-06 as "your choice differs from the automatic flag"; that was wrong.)
+
+**The shared code.** Three pieces, used by every route that reads messages:
+
+1. **`MessageFilter`** (new, `timeline-core/src/message_filter.rs`; pure, no storage): the four
+   filters above as types, parsed once from the request (`FlagFilter` and `FlagView` enums;
+   `SearchText`, trimmed, lowercased, 1–200 characters; `TimeSpan`, never ending before it starts).
+   Two questions it answers:
+   - `admits_session(&session)`: can this session hold a match? No if it is another conversation,
+     if its start and end miss the span, or if its stored count for the chosen flag under the chosen
+     view is zero (§6). Search can't rule a session out: only an index of words could (C17).
+   - `admits_message(&message)`: does this message match? Every filter again, message by message,
+     since a session with one flagged message holds unflagged ones too.
+2. **`FlagView`'s rules** (new, `timeline-core/src/flag_view.rs`): whether a flag is in effect under
+   a view, and whether a message counts towards a rate. These are today's `effectiveFlag` and
+   `countsTowardRates` ([flags.js:12](../../frontend/core/flags.js#L12),
+   [line 76](../../frontend/core/flags.js#L76)), moved to the server unchanged. The session counts
+   (§6), the filter and the analyses (§5c) all use them, so "flagged" means the same everywhere.
+3. **`find_messages(store, user, filter)`** (new, `timeline-api/src/message_query.rs`): lists the
+   user's sessions (one query), keeps those `admits_session` accepts, reads each one's messages with
+   one range query (the time is in the key, §3; the session's start and end bound it), and keeps
+   those `admits_message` accepts. With no filter it reads every message.
+
+**Who uses it:**
+
+| Route | Filter it builds |
+|---|---|
+| `GET /messages` (Review) | the page's filters, as sent; then sorted (by time, or for a Calendar day by conversation name then time, as today) and cut to the requested page of 50. With replies on, each kept message's reply is read by its key |
+| `GET /analyses/trend`, `GET /analyses/time-of-day` (§5c) | the view only |
+| `POST /detect` (the scan) | one conversation at a time, view irrelevant |
+| `GET /export` (the annotated download) | none: every message |
+| Flag saves, recounting a session (§6) | that session's span and conversation |
+
+No route reads message rows any other way, so a fix to the reading (paging, the key range) is made
+once.
+
+**What a search costs.** A search with no other filter reads every message of yours: on
+`real-flags.json`, 2,255 rows, about 1 MB (0.4 MB of text plus each row's other attributes; estimated), one or two
+DynamoDB calls, about 128 read units per search, so about 3 cents per thousand searches at
+on-demand prices ($0.25 per million read units, from memory, not checked). One conversation, one day, or one flag reads only the
+sessions that can match. It grows with how much you have written; C17 says when to add an index.
+
+## 5c. Analytics on the server, saved
+
+The five analyses ([analyses.js](../../frontend/core/analyses.js)) are computed by the server and
+saved (the user, 2026-10-06); the page draws their charts. What each needs, as read in that file:
+
+| Analysis | Needs | From |
+|---|---|---|
+| Friction ranking, by conversation or by session | flagged and counted messages per conversation or session | the session counts (§6) alone |
+| Session length vs. flag rate | each session's length and rate | the session counts alone |
+| Idle time before a session | gaps between a conversation's sessions, and rates | the session counts alone |
+| Flag rate over time (week or month) | each message's local date and flags | `find_messages`, view only |
+| Time of day and day of week | each message's local hour and weekday and flags | `find_messages`, view only |
+
+**The time zone.** Weeks, months, hours and weekdays are local to the viewer, so the page sends its
+time zone's name (`Intl.DateTimeFormat().resolvedOptions().timeZone`, for example
+`America/New_York`), and the server converts with **chrono-tz** (MIT or Apache-2.0; to be confirmed
+from its licence file when added; `chrono` itself is already used). The week rule (weeks starting
+Sunday, numbered from 1 January) is ported exactly.
+
+**Saving.** A result is saved in an `ANALYSIS#…` row (§3) keyed by the analysis, its options, the
+view and the time zone, together with the user's data version at the time. The data version is
+raised by every upload, flag save and scan. A request whose saved row has the current version gets
+it back at once; otherwise the server computes it, saves it and returns it. So the first Analytics
+visit after a change computes, and later ones don't.
+
+**What the page gets.** Numbers and identifiers (conversation ids, session start and end), not
+text: labels such as "Conversation — Tuesday 4 August" are formatted in the page as now, since day
+headings depend on the viewer's language settings. The page keeps `pearsonR`, the chart drawing
+([charts.js](../../frontend/ui/render/charts.js)) and the click-through to Review.
+
 ## 6. Session flag counts
 
-The page's show switches combine flags three ways (automatic only, yours only, both with yours
-winning), so each session row stores, for each of the three flags (critical, angry, ALL-CAPS), the
-count under each combination: nine numbers. They change whenever a flag does:
+Each session row stores the numbers that the filter (§5b) and the analyses (§5c) need, so that the
+Calendar, the Conversations tab, a flag filter and three of the analyses never read messages:
+
+- **your messages** in the session;
+- **your reviewed messages** (with a value of yours for any flag; the same set as "overridden",
+  §5b), which is also the rate's denominator when only your flags are shown;
+- for each view that shows anything (automatic only, yours only, both with yours winning), the
+  messages with **critical**, **angry**, **ALL-CAPS**, and **any of the three**: twelve numbers.
+  "Any of the three" is stored, not added up, since one message can carry two flags.
+
+Fourteen numbers. With neither switch on, every count is zero and the rate has no denominator, as
+today. (The first draft stored nine numbers, without "any" or "reviewed", which could serve
+neither the "Flagged" filter nor a rate; C14.)
+
+They change whenever a flag does:
 
 - **A flag save** recounts that message's session in the same request: it reads the session's
-  message rows (a session has at most 112 messages here) and rewrites the session's counts.
+  message rows through `find_messages` (a session has at most 112 messages here) and rewrites the
+  session's counts.
 - **The scan** recounts each session it finishes.
 
 ## 7. Processing an upload
@@ -218,14 +331,35 @@ After the file is parsed (once, as now), processing:
 2. extracts the files of §4 and stores them;
 3. writes the rows of the new messages, then each new or changed session's row;
 4. writes the conversation's record last, with its new version;
-5. deletes the uploaded file. A failed attempt leaves it, so a retry still has it.
+5. raises the user's data version (§5c);
+6. deletes the uploaded file. A failed attempt leaves it, so a retry still has it.
+
+**Writing faster.** About 4,800 rows here, in DynamoDB batches of 25: 192 batches. Sent one after
+another at 10–30 ms each, that alone is 2–6 s. Processing sends up to 16 batches at a time, so the
+writing should take well under a second; batches DynamoDB returns unfinished are resent, with a
+pause that grows each time, up to 5 tries, after which the attempt fails with a distinct error
+naming how many rows were left (and S3's own retry of the processing runs it again). How many at a
+time DynamoDB accepts for one user's rows is C8.
+
+**Timing each step.** The `processing_run` log line
+([s3_trigger.rs:21](../../backend/timeline-api/src/s3_trigger.rs#L21)) records only the total today,
+so how the measured 6 s on AWS divides between reading, parsing and writing is not known. It gains
+one duration per step: reading the file, decompressing, parsing, sessions, files, rows, record.
+
+**More memory, as an experiment.** The processing function has 512 MB
+([template.yaml:417](../../infra/template.yaml#L417)). AWS gives a function processing power in
+proportion to its memory (from memory, not checked: one full processor at about 1,769 MB), which
+would explain processing and scan requests running about 5 times slower on AWS than on this machine
+(inferred). Step 7 measures processing at 512 MB and at 1,769 MB, with the step durations, and the
+cheaper setting per upload is kept.
 
 On AWS each file of a batch is processed at the same time as the others. If two hold the same
 conversation, both would read its record, add messages and write it back, the second write silently
 replacing the first: a race that exists in the code built on 2026-10-05 too (C1). Processing
 therefore writes the record only if its version is still the one it read (a DynamoDB conditional
-write), and on a conflict re-reads and redoes that conversation. Session and message rows are keyed
-by conversation and position, so a redo overwrites rather than duplicates.
+write), and on a conflict re-reads and redoes that conversation. Session rows are keyed by
+conversation and position and message rows by conversation, time and id, so a redo overwrites
+rather than duplicates.
 
 The added-messages pieces built on 2026-10-05 (`additions/…`) and `conversation_rebuild.rs` are
 replaced.
@@ -290,51 +424,65 @@ local column assumes the same. Server work on AWS takes about 5 times as long as
 (the measured ratio: scan requests 3.2 s against 0.65 s, processing 6 s against 1.1 s). DynamoDB and
 S3 calls take 10–30 ms each.
 
+**Why processing on AWS stays near 6 s, and what might change it.** The measured 6 s covers reading
+the 63.5 MB file from storage, parsing it and writing about 120 records; the parts are not
+measured separately (§7). After this plan it parses 9.3 MB, an eighth as much, but writes about
+4,800 rows instead of 120. The "After" figure below assumes the parallel writes of §7 at 512 MB:
+parsing about 0.5 s locally, so about 2.5 s on AWS at the measured ratio, plus under 1 s of writing
+and the function's start. It is a guess until step 7 times each step; more memory may shorten it.
+
 | What you wait for | Today, local | Today, AWS | After, local | After, AWS |
 |---|---|---|---|---|
 | **Preparing the file in the browser** (§7b) | none | none | 1.5 s | 1.5 s |
 | **Sending the file** | 26 s (63.5 MB) | 26 s (measured) | 1 s (2.8 MB) | 1 s |
-| **Processing** (from the file arriving to Describe) | 1 s (measured) | 6 s (measured) | 0.5 s | 6 s |
+| **Processing** (from the file arriving to Describe) | 1 s (measured) | 6 s (measured) | 0.5 s | 3–4 s |
 | **Scanning, if ticked** | 15 s (measured) | 80 s (measured) | 1 s | 5 s |
 | **Opening the timeline** | 27 s | 37 s (measured, during an upload) | 0.1 s | 1 s |
-| …your messages, in the background | (included above) | (included above) | 0.5 s | 2 s |
-| **Showing Claude's replies** (5.8 MB) | already loaded | already loaded | 3 s | 4 s |
+| **A page of Review** (filters, search or page changed) | already loaded | already loaded | 0.1 s | 0.3–1 s |
+| …a search with no other filter (reads every message) | already loaded | already loaded | 0.2 s | 1–2 s |
+| …with Claude's replies on | already loaded | already loaded | 0.2 s | 0.5–1 s |
+| **An analysis**, first time after a change | under 1 s, in the page | under 1 s, in the page | 0.3 s | 1–2 s |
+| …saved | | | 0.05 s | 0.2 s |
 | **The annotated download** | 27 s | 37 s | 3 s | 5 s |
 
 So the wait from pressing Upload to Describe, with the scan ticked, goes from about 112 s on AWS
-today to about 14 s.
-
-Processing parses an eighth as much as today, then writes about 4,800 rows (25 per DynamoDB batch)
-and about 50 files; it may be slower if DynamoDB limits the rate of writes to one user's rows (C8).
+today to about 11 s. Review and Analytics, which today cost nothing once the whole export is in the
+page, now cost a request each time; that is the trade for never holding every message in the page
+(C13).
 
 **Cost per upload of this export** (AWS's published us-east-1 prices, from memory, not checked):
 DynamoDB writes of about 8,000 write units, roughly $0.005–0.01; about 50 S3 writes, negligible.
 
 ## 10. Order of work
 
-1. **Storage.** Session and message rows with flags on them (core types and ports, in-memory and
-   DynamoDB adapters), the files store, paged queries, the conversation record's version; the
-   `MessageFlags` table removed from the template.
-2. **Processing.** Sessions, messages and files written with the versioned write and its retry; the
-   files of §4 extracted; the upload deleted when done; the additions and `conversation_rebuild.rs`
-   replaced.
-3. **Flags and their counts.** Flag saves and the scan writing message rows; session counts kept
-   current.
-4. **Routes.** `GET /sessions`, `GET /messages`, `GET /files/…`; the annotated download rebuilt
-   from rows.
+1. **Storage.** Session and message rows with flags on them, message keys with the time (core types
+   and ports, in-memory and DynamoDB adapters), range reads of one session's messages, analysis rows
+   and the user's data version, the files store, paged queries, the conversation record's version;
+   the `MessageFlags` table removed from the template.
+2. **Processing.** Sessions, messages and files written with the versioned write and its retry,
+   up to 16 batches at a time; step durations in its log line; the files of §4 extracted; the upload
+   deleted when done; the additions and `conversation_rebuild.rs` replaced.
+3. **Flags and their counts.** `FlagView`'s rules on the server; flag saves and the scan writing
+   message rows; the fourteen session counts kept current; the data version raised.
+4. **Finding messages** (§5b). `MessageFilter` and `find_messages`, then the routes on them:
+   `GET /messages`, `GET /sessions`, `GET /conversations/{id}/files`, `GET /files/…`; the annotated
+   download rebuilt from rows.
+4b. **Analytics** (§5c). The five analyses on the server, the time zone, saved results.
 5. **The scan.** Rows instead of the file; the 10-second budget.
 5b. **Slimming the upload** (§7b): in the page, and the server's decompression.
 5d. **Replaced branches** (§4d): pruning and notes in processing; notes in sessions and Review.
 5c. **Files and citations in Review** (§4, §4c): file cards in place in Claude's replies, the
    Conversations tab's list of a conversation's files, numbered citation links.
-6. **The page.** The timeline from conversations and sessions; your messages in the background;
-   Claude's replies and file links on demand; the same session flags on each day a session touches.
+6. **The page.** The timeline from conversations and sessions; Review a page at a time from
+   `GET /messages`; Analytics from `GET /analyses`; the same session flags on each day a session
+   touches; `state.humanMessages` and the page's filtering and analysis arithmetic removed.
 7. **Tests and measurements.** Every step tested as in the screen-flow plan; then §9 measured
-   locally and, after a deployment, on AWS, and written up as an analysis.
+   locally and, after a deployment, on AWS, with processing at 512 MB and 1,769 MB, and written up
+   as an analysis.
 
-Existing tests that read the downloaded export, the flags table, or a flag drawn on only one day of
-a session crossing midnight will need changes. The list comes to the user for approval before
-coding.
+Existing tests that read the downloaded export, the flags table, the page's own filtering or
+analysis arithmetic, or a flag drawn on only one day of a session crossing midnight will need
+changes. The list comes to the user for approval before coding.
 
 ## 11. Questions for the user
 
@@ -344,13 +492,17 @@ deleted once processed, §7); Q4 (the path to each conversation's latest message
 the kept path are removed, §4d); Q3 (SVGs drawn; web pages and code shown without running anything, with
 a download link, §4). The session files of the previous draft are dropped (the user).
 
+**Also decided on 2026-10-06:** messages load only as a view shows them (§5); Review's filters
+and search run on the server, narrowed by sessions first, through code shared by every route that
+reads messages (§5b); analyses are computed on the server and saved, charts drawn in the page (§5c).
+
 **Still open:** none.
 
 ## Self-critique log
 
 ### C1 [OPEN]: Two files of a batch processed at once can lose each other's messages
 Present in the code built on 2026-10-05 as well. **Mitigation in plan:** versioned conditional
-writes with a retry ([§7 (line 201)](2026-10-06-load-only-what-the-page-shows.md#L201)). **Open:** until
+writes with a retry ([§7 (line 326)](2026-10-06-load-only-what-the-page-shows.md#L326)). **Open:** until
 this plan is built, a batch whose files share conversations can lose added messages on AWS. Trigger:
 this plan's step 2.
 
@@ -362,16 +514,16 @@ this plan's step 2.
 measures them.
 
 ### C4 [RESOLVED]: The first estimates table mixed kinds of numbers
-**Resolution:** one table, the same four columns, absolute times ([§9 (line 264)](2026-10-06-load-only-what-the-page-shows.md#L264)).
+**Resolution:** one table, the same four columns, absolute times ([§9 (line 410)](2026-10-06-load-only-what-the-page-shows.md#L410)).
 
 ### C5 [RESOLVED]: Files and rows both holding messages
 **Resolution:** rows hold every message's text; the session files are dropped, and tool calls,
 tool results and thinking are not kept (the user, 2026-10-06). Only files of §4 are stored
-([§4 (line 61)](2026-10-06-load-only-what-the-page-shows.md#L61)).
+([§4 (line 63)](2026-10-06-load-only-what-the-page-shows.md#L63)).
 
 ### C6 [RESOLVED]: The Calendar needed messages only to split a session's flags by day
 **Resolution:** a session's flags show on every day it touches; the counts are stored with the
-session ([§6 (line 191)](2026-10-06-load-only-what-the-page-shows.md#L191)).
+session ([§6 (line 303)](2026-10-06-load-only-what-the-page-shows.md#L303)).
 
 ### C7 [OPEN]: Deleting the upload loses what isn't kept, for good
 Tool calls, tool results and thinking are gone once the upload is deleted, and the annotated
@@ -395,7 +547,7 @@ user finds marked files wrong often, drop the replay and keep only the first ver
 They put opening the timeline on AWS at 9 s and processing at 5 s, from a guessed slow-down. The
 activity run of 2026-10-05 had measured 37 s and 6 s, and sending the file, 26 s, was missing
 altogether. **Resolution:** §9 now starts from those measurements, lists what you wait for step by
-step, and derives the slow-down from them ([§9 (line 264)](2026-10-06-load-only-what-the-page-shows.md#L264)).
+step, and derives the slow-down from them ([§9 (line 410)](2026-10-06-load-only-what-the-page-shows.md#L410)).
 
 ### C11 [OPEN]: Slimming is measured in Node, not in a browser
 Parsing the 63.5 MB file took 0.3–0.7 s in Node on this machine; a browser on a slower computer may
@@ -407,5 +559,41 @@ the server instead (sending the full file again).
 The path is decided per upload, so a later export can show that the branch kept earlier was itself
 replaced. **Resolution:** the user decided (2026-10-06) that a replaced branch worth keeping becomes a
 conversation of its own; processing finds a revived branch by each new message's parent among the
-stored rows ([§4d (line 112)](2026-10-06-load-only-what-the-page-shows.md#L112)). What is worth
+stored rows ([§4d (line 114)](2026-10-06-load-only-what-the-page-shows.md#L114)). What is worth
 keeping was decided with Q5.
+
+### C13 [RESOLVED]: The first draft loaded every message into the page
+It loaded all your messages in the background and all of Claude's replies at once, although loading
+per conversation had been discussed, and it said neither that it departed from that nor why. Holding
+everything costs memory without limit as history grows, start-up time and data, stale copies, and
+exposure of every message to whatever else runs in the tab. **Resolution:** views ask for what they
+draw; Review a page at a time, Analytics as saved numbers
+([§5 (line 182)](2026-10-06-load-only-what-the-page-shows.md#L182)).
+
+### C14 [RESOLVED]: Nine session counts could not serve the "Flagged" filter or a rate
+"Flagged" is any of three flags, which can't be added up from per-flag counts, and a rate with only
+your flags shown is over your reviewed messages, which weren't counted. **Resolution:** fourteen
+numbers ([§6 (line 303)](2026-10-06-load-only-what-the-page-shows.md#L303)).
+
+### C15 [RESOLVED]: Processing on AWS was put at 6 s after the change without a reason
+**Resolution:** the estimate is derived (parsing at the measured AWS ratio, parallel writes), the
+log line gains step durations, and step 7 tries more memory
+([§7 (line 326)](2026-10-06-load-only-what-the-page-shows.md#L326)).
+
+### C16 [RESOLVED]: Analyses on the server don't know the viewer's day, week or hour
+**Resolution:** the page sends its time zone; results are saved per time zone
+([§5c (line 273)](2026-10-06-load-only-what-the-page-shows.md#L273)).
+
+### C17 [OPEN]: A search with no other filter reads every message
+**Mitigation in plan:** every other filter narrows sessions first (§5b). **Open:** an index of words
+(rows per word written in processing, or the `tantivy` search library, MIT) would avoid the full
+read, but matches whole words where today's search matches letters inside words, so it changes what
+search finds. Trigger: a search with no other filter taking over 2 s on AWS in step 7, or a user's
+messages passing 10 MB.
+
+### C18 [OPEN]: Lowercasing may differ between the page and the server
+Today's search lowercases in JavaScript; the server would use Rust's `to_lowercase`. They agree for
+English letters; a few letters in other alphabets lowercase differently (inferred from the two
+languages' documentation, not tested). **Mitigation in plan:** tests with accented and non-Latin
+letters in step 4. **Open:** if those tests show a difference that matters, the page sends the text
+already lowercased.
