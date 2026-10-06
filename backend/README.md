@@ -208,18 +208,21 @@ The migration plan's section 4.1 requires that automatic (heuristic/Bedrock)
 flag writes and the user's own overrides can never cross-contaminate. This
 is enforced at three layers, not just documented:
 
-1. **Trait level** (`timeline-core::ports::message_flags`): `AutoFlagWriter`
+1. **Trait level** (`timeline-core::ports::messages`): `AutoFlagWriter`
    and `UserFlagWriter` are separate traits; neither has a method that could
-   touch the other's data.
+   touch the other's data. Only upload processing holds `MessageRowWriter`,
+   which writes whole rows.
 2. **Wiring level** (`timeline-api::state`): `AppState` exposes each
    capability as its own `FromRef` impl, so a route handler's function
    signature only ever names the one trait object it needs. The
    `PATCH .../flags` handler's source code has no `Arc<dyn AutoFlagWriter>`
    in scope at all — not "doesn't use it," genuinely not a parameter.
-3. **DynamoDB level** (`timeline-storage::dynamo::message_flags_table`):
-   auto and user flags live in disjoint attribute names (`auto_*`/`user_*`),
-   and the UpdateExpression-building functions are unit-tested to prove
-   each one only ever references its own half.
+3. **DynamoDB level** (`timeline-storage::dynamo::message_rows`): flags
+   live on each message's row (plan
+   `docs/plans/2026-10-06-load-only-what-the-page-shows.md` §3) in
+   disjoint attribute names (`auto_*`/`user_*`); each kind of write names
+   only its own attributes, and the shared contract tests read back what
+   each write stored to prove it.
 
 ## Dev-only signing key: generated, not checked in
 

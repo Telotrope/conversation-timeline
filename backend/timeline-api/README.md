@@ -48,14 +48,22 @@ route, `POST /detect`; see [src/state.rs](src/state.rs)'s module doc.)
 | `PUT`/`GET /_dev/local-storage/{put,get}/{*key}` | [`routes::dev_local_storage`](src/routes/dev_local_storage.rs) | `DevState`, local-dev only |
 | `POST /_dev/login` | [`routes::dev_login::login`](src/routes/dev_login.rs) | none, local-dev only |
 
-`GET`/`PATCH .../flags` are the concrete embodiment of the auto/user separation: the two handlers
-are given *different* state types (`Arc<dyn MessageFlagsReader>` vs. `Arc<dyn UserFlagWriter>`), so
-the `PATCH` handler's own source code has no `AutoFlagWriter` in scope at all — not "doesn't call
-it," genuinely not a parameter it could call.
+`GET`/`PATCH .../flags` are the concrete embodiment of the auto/user separation: the `PATCH`
+handler is given a `UserFlagWriter` and no `AutoFlagWriter`, so its own source code has no way to
+write an automatic flag — not "doesn't call it," genuinely not a parameter it could call. Flags live
+on the message rows; a save finds its message among its conversation's rows by id, then recounts
+the message's session (plan `docs/plans/2026-10-06-load-only-what-the-page-shows.md` §6).
 
-**Flag handles** ([`flag_handles`](src/flag_handles.rs), migration plan §V2c). `GET /export` replies
-with `{"export_url": ..., "flag_handles": {"<message id>": "<handle>"}}`: one handle per user
-message, an HMAC-SHA256 signature over the user, conversation and message ids under a key only the
+**Requests in parts** (plan §8c). `GET /conversations`, `/sessions`, `/uploads`, `/messages`,
+`/export`, `/conversations/{id}/files`, `/analyses/{name}`, `POST /detect` and
+`PUT /uploads/{id}/metadata` each do as much as fits in the request's work limit (9 seconds on AWS;
+`TIMELINE_WORK_BUDGET_STEPS` rows read, for the local test server) and answer with a `cursor` to
+carry on from and the user's `data_version`. Every route that reads message rows does so through
+[`message_query::find_messages`](src/message_query.rs).
+
+**Flag handles** ([`flag_handles`](src/flag_handles.rs), migration plan §V2c). Each row of
+`GET /messages` carries its message's `handle`, and each part of `GET /export` its messages'
+`flag_handles`: one handle per user message, an HMAC-SHA256 signature over the user, conversation and message ids under a key only the
 server holds. The exported `conversations.json` itself carries no handles. `PATCH .../flags` takes
 `{"handle": ..., "caps"?, "critical"?, "angry"?}` and answers:
 
@@ -110,18 +118,20 @@ classDiagram
     class AppState {
         +Arc~dyn ObjectStore~ object_store
         +Arc~dyn ConversationSummaryStore~ conversation_summary_store
-        +Arc~dyn MessageFlagsReader~ flags_reader
+        +Arc~dyn MessageReader~ message_reader
         +Arc~dyn UserFlagWriter~ user_flag_writer
         +Arc~dyn AutoFlagWriter~ auto_flag_writer
+        +Arc~dyn SessionStore~ session_store
+        +Arc~dyn UserRecordStore~ user_records
+        +Arc~dyn AnalysisStore~ analysis_store
         +Arc~dyn UploadOutcomeStore~ upload_outcome_store
+        +BudgetSetting budget
         +Arc~CognitoVerifier~ verifier
         +Arc~FlagHandleKey~ flag_handle_key
     }
     class DevState {
-        +Arc~dyn ObjectStore~ object_store
-        +Arc~dyn UploadOutcomeStore~ upload_outcome_store
-        +Arc~dyn ConversationSummaryStore~ conversation_summary_store
-        +Arc~dyn AutoFlagWriter~ auto_flag_writer
+        +ProcessingStores processing
+        +Vec~Resettable~ resettable
     }
     class AuthenticatedUser {
         +UserId
@@ -142,7 +152,7 @@ classDiagram
     }
     class process_upload {
         <<function>>
-        +process_upload(object_store, upload_outcome_store, conversation_summary_store, auto_flag_writer, user_id, upload_id) Result~(), ProcessingError~
+        +process_upload(stores, user_id, upload_id) Result~(), ProcessingError~
     }
     class create_upload {
         <<handler, AppState>>
@@ -151,7 +161,7 @@ classDiagram
         <<handler, AppState>>
     }
     class get_flags {
-        <<handler, AppState: MessageFlagsReader only>>
+        <<handler, AppState: MessageReader only>>
     }
     class patch_flags {
         <<handler, AppState: UserFlagWriter only>>

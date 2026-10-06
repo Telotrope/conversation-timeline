@@ -39,17 +39,21 @@ crate or its tests — a Postgres-backed adapter could replace DynamoDB with zer
 
 | Port | Purpose |
 |---|---|
-| [`ObjectStore`](src/ports/object_store.rs) | Presigned-URL blob storage (S3-shaped): `presign_put`/`presign_get`/`get`/`put`. |
-| [`UploadOutcomeStore`](src/ports/uploads.rs) | One upload's terminal outcome, written once when processing finishes: `record_outcome`/`get_outcome`. No pending/processing state — nothing reads it (see the migration plan's §V2a-revision). The raw object's key is a pure function of `(user_id, upload_id)` (`raw_object_key`), never stored. |
-| [`ConversationSummaryStore`](src/ports/conversations.rs) | Conversation summaries: `list_for_user`/`get` (read), `put` (write — used only by the upload-processing pipeline). |
-| [`MessageFlagsReader`](src/ports/message_flags.rs) | Read access to a message's auto + user flags. |
-| [`AutoFlagWriter`](src/ports/message_flags.rs) | Write access to *only* auto-detected flags — held exclusively by the processing pipeline. |
-| [`UserFlagWriter`](src/ports/message_flags.rs) | Write access to *only* the user's own overrides — held exclusively by the `PATCH .../flags` route. |
+| [`ObjectStore`](src/ports/object_store.rs) | Presigned-URL blob storage (S3-shaped): `presign_put`/`presign_get`/`get`/`put`/`delete`. Holds raw uploads (deleted once processed) and the files kept from conversations (`file_object_key`). |
+| [`UploadOutcomeStore`](src/ports/uploads.rs) | One upload's outcome, its attempts and how far processing has got (`record_processing_progress`), and what `POST /uploads` learned about the file. The raw object's key is a pure function of `(user_id, upload_id)` (`raw_object_key`), never stored. |
+| [`ConversationSummaryStore`](src/ports/conversations.rs) | Conversation records: `list_for_user`/`list_page`/`get` (read), `put` (a versioned write, refused with `Conflict` when someone else wrote first). |
+| [`MessageReader`](src/ports/messages.rs) | Message and note rows: a session's range, a message by id, the row after a message. |
+| [`MessageRowWriter`](src/ports/messages.rs) | Whole-row writes and deletes — held only by upload processing. |
+| [`AutoFlagWriter`](src/ports/messages.rs) | Write access to *only* the automatic flags on a row — held by the scan. |
+| [`UserFlagWriter`](src/ports/messages.rs) | Write access to *only* your flags on a row — held by the `PATCH .../flags` route. |
+| [`SessionStore`](src/ports/sessions.rs) | Sessions with their fourteen counts, in key order. |
+| [`UserRecordStore`](src/ports/user_record.rs) | The user's data version and totals. |
+| [`AnalysisStore`](src/ports/analyses.rs) | Saved results of the two server analyses. |
 
-The three-way split on message flags is deliberate, not incidental: it's what makes the auto/user
+The split on message flags is deliberate, not incidental: it's what makes the auto/user
 separation ([timeline-project-decisions.md §2.6](../../timeline-project-decisions.md#L98)) a
 compile-time guarantee rather than a convention — a route handler holding a `UserFlagWriter` has no
-way to call anything that would touch an auto-detected value, because no such method exists on the
+way to call anything that would touch an automatic value, because no such method exists on the
 type it holds. See [timeline-api/README.md](../timeline-api/README.md) for how the wiring layer
 carries this through.
 
@@ -105,20 +109,21 @@ classDiagram
         <<trait>>
         +list_for_user(user_id) Vec~ConversationSummary~
         +get(user_id, conversation_id) ConversationSummary?
-        +put(user_id, summary)
+        +put(user_id, summary) ConversationSummary
     }
-    class MessageFlagsReader {
+    class MessageReader {
         <<trait>>
-        +get(user_id, conversation_id, message_id) MessageFlagRecord?
-        +list_for_conversation(user_id, conversation_id) Vec~MessageFlagRecord~
+        +read_entries(user_id, range) Vec~Entry~
+        +find_entry(user_id, conversation_id, message_id) Entry?
+        +entry_after(user_id, key) Entry?
     }
     class AutoFlagWriter {
         <<trait>>
-        +set_auto_flags(user_id, conversation_id, message_id, flags)
+        +set_auto_flags(user_id, key, flags)
     }
     class UserFlagWriter {
         <<trait>>
-        +set_user_flags(user_id, conversation_id, message_id, overrides) MessageFlagRecord
+        +set_user_flags(user_id, key, overrides) MessageFlags
     }
     class UploadOutcome {
         <<enum>>
@@ -131,9 +136,8 @@ classDiagram
         +ConversationName name
         +usize message_count
     }
-    class MessageFlagRecord {
-        +MessageId message_id
-        +FlagSet auto
+    class MessageFlags {
+        +FlagSet? auto
         +FlagOverrides user
     }
     class FlagSet {
@@ -148,8 +152,7 @@ classDiagram
     }
     UploadOutcomeStore ..> UploadOutcome
     ConversationSummaryStore ..> ConversationSummary
-    MessageFlagsReader ..> MessageFlagRecord
-    UserFlagWriter ..> MessageFlagRecord
-    MessageFlagRecord --> FlagSet
-    MessageFlagRecord --> FlagOverrides
+    UserFlagWriter ..> MessageFlags
+    MessageFlags --> FlagSet
+    MessageFlags --> FlagOverrides
 ```

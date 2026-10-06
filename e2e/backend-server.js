@@ -26,6 +26,10 @@ const BINARY = path.join(BACKEND_DIR, 'target', 'debug', 'timeline-api');
 // setup runs and git ignores.
 const OUTPUT_LOG = path.join(__dirname, 'test-results', 'backend-stdout.log');
 
+// Rows each request may read before answering with a cursor; see the spawn
+// below.
+const WORK_BUDGET_STEPS = 20;
+
 // cargo and zig aren't on the default PATH on this machine; see
 // backend/README.md's prerequisites.
 const PATH_WITH_CARGO = [
@@ -77,7 +81,16 @@ module.exports = async function startBackend() {
   const stdoutLog = fs.createWriteStream(OUTPUT_LOG);
   const server = spawn(BINARY, [], {
     cwd: BACKEND_DIR,
-    env: { ...process.env, PORT: String(BACKEND_PORT) },
+    // A short work limit per request (plan
+    // docs/plans/2026-10-06-load-only-what-the-page-shows.md §8c): this
+    // many rows read, then the server answers with a cursor, so the small
+    // test data still answers in several parts and the page's loops that
+    // carry on are exercised. E2E_WORK_BUDGET_STEPS overrides it.
+    env: {
+      ...process.env,
+      PORT: String(BACKEND_PORT),
+      TIMELINE_WORK_BUDGET_STEPS: process.env.E2E_WORK_BUDGET_STEPS || String(WORK_BUDGET_STEPS),
+    },
     // Its own process group, so teardown can signal everything it started.
     detached: true,
   });

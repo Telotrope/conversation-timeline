@@ -23,7 +23,7 @@ server actually exercise.
 
 ## Test coverage — the honest split
 
-Measured directly on 2026-10-01 (`cargo llvm-cov -p timeline-storage --summary-only`), not
+Measured directly on 2026-10-06 (`cargo llvm-cov --workspace --summary-only`), not
 estimated. Each storage interface has one **contract suite** in [tests/support/](tests/support/):
 checks any correct implementation must pass, run against both the in-memory fake
 ([tests/contract_memory.rs](tests/contract_memory.rs)) and the real adapter, so a fake that drifts
@@ -32,9 +32,11 @@ from the real service fails a test.
 | File | Line coverage | What's actually tested |
 |---|---|---|
 | [`s3.rs`](src/s3.rs) | 100% | `ObjectStore` contract against `s3s-fs`; presigned PUT/GET used by a plain HTTP client; tampered, expired and wrong-method URLs rejected; over-long presign and an unreachable server reported as `Backend`. |
-| [`dynamo/conversations_table.rs`](src/dynamo/conversations_table.rs) | 98.41% | `UploadOutcomeStore` and `ConversationSummaryStore` contracts against DynamoDB Local; both row kinds in one table; malformed rows; missing table. Two lines unreached: the missing-`sk` and missing-`CONV#`-prefix checks in `list_for_user`, commented in the code as currently unreachable backstops (an accepted exception to 100% coverage). |
-| [`dynamo/message_flags_table.rs`](src/dynamo/message_flags_table.rs) | 99.20% | Message-flags contract (including the auto/user separation, read back through the real trait methods) against DynamoDB Local; a malformed sort key; missing table. One line unreached: the missing-`sk` check, likewise commented as a currently unreachable backstop. |
-| `memory/*.rs` | 54–78% within this crate | Contract suites plus the original `memory_*.rs` tests. The unreached lines in each file are its `Resettable::reset`, which is exercised through `timeline-api`'s `POST /_dev/reset` tests, not from this crate. |
+| [`dynamo/conversations_table.rs`](src/dynamo/conversations_table.rs) | 97.99% | `UploadOutcomeStore` (outcomes, attempts, processing progress, received facts) and `ConversationSummaryStore` (versioned writes, pages) contracts against DynamoDB Local; malformed rows; missing table. Unreached: commented, currently unreachable backstops. |
+| [`dynamo/message_rows.rs`](src/dynamo/message_rows.rs) | 98.76% | Message-row contract (flags on rows, the auto/user separation read back through the real trait methods, ranges, reading after a key, finding by id) against DynamoDB Local; keys and entries our code didn't write; each flag attribute of the wrong type; a missing table; a conversation larger than one 1 MB answer. |
+| [`dynamo/batches.rs`](src/dynamo/batches.rs) | 100% | Up to 16 batches of 25 at once; unfinished rows resent and, after five tries, reported by count — against a stand-in DynamoDB that hands rows back unfinished (DynamoDB Local never does). |
+| [`dynamo/sessions_table.rs`](src/dynamo/sessions_table.rs), [`dynamo/user_record_rows.rs`](src/dynamo/user_record_rows.rs) | 98.90%, 98.61% | Session, user-record and saved-analysis contracts; rows our code didn't write; a missing table. |
+| `memory/*.rs` | 100% (whole workspace) | Contract suites plus the `memory_*.rs` tests; each `Resettable::reset` is exercised through `timeline-api`'s `POST /_dev/reset` tests. |
 
 Not covered by the stand-ins: real S3's host-name bucket addressing and its `NoSuchBucket` error
 (`s3s-fs` 0.17 doesn't check bucket existence on `GetObject`/`PutObject`). Those wait for the
@@ -42,8 +44,8 @@ real-AWS run in the migration plan's §V2.
 
 ## Design: what each adapter is adapting, and how
 
-- **`InMemoryObjectStore`/`InMemoryUploadOutcomeStore`/`InMemoryConversationSummaryStore`/`InMemoryMessageFlagsStore`**
-  — each wraps a `Mutex<HashMap<...>>`. `InMemoryObjectStore`'s presigned URLs are real, relative
+- **`InMemoryObjectStore`/`InMemoryUploadOutcomeStore`/`InMemoryConversationSummaryStore`/`InMemoryMessageStore`/`InMemorySessionStore`/`InMemoryUserRecordStore`**
+  — each wraps a `Mutex` around a map (ordered where the port promises key order). `InMemoryObjectStore`'s presigned URLs are real, relative
   HTTP paths (`/_dev/local-storage/put|get/{key}`) that `timeline-api`'s `_dev`-only routes serve —
   not an inert placeholder string — so a real browser can actually `PUT`/`GET` against them in local
   dev (see the migration plan's §V2a).
@@ -54,10 +56,13 @@ real-AWS run in the migration plan's §V2.
   distinguishing an upload's own terminal-outcome row (written once, by `record_outcome` — see the
   migration plan's §V2a-revision) from the conversation summaries it eventually produces by
   sort-key prefix (`UPLOAD#<id>` vs. `CONV#<id>`).
-- **`DynamoMessageFlagsStore`** implements the three flag traits against a separate `MessageFlags`
-  table, with disjoint `auto_*`/`user_*` DynamoDB attribute names — the storage-level enforcement of
-  the auto/user separation, verified by the message-flags contract suite reading back what each
-  kind of write stored, against DynamoDB Local.
+- **`DynamoMessageStore`**, **`DynamoSessionStore`** and **`DynamoUserRecordStore`** keep message
+  rows (`MSG#{conversation}#{time}#{id}`), sessions (`SESS#{conversation}#{number}`), the user's
+  record (`USER`) and saved analyses (`ANALYSIS#…`) in the same table (plan
+  `docs/plans/2026-10-06-load-only-what-the-page-shows.md` §3). Flags live on the message rows in
+  disjoint `auto_*`/`user_*` attribute names — the storage-level enforcement of the auto/user
+  separation, verified by the message-row contract suite reading back what each kind of write
+  stored, against DynamoDB Local. Every query pages past DynamoDB's 1 MB per answer.
 
 ## Class diagram
 
@@ -72,7 +77,10 @@ classDiagram
     class ConversationSummaryStore {
         <<trait, timeline-core>>
     }
-    class MessageFlagsReader {
+    class MessageReader {
+        <<trait, timeline-core>>
+    }
+    class MessageRowWriter {
         <<trait, timeline-core>>
     }
     class AutoFlagWriter {
@@ -81,31 +89,14 @@ classDiagram
     class UserFlagWriter {
         <<trait, timeline-core>>
     }
-
-    class InMemoryObjectStore {
-        -Mutex~HashMap~ objects
+    class SessionStore {
+        <<trait, timeline-core>>
     }
-    class InMemoryUploadOutcomeStore {
-        -Mutex~HashMap~ outcomes
+    class UserRecordStore {
+        <<trait, timeline-core>>
     }
-    class InMemoryConversationSummaryStore {
-        -Mutex~HashMap~ summaries
-        +insert(user_id, summary)  "test-only sync helper"
-    }
-    class InMemoryMessageFlagsStore {
-        -Mutex~HashMap~ records
-    }
-    class S3ObjectStore {
-        -aws_sdk_s3::Client client
-        -String bucket
-    }
-    class DynamoConversationsTable {
-        -aws_sdk_dynamodb::Client client
-        -String table_name
-    }
-    class DynamoMessageFlagsStore {
-        -aws_sdk_dynamodb::Client client
-        -String table_name
+    class AnalysisStore {
+        <<trait, timeline-core>>
     }
 
     ObjectStore <|.. InMemoryObjectStore
@@ -114,10 +105,18 @@ classDiagram
     UploadOutcomeStore <|.. DynamoConversationsTable
     ConversationSummaryStore <|.. InMemoryConversationSummaryStore
     ConversationSummaryStore <|.. DynamoConversationsTable
-    MessageFlagsReader <|.. InMemoryMessageFlagsStore
-    AutoFlagWriter <|.. InMemoryMessageFlagsStore
-    UserFlagWriter <|.. InMemoryMessageFlagsStore
-    MessageFlagsReader <|.. DynamoMessageFlagsStore
-    AutoFlagWriter <|.. DynamoMessageFlagsStore
-    UserFlagWriter <|.. DynamoMessageFlagsStore
+    MessageReader <|.. InMemoryMessageStore
+    MessageRowWriter <|.. InMemoryMessageStore
+    AutoFlagWriter <|.. InMemoryMessageStore
+    UserFlagWriter <|.. InMemoryMessageStore
+    MessageReader <|.. DynamoMessageStore
+    MessageRowWriter <|.. DynamoMessageStore
+    AutoFlagWriter <|.. DynamoMessageStore
+    UserFlagWriter <|.. DynamoMessageStore
+    SessionStore <|.. InMemorySessionStore
+    SessionStore <|.. DynamoSessionStore
+    UserRecordStore <|.. InMemoryUserRecordStore
+    UserRecordStore <|.. DynamoUserRecordStore
+    AnalysisStore <|.. InMemoryUserRecordStore
+    AnalysisStore <|.. DynamoUserRecordStore
 ```
