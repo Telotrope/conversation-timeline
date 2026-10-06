@@ -879,3 +879,11 @@ table.files .meta{ display:block; font-size:0.72rem; color:var(--ink-faint); }
   margin-bottom:16px;
 }
 
+/* A table's own title, such as "Sessions" in the Conversations tab. */
+.table-title{
+  font-family:var(--font-text);
+  font-weight:500;
+  font-size:1.05rem;
+  margin:0 0 6px;
+}
+

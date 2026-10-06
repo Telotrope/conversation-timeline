@@ -246,9 +246,11 @@ function participantRow(section, p, i){
   const named = PARTICIPANT_KINDS.find((k) => k.value === p.kind)?.named;
   const name = named ? el('input', { type: 'text', value: p.name, placeholder: p.kind === 'human' ? 'Name' : 'Which AI' }) : null;
   if(name) name.addEventListener('input', () => { p.name = name.value; });
-  const remove = el('button', { type: 'button', className: 'btn-secondary btn-small', textContent: 'Remove' });
-  remove.addEventListener('click', () => { section.answers.participants.splice(i, 1); render(); });
-  return el('div', { className: 'participant-row' }, kind, name, remove, errorNote(section, `participant.${i}`));
+  // No Remove: the file says who took part, and taking someone out of the
+  // list would say nothing true about the conversation (the user,
+  // 2026-10-06). Matching a file's names to people is deferred-problems
+  // item 12.
+  return el('div', { className: 'participant-row' }, kind, name, errorNote(section, `participant.${i}`));
 }
 
 function mediumField(section, i){

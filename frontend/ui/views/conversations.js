@@ -110,6 +110,7 @@ export function selectConversation(idx){
     ${detailsLine(conv)}
     <div class="summary">${conv.total_messages} messages total · active across ${dayCount} ${dayCount===1?'day':'days'} · ${formatDuration(totalSec)} of combined active time</div>
     ${critNote}
+    <h4 class="table-title">Sessions</h4>
     <table class="sessions">
       <thead><tr><th>Day</th><th>Time span</th><th>Duration</th><th>Messages</th><th>Flags</th></tr></thead>
       <tbody>${rows}</tbody>

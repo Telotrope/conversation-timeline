@@ -33,6 +33,9 @@ let TIMELINE_LOADED = false;
 // running while its files are described.
 let PENDING = null;
 let SUBJECT = null;
+// The timeline's address when the Upload page was opened from it, so going
+// back returns to the same tab.
+let TIMELINE_ADDRESS = '#calendar';
 
 export function connectPageFlow(deps){
   DEPS = deps;
@@ -133,6 +136,7 @@ export async function signOut(){
 // --- Upload ---
 
 export function toUpload(push){
+  if(currentPage() === 'timeline' && TAB_ADDRESS.test(window.location.hash)) TIMELINE_ADDRESS = window.location.hash;
   showPage('upload');
   DEPS.resetUploadPage(HAS_DATA);
   address('#upload', push);
@@ -242,10 +246,13 @@ function arriveAtTab(tab){
 }
 
 // "Back to timeline" on the Upload page.
+// Back to the tab it was opened from: the address Back landed on, or the
+// one remembered when the Upload page opened.
 export function backToTimeline(){
   if(!TIMELINE_LOADED) return openTimeline();
   showPage('timeline');
-  arriveAtTab('calendar');
+  if(!TAB_ADDRESS.test(window.location.hash)) address(TIMELINE_ADDRESS, false);
+  DEPS.applyLocationHash();
 }
 
 // --- Back and Forward (plan §4) ---
