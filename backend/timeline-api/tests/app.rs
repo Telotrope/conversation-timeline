@@ -16,15 +16,13 @@ use jsonwebtoken::jwk::JwkSet;
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use serde::Serialize;
 use serde_json::{json, Value};
-use timeline_api::app::build_router;
+use timeline_api::app::{build_dev_router, build_router};
 use timeline_api::dev_only::generate_dev_keypair;
 use timeline_api::flag_handles::FlagHandleKey;
+use timeline_api::local_state::build_local_state;
 use timeline_api::state::AppState;
 use timeline_auth::cognito::CognitoVerifier;
-use timeline_storage::memory::conversations::InMemoryConversationSummaryStore;
-use timeline_storage::memory::message_flags::InMemoryMessageFlagsStore;
-use timeline_storage::memory::object_store::InMemoryObjectStore;
-use timeline_storage::memory::uploads::InMemoryUploadOutcomeStore;
+use timeline_core::work_budget::{BudgetSetting, REQUEST_WORK_LIMIT};
 use tower::ServiceExt;
 
 // A throwaway RSA keypair generated once for this whole test binary --
@@ -37,19 +35,20 @@ const TEST_KID: &str = "dev-only-key-1"; // matches generate_dev_keypair's fixed
 const ISSUER: &str = "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_testpool";
 const CLIENT_ID: &str = "test-client-id";
 
+/// The local server's stores, with logins checked against this file's own
+/// throwaway key pair.
 fn test_state() -> AppState {
+    test_states().0
+}
+
+fn test_states() -> (AppState, timeline_api::dev_state::DevState) {
     let (_, jwks) = &*TEST_KEYPAIR;
-    let flags_store = Arc::new(InMemoryMessageFlagsStore::new());
-    AppState {
-        flag_handle_key: Arc::new(FlagHandleKey::generate()),
-        object_store: Arc::new(InMemoryObjectStore::new()),
-        conversation_summary_store: Arc::new(InMemoryConversationSummaryStore::new()),
-        flags_reader: flags_store.clone(),
-        user_flag_writer: flags_store.clone(),
-        auto_flag_writer: flags_store,
-        upload_outcome_store: Arc::new(InMemoryUploadOutcomeStore::new()),
-        verifier: Arc::new(CognitoVerifier::new(jwks.clone(), ISSUER, CLIENT_ID)),
-    }
+    let (mut state, dev) = build_local_state(
+        FlagHandleKey::generate(),
+        BudgetSetting::Clock(REQUEST_WORK_LIMIT),
+    );
+    state.verifier = Arc::new(CognitoVerifier::new(jwks.clone(), ISSUER, CLIENT_ID));
+    (state, dev)
 }
 
 #[derive(Serialize)]
@@ -114,7 +113,9 @@ async fn list_conversations_starts_empty() {
         .unwrap();
     let response = router.oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(body_json(response).await, json!([]));
+    // The reply is in parts (plan 2026-10-06-load-only-what-the-page-shows.md
+    // §8c): the records are inside it.
+    assert_eq!(body_json(response).await["conversations"], json!([]));
 }
 
 #[tokio::test]
@@ -159,20 +160,25 @@ async fn getting_flags_that_were_never_set_is_404() {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
+/// Changed by plan 2026-10-06-load-only-what-the-page-shows.md: a save must
+/// name a stored message (it is found among its conversation's rows), so
+/// the message is uploaded first; and the save's reply also carries the
+/// recounted session, so the GET is compared with its flag fields.
 #[tokio::test]
 async fn patch_then_get_flags_round_trips_through_real_http_requests() {
-    let state = test_state();
+    let (state, dev) = test_states();
     let conv = "11111111-1111-4111-8111-111111111111";
     let msg = "22222222-2222-4222-8222-222222222222";
     // Since the migration plan's §V2c, a save must carry the handle the
-    // server issued for that message (normally delivered by GET /export).
+    // server issued for that message (normally delivered by GET /messages).
     let handle = state.flag_handle_key.handle_for(
         &timeline_core::ports::ids::UserId("alice".to_string()),
         timeline_core::model::ConversationId(conv.parse().unwrap()),
         timeline_core::model::MessageId(msg.parse().unwrap()),
     );
-    let router = build_router(state);
+    let router = build_router(state).merge(build_dev_router(dev));
     let token = test_token("alice");
+    upload_one_message(&router, &token, conv, msg).await;
 
     let patch_request = Request::builder()
         .method("PATCH")
@@ -200,10 +206,41 @@ async fn patch_then_get_flags_round_trips_through_real_http_requests() {
         .unwrap();
     let get_response = router.oneshot(get_request).await.unwrap();
     assert_eq!(get_response.status(), StatusCode::OK);
+    let got = body_json(get_response).await;
+    for field in ["message_id", "auto", "scanned", "user"] {
+        assert_eq!(
+            got[field], patched[field],
+            "a GET right after a PATCH must see the same {field}"
+        );
+    }
+}
+
+/// Uploads one conversation holding one message of alice's.
+async fn upload_one_message(router: &axum::Router, token: &str, conv: &str, msg: &str) {
+    let create = Request::builder()
+        .method("POST")
+        .uri("/uploads")
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Content-Type", "application/json")
+        .body(Body::from(
+            r#"{"file_name":"conversations.json","human_name":"Alice"}"#,
+        ))
+        .unwrap();
+    let created = body_json(router.clone().oneshot(create).await.unwrap()).await;
+    let raw = json!([{
+        "uuid": conv,
+        "name": "c",
+        "chat_messages": [{"uuid": msg, "sender": "human", "created_at": "2026-01-01T00:00:00Z",
+                           "content": [{"type": "text", "text": "hi"}]}],
+    }]);
+    let put = Request::builder()
+        .method("PUT")
+        .uri(created["upload_url"].as_str().unwrap())
+        .body(Body::from(raw.to_string()))
+        .unwrap();
     assert_eq!(
-        body_json(get_response).await,
-        patched,
-        "a GET right after a PATCH must see the same data"
+        router.clone().oneshot(put).await.unwrap().status(),
+        StatusCode::OK
     );
 }
 
@@ -229,7 +266,7 @@ async fn conversations_are_isolated_per_authenticated_user() {
         .body(Body::empty())
         .unwrap();
     let response = router.oneshot(bob_list).await.unwrap();
-    assert_eq!(body_json(response).await, json!([]));
+    assert_eq!(body_json(response).await["conversations"], json!([]));
 }
 
 /// A test double that always fails -- proves the error-handling branch in
@@ -266,6 +303,12 @@ impl timeline_core::ports::object_store::ObjectStore for FaultyObjectStore {
         &self,
         _key: &str,
         _data: Vec<u8>,
+    ) -> Result<(), timeline_core::ports::errors::ObjectStoreError> {
+        unimplemented!("not exercised by this test")
+    }
+    async fn delete(
+        &self,
+        _key: &str,
     ) -> Result<(), timeline_core::ports::errors::ObjectStoreError> {
         unimplemented!("not exercised by this test")
     }

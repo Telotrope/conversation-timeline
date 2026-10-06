@@ -107,7 +107,7 @@ fn api_cors(indent: usize, origins: &[&str]) -> String {
     format!(
         "{pad}- AllowOrigins:\n{listed}\
          {pad}  AllowHeaders: [authorization, content-type, x-timeline-session]\n\
-         {pad}  AllowMethods: [GET, POST, PATCH]\n\
+         {pad}  AllowMethods: [GET, POST, PATCH, PUT]\n\
          {pad}  ExposeHeaders: [apigw-requestid]\n\
          {pad}  MaxAge: 600\n"
     )

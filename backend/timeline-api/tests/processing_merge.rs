@@ -3,8 +3,10 @@
 //! §8b-8b-2): run through the processing Lambda's own handler, so the run's
 //! log line is checked too.
 
+#[path = "support/local_app.rs"]
+mod local_app;
+
 use std::cell::RefCell;
-use std::sync::Arc;
 
 use serde_json::{json, Value};
 use timeline_api::aws_settings::{DeliberateFailure, EventLogging};
@@ -14,21 +16,12 @@ use timeline_core::conversation_metadata::UploadFacts;
 use timeline_core::labels::{FileName, PersonName};
 use timeline_core::ports::ids::{UploadId, UserId};
 use timeline_core::ports::uploads::{raw_object_key, UploadOutcome};
-use timeline_storage::memory::conversations::InMemoryConversationSummaryStore;
-use timeline_storage::memory::message_flags::InMemoryMessageFlagsStore;
-use timeline_storage::memory::object_store::InMemoryObjectStore;
-use timeline_storage::memory::uploads::InMemoryUploadOutcomeStore;
 
 const S3_SAMPLE: &str = include_str!("fixtures/aws-samples/example-s3-event.json");
 const CONV: &str = "aaaaaaaa-0000-4000-8000-000000000001";
 
 fn stores() -> ProcessingStores {
-    ProcessingStores {
-        object_store: Arc::new(InMemoryObjectStore::new()),
-        upload_outcome_store: Arc::new(InMemoryUploadOutcomeStore::new()),
-        conversation_summary_store: Arc::new(InMemoryConversationSummaryStore::new()),
-        user_flag_writer: Arc::new(InMemoryMessageFlagsStore::new()),
-    }
+    local_app::memory_stores()
 }
 
 fn alice() -> UserId {
@@ -80,15 +73,7 @@ async fn stored(stores: &ProcessingStores, raw: &str, record: bool) -> UploadId 
 }
 
 async fn run(stores: &ProcessingStores, upload: UploadId) -> Result<(), ProcessingError> {
-    process_upload(
-        stores.object_store.as_ref(),
-        stores.upload_outcome_store.as_ref(),
-        stores.conversation_summary_store.as_ref(),
-        stores.user_flag_writer.as_ref(),
-        &alice(),
-        upload,
-    )
-    .await
+    process_upload(stores, &alice(), upload).await
 }
 
 /// Processes `upload` through the Lambda's handler; returns its run line.

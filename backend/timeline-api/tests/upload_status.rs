@@ -9,6 +9,9 @@
 //! Needs Java and DynamoDB Local for that one test; fails (never skips)
 //! without them.
 
+#[path = "support/local_app.rs"]
+mod local_app;
+
 #[path = "support/aws_world.rs"]
 #[allow(dead_code)]
 mod aws_world;
@@ -18,62 +21,20 @@ mod dynamodb_local;
 #[allow(dead_code)]
 mod s3_local;
 
-use std::sync::Arc;
-
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
-use timeline_api::app::{build_dev_router, build_router};
-use timeline_api::dev_only::{DEV_KEYPAIR, DEV_ONLY_CLIENT_ID, DEV_ONLY_ISSUER};
-use timeline_api::dev_state::DevState;
-use timeline_api::flag_handles::FlagHandleKey;
-use timeline_api::state::AppState;
-use timeline_auth::cognito::CognitoVerifier;
-use timeline_core::ports::conversations::ConversationSummaryStore;
 use timeline_core::ports::ids::{UploadId, UserId};
-use timeline_core::ports::object_store::ObjectStore;
 use timeline_core::ports::uploads::{UploadOutcome, UploadOutcomeStore};
 use timeline_storage::dynamo::conversations_table::DynamoConversationsTable;
-use timeline_storage::memory::conversations::InMemoryConversationSummaryStore;
-use timeline_storage::memory::message_flags::InMemoryMessageFlagsStore;
-use timeline_storage::memory::object_store::InMemoryObjectStore;
-use timeline_storage::memory::uploads::InMemoryUploadOutcomeStore;
 use tower::ServiceExt;
 
 /// The local build's routers, sharing one set of stores as `main.rs`'s
 /// `build_local_state` does.
 fn local_router() -> Router {
-    let (_, jwks) = &*DEV_KEYPAIR;
-    let flags = Arc::new(InMemoryMessageFlagsStore::new());
-    let objects: Arc<dyn ObjectStore> = Arc::new(InMemoryObjectStore::new());
-    let summaries: Arc<dyn ConversationSummaryStore> =
-        Arc::new(InMemoryConversationSummaryStore::new());
-    let outcomes: Arc<dyn UploadOutcomeStore> = Arc::new(InMemoryUploadOutcomeStore::new());
-    let app_state = AppState {
-        flag_handle_key: Arc::new(FlagHandleKey::generate()),
-        object_store: objects.clone(),
-        conversation_summary_store: summaries.clone(),
-        flags_reader: flags.clone(),
-        user_flag_writer: flags.clone(),
-        auto_flag_writer: flags.clone(),
-        upload_outcome_store: outcomes.clone(),
-        verifier: Arc::new(CognitoVerifier::new(
-            jwks.clone(),
-            DEV_ONLY_ISSUER,
-            DEV_ONLY_CLIENT_ID,
-        )),
-    };
-    let dev_state = DevState {
-        object_store: objects,
-        upload_outcome_store: outcomes,
-        conversation_summary_store: summaries,
-        user_flag_writer: flags.clone(),
-        auto_flag_writer: flags,
-        resettable: Arc::new(vec![]),
-    };
-    build_router(app_state).merge(build_dev_router(dev_state))
+    local_app::router()
 }
 
 async fn send(router: &Router, request: Request<Body>) -> (StatusCode, Value) {

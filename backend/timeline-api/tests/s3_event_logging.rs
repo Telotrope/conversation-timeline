@@ -6,8 +6,10 @@
 //! Not covered: the binary passing `println!` and the setting it read
 //! (plan C36); the capture step on AWS shows that.
 
+#[path = "support/local_app.rs"]
+mod local_app;
+
 use std::cell::RefCell;
-use std::sync::Arc;
 
 use serde_json::{json, Value};
 use timeline_api::aws_settings::{EventLogging, InvalidEventLogging};
@@ -16,10 +18,6 @@ use timeline_api::s3_trigger::{
 };
 use timeline_core::ports::ids::{UploadId, UserId};
 use timeline_core::ports::uploads::{raw_object_key, UploadOutcome};
-use timeline_storage::memory::conversations::InMemoryConversationSummaryStore;
-use timeline_storage::memory::message_flags::InMemoryMessageFlagsStore;
-use timeline_storage::memory::object_store::InMemoryObjectStore;
-use timeline_storage::memory::uploads::InMemoryUploadOutcomeStore;
 
 const SAMPLE: &str = include_str!("fixtures/aws-samples/example-s3-event.json");
 const FIXTURE: &str = include_str!("../../timeline-core/tests/fixtures/sample_conversations.json");
@@ -109,12 +107,7 @@ fn any_other_value_is_refused_naming_it() {
 // ---- What the Lambda runs -------------------------------------------------
 
 fn memory_stores() -> ProcessingStores {
-    ProcessingStores {
-        object_store: Arc::new(InMemoryObjectStore::new()),
-        upload_outcome_store: Arc::new(InMemoryUploadOutcomeStore::new()),
-        conversation_summary_store: Arc::new(InMemoryConversationSummaryStore::new()),
-        user_flag_writer: Arc::new(InMemoryMessageFlagsStore::new()),
-    }
+    local_app::memory_stores()
 }
 
 async fn stored_upload(stores: &ProcessingStores) -> (UserId, UploadId, String) {

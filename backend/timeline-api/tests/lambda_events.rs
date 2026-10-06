@@ -68,7 +68,12 @@ async fn a_request_on_the_default_stage_reaches_its_route() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
-    assert_eq!(serde_json::from_slice::<Value>(&body).unwrap(), json!([]));
+    // The records are inside the reply in parts (plan
+    // 2026-10-06-load-only-what-the-page-shows.md §8c).
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap()["conversations"],
+        json!([])
+    );
 }
 
 /// Pins the reason for using `$default`: on a named stage the path the

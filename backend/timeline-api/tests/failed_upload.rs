@@ -196,6 +196,14 @@ impl UploadOutcomeStore for OutcomesFail {
     ) -> Result<(), StoreError> {
         unreachable!("not used by handle_failed_invocation")
     }
+    async fn record_processing_progress(
+        &self,
+        _: &UserId,
+        _: UploadId,
+        _: timeline_core::ports::uploads::ProcessingProgress,
+    ) -> Result<(), StoreError> {
+        unreachable!("not used by handle_failed_invocation")
+    }
     async fn get_progress(
         &self,
         _: &UserId,

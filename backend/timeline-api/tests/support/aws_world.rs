@@ -53,11 +53,9 @@ impl World {
         let s3 = s3_local::LocalS3::start().await;
         let dynamodb = dynamodb_local::client();
         let conversations = dynamodb_local::create_table(&dynamodb).await;
-        let flags = dynamodb_local::create_table(&dynamodb).await;
         let env = HashMap::from([
             ("TIMELINE_UPLOADS_BUCKET", s3_local::BUCKET.to_string()),
             ("TIMELINE_CONVERSATIONS_TABLE", conversations),
-            ("TIMELINE_MESSAGE_FLAGS_TABLE", flags),
             (
                 "TIMELINE_COGNITO_USER_POOL_ID",
                 "us-east-1_TestPool".to_string(),

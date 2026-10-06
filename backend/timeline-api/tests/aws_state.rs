@@ -32,11 +32,8 @@ use timeline_api::aws_state::{build_aws_state, fetch_jwks, AwsClients};
 use timeline_api::dev_only::{generate_dev_keypair, DEV_KEYPAIR};
 use timeline_api::flag_handles::FlagHandleKey;
 use timeline_core::model::ConversationId;
-use timeline_core::ports::conversations::ConversationSummaryStore;
 use timeline_core::ports::ids::{UploadId, UserId};
-use timeline_core::ports::object_store::ObjectStore;
 use timeline_core::ports::uploads::raw_object_key;
-use timeline_storage::dynamo::conversations_table::DynamoConversationsTable;
 use tower::ServiceExt;
 
 const FIXTURE: &str = include_str!("../../timeline-core/tests/fixtures/sample_conversations.json");
@@ -49,7 +46,6 @@ fn full_env() -> HashMap<&'static str, String> {
     HashMap::from([
         ("TIMELINE_UPLOADS_BUCKET", "uploads".to_string()),
         ("TIMELINE_CONVERSATIONS_TABLE", "conversations".to_string()),
-        ("TIMELINE_MESSAGE_FLAGS_TABLE", "flags".to_string()),
         (
             "TIMELINE_COGNITO_USER_POOL_ID",
             "us-east-1_TestPool".to_string(),
@@ -68,7 +64,6 @@ fn every_setting_is_read_and_the_cognito_addresses_follow_from_them() {
     let s = settings_from(&full_env()).unwrap();
     assert_eq!(s.uploads_bucket.as_str(), "uploads");
     assert_eq!(s.conversations_table.as_str(), "conversations");
-    assert_eq!(s.message_flags_table.as_str(), "flags");
     assert_eq!(s.client_id.as_str(), "test-client");
     assert_eq!(
         s.issuer(),
@@ -110,7 +105,9 @@ fn an_empty_or_blank_setting_counts_as_missing() {
 #[test]
 fn all_missing_settings_are_reported_at_once() {
     let err = settings_from(&HashMap::new()).err().unwrap();
-    assert_eq!(err.0.len(), 6);
+    // Five since the message-flags table went (plan
+    // 2026-10-06-load-only-what-the-page-shows.md §10b).
+    assert_eq!(err.0.len(), 5);
     let text = err.to_string();
     for name in full_env().keys() {
         assert!(text.contains(name), "{text} should name {name}");
@@ -212,11 +209,9 @@ impl World {
         let s3 = s3_local::LocalS3::start().await;
         let dynamodb = dynamodb_local::client();
         let conversations = dynamodb_local::create_table(&dynamodb).await;
-        let flags = dynamodb_local::create_table(&dynamodb).await;
         let mut env = full_env();
         env.insert("TIMELINE_UPLOADS_BUCKET", s3_local::BUCKET.to_string());
         env.insert("TIMELINE_CONVERSATIONS_TABLE", conversations);
-        env.insert("TIMELINE_MESSAGE_FLAGS_TABLE", flags);
         let (pool_pem, pool_jwks) = generate_dev_keypair();
         World {
             s3,
@@ -252,46 +247,54 @@ impl World {
         )
     }
 
-    /// Stores the fixture as an upload and its summaries, the way upload
-    /// processing would, directly through the real adapters.
+    /// Stores the fixture as an upload, through upload processing on the
+    /// real adapters: its records, message rows and sessions (plan
+    /// 2026-10-06-load-only-what-the-page-shows.md §10b: the export reads
+    /// rows now, not the raw file).
     async fn store_fixture_as(&self, user: &str) -> Vec<ConversationId> {
         let user_id = UserId(user.to_string());
         let upload_id = UploadId(uuid::Uuid::new_v4());
-        self.s3
-            .object_store()
+        let stores = timeline_api::aws_state::build_processing_stores(
+            &self.settings.storage(),
+            AwsClients {
+                s3: self.s3.client.clone(),
+                dynamodb: self.dynamodb.clone(),
+            },
+        );
+        stores
+            .object_store
             .put(
                 &raw_object_key(&user_id, upload_id),
                 FIXTURE.as_bytes().to_vec(),
             )
             .await
             .unwrap();
-        let table = DynamoConversationsTable::new(
-            self.dynamodb.clone(),
-            self.settings.conversations_table.as_str(),
-        );
-        let facts = timeline_core::conversation_metadata::UploadFacts {
-            file_name: timeline_core::labels::FileName::parse("conversations.json").unwrap(),
-            uploaded_at: chrono::Utc::now(),
-            file_written_at: None,
-            human_name: timeline_core::labels::PersonName::parse(user).unwrap(),
-        };
-        let parsed = timeline_core::unwrap_uploaded_json(FIXTURE).unwrap();
-        let mut ids = Vec::new();
-        for conversation in &parsed.conversations {
-            table
-                .put(
-                    &user_id,
-                    timeline_core::conversation_metadata::guess_summary(
-                        conversation,
-                        upload_id,
-                        &facts,
-                    ),
-                )
-                .await
-                .unwrap();
-            ids.push(conversation.uuid);
-        }
-        ids
+        stores
+            .upload_outcome_store
+            .record_received(
+                &user_id,
+                upload_id,
+                timeline_core::conversation_metadata::UploadFacts {
+                    file_name: timeline_core::labels::FileName::parse("conversations.json")
+                        .unwrap(),
+                    uploaded_at: chrono::Utc::now(),
+                    file_written_at: None,
+                    human_name: timeline_core::labels::PersonName::parse(user).unwrap(),
+                },
+            )
+            .await
+            .unwrap();
+        timeline_api::processing::process_upload(&stores, &user_id, upload_id)
+            .await
+            .unwrap();
+        stores
+            .conversation_summary_store
+            .list_for_user(&user_id)
+            .await
+            .unwrap()
+            .iter()
+            .map(|s| s.conversation_id)
+            .collect()
     }
 }
 
@@ -326,8 +329,9 @@ async fn a_token_for_this_pool_reads_conversations_from_dynamodb() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let listed: Vec<Value> = serde_json::from_slice(&body).unwrap();
-    assert_eq!(listed.len(), ids.len());
+    // The records are inside the reply in parts (plan §8c).
+    let listed: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(listed["conversations"].as_array().unwrap().len(), ids.len());
 }
 
 /// The property the in-memory state lacked: a second instance, built from
@@ -339,20 +343,19 @@ async fn export_and_a_flag_save_on_one_instance_are_visible_on_another() {
     let token = world.pool_token("alice");
     let first = world.lambda_router();
 
+    // The download comes in the reply itself, in parts (plan §8c); the
+    // fixture fits in one.
     let (status, body) = call(&first, get_with(&token, "/export")).await;
     assert_eq!(status, StatusCode::OK);
     let reply: Value = serde_json::from_slice(&body).unwrap();
-
-    // The export URL is a presigned S3 address; fetch it as the browser would.
-    let export_url = reply["export_url"].as_str().unwrap();
-    let file = reqwest::get(export_url).await.unwrap();
-    assert!(
-        file.status().is_success(),
-        "export download: {}",
-        file.status()
-    );
-    let exported: Value = file.json().await.unwrap();
-    let conversation = &exported["conversations"][0];
+    assert_eq!(reply["cursor"], Value::Null);
+    let exported: Value = serde_json::from_str(reply["part"].as_str().unwrap()).unwrap();
+    let conversation = exported["conversations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| !c["chat_messages"].as_array().unwrap().is_empty())
+        .unwrap();
     let message = conversation["chat_messages"]
         .as_array()
         .unwrap()

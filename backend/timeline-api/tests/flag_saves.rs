@@ -3,26 +3,15 @@
 //! message, proven by the handle `GET /export` issued for it, and must
 //! actually change something.
 
-use std::sync::Arc;
+#[path = "support/local_app.rs"]
+mod local_app;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
-use timeline_api::app::{build_dev_router, build_router};
-use timeline_api::dev_only::{DEV_KEYPAIR, DEV_ONLY_CLIENT_ID, DEV_ONLY_ISSUER};
-use timeline_api::dev_state::DevState;
 use timeline_api::flag_handles::{FlagHandleKey, FlagHandleKeyError, KEY_ENV_VAR};
-use timeline_api::state::AppState;
-use timeline_auth::cognito::CognitoVerifier;
-use timeline_core::ports::conversations::ConversationSummaryStore;
-use timeline_core::ports::object_store::ObjectStore;
-use timeline_core::ports::uploads::UploadOutcomeStore;
-use timeline_storage::memory::conversations::InMemoryConversationSummaryStore;
-use timeline_storage::memory::message_flags::InMemoryMessageFlagsStore;
-use timeline_storage::memory::object_store::InMemoryObjectStore;
-use timeline_storage::memory::uploads::InMemoryUploadOutcomeStore;
 use tower::ServiceExt;
 
 /// The repo's real-conversation fixture (6 conversations, trimmed and
@@ -30,39 +19,7 @@ use tower::ServiceExt;
 const FIXTURE: &str = include_str!("../../timeline-core/tests/fixtures/sample_conversations.json");
 
 fn test_router() -> Router {
-    let (_, jwks) = &*DEV_KEYPAIR;
-    let flags_store = Arc::new(InMemoryMessageFlagsStore::new());
-    let object_store: Arc<dyn ObjectStore> = Arc::new(InMemoryObjectStore::new());
-    let conversation_summary_store: Arc<dyn ConversationSummaryStore> =
-        Arc::new(InMemoryConversationSummaryStore::new());
-    // One store for both halves, as the real local server shares it
-    // (src/main.rs): POST /uploads records facts that processing reads.
-    let upload_outcome_store: Arc<dyn UploadOutcomeStore> =
-        Arc::new(InMemoryUploadOutcomeStore::new());
-
-    let app_state = AppState {
-        object_store: object_store.clone(),
-        conversation_summary_store: conversation_summary_store.clone(),
-        flags_reader: flags_store.clone(),
-        user_flag_writer: flags_store.clone(),
-        auto_flag_writer: flags_store.clone(),
-        upload_outcome_store: upload_outcome_store.clone(),
-        verifier: Arc::new(CognitoVerifier::new(
-            jwks.clone(),
-            DEV_ONLY_ISSUER,
-            DEV_ONLY_CLIENT_ID,
-        )),
-        flag_handle_key: Arc::new(FlagHandleKey::generate()),
-    };
-    let dev_state = DevState {
-        object_store,
-        upload_outcome_store: upload_outcome_store.clone(),
-        conversation_summary_store,
-        user_flag_writer: flags_store.clone(),
-        auto_flag_writer: flags_store,
-        resettable: Arc::new(vec![]),
-    };
-    build_router(app_state).merge(build_dev_router(dev_state))
+    local_app::router()
 }
 
 async fn body_bytes(response: axum::response::Response) -> Vec<u8> {
@@ -83,56 +40,15 @@ async fn send(router: &Router, request: Request<Body>) -> axum::response::Respon
     router.clone().oneshot(request).await.unwrap()
 }
 
-async fn dev_login(router: &Router, sub: &str) -> String {
-    let request = Request::builder()
-        .method("POST")
-        .uri("/_dev/login")
-        .header("content-type", "application/json")
-        .body(Body::from(json!({ "sub": sub }).to_string()))
-        .unwrap();
-    body_json(send(router, request).await).await["token"]
-        .as_str()
-        .unwrap()
-        .to_string()
-}
-
-/// Uploads `raw` as `user` and returns (token, export reply, exported file).
+/// Uploads `raw` as `user` and returns (token, the download's handles as
+/// `{"flag_handles": ...}`, exported file). The download comes in parts
+/// (plan 2026-10-06-load-only-what-the-page-shows.md §8c); its text is
+/// joined, and the handles of every part gathered.
 async fn upload_and_export(router: &Router, user: &str, raw: &str) -> (String, Value, String) {
-    let token = dev_login(router, user).await;
-    let create = Request::builder()
-        .method("POST")
-        .uri("/uploads")
-        .header("Authorization", format!("Bearer {token}"))
-        .header("Content-Type", "application/json")
-        .body(Body::from(
-            r#"{"file_name":"conversations.json","human_name":"Alice"}"#,
-        ))
-        .unwrap();
-    let upload_url = body_json(send(router, create).await).await["upload_url"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    let put = Request::builder()
-        .method("PUT")
-        .uri(&upload_url)
-        .body(Body::from(raw.to_string()))
-        .unwrap();
-    assert_eq!(send(router, put).await.status(), StatusCode::OK);
-
-    let export = Request::builder()
-        .uri("/export")
-        .header("Authorization", format!("Bearer {token}"))
-        .body(Body::empty())
-        .unwrap();
-    let reply_bytes = body_bytes(send(router, export).await).await;
-    eprintln!("/export reply for {user}: {} bytes", reply_bytes.len());
-    let reply: Value = serde_json::from_slice(&reply_bytes).unwrap();
-    let download = Request::builder()
-        .uri(reply["export_url"].as_str().unwrap())
-        .body(Body::empty())
-        .unwrap();
-    let file = String::from_utf8(body_bytes(send(router, download).await).await).unwrap();
-    (token, reply, file)
+    let token = local_app::signed_in_with(router, user, raw).await;
+    let (file, handles) = local_app::export(router, &token).await;
+    eprintln!("/export for {user}: {} bytes", file.len());
+    (token, json!({ "flag_handles": handles }), file)
 }
 
 /// (conversation id, message id) of every human message in the fixture.

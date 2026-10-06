@@ -1,4 +1,4 @@
-//! `StorageSettings`: the three storage names the upload-processing Lambda
+//! `StorageSettings`: the two storage names the upload-processing Lambda
 //! reads, and the same names as `AwsSettings` reads them. See the migration
 //! plan's §V2e, E2 (and C31: the processing Lambda must not need Cognito
 //! settings it never uses).
@@ -7,17 +7,12 @@ use std::collections::HashMap;
 
 use timeline_api::aws_settings::{AwsSettings, MissingSettings, StorageSettings};
 
-const STORAGE_VARS: [&str; 3] = [
-    "TIMELINE_UPLOADS_BUCKET",
-    "TIMELINE_CONVERSATIONS_TABLE",
-    "TIMELINE_MESSAGE_FLAGS_TABLE",
-];
+const STORAGE_VARS: [&str; 2] = ["TIMELINE_UPLOADS_BUCKET", "TIMELINE_CONVERSATIONS_TABLE"];
 
 fn storage_env() -> HashMap<&'static str, String> {
     HashMap::from([
         ("TIMELINE_UPLOADS_BUCKET", "uploads".to_string()),
         ("TIMELINE_CONVERSATIONS_TABLE", "conversations".to_string()),
-        ("TIMELINE_MESSAGE_FLAGS_TABLE", "flags".to_string()),
     ])
 }
 
@@ -26,11 +21,10 @@ fn read(env: &HashMap<&'static str, String>) -> Result<StorageSettings, MissingS
 }
 
 #[test]
-fn the_three_storage_names_are_read_without_any_cognito_settings() {
+fn the_two_storage_names_are_read_without_any_cognito_settings() {
     let s = read(&storage_env()).unwrap();
     assert_eq!(s.uploads_bucket.as_str(), "uploads");
     assert_eq!(s.conversations_table.as_str(), "conversations");
-    assert_eq!(s.message_flags_table.as_str(), "flags");
 }
 
 #[test]

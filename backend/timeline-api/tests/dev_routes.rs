@@ -6,26 +6,14 @@
 //! through real HTTP requests against the merged router -- the same shape
 //! `main.rs` serves in local dev. See the migration plan's §V2a.
 
-use std::sync::Arc;
+#[path = "support/local_app.rs"]
+mod local_app;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
-use timeline_api::app::{build_dev_router, build_router};
-use timeline_api::dev_only::{DEV_KEYPAIR, DEV_ONLY_CLIENT_ID, DEV_ONLY_ISSUER};
-use timeline_api::dev_state::DevState;
-use timeline_api::flag_handles::FlagHandleKey;
-use timeline_api::state::AppState;
-use timeline_auth::cognito::CognitoVerifier;
-use timeline_core::ports::conversations::ConversationSummaryStore;
-use timeline_core::ports::object_store::ObjectStore;
-use timeline_core::ports::uploads::UploadOutcomeStore;
-use timeline_storage::memory::conversations::InMemoryConversationSummaryStore;
-use timeline_storage::memory::message_flags::InMemoryMessageFlagsStore;
-use timeline_storage::memory::object_store::InMemoryObjectStore;
-use timeline_storage::memory::uploads::InMemoryUploadOutcomeStore;
 use tower::ServiceExt;
 
 /// Mirrors `main.rs::build_local_state` exactly: the same process-wide
@@ -34,44 +22,7 @@ use tower::ServiceExt;
 /// dev router would never be visible to `GET /conversations` on the app
 /// router.
 fn test_router() -> Router {
-    let (_, jwks) = &*DEV_KEYPAIR;
-    let flags_store = Arc::new(InMemoryMessageFlagsStore::new());
-    let object_store: Arc<dyn ObjectStore> = Arc::new(InMemoryObjectStore::new());
-    let conversation_summary_store: Arc<dyn ConversationSummaryStore> =
-        Arc::new(InMemoryConversationSummaryStore::new());
-
-    // One store for both halves, as the real local server shares it
-    // (src/main.rs): POST /uploads records facts that processing reads.
-    let upload_outcome_store: Arc<dyn UploadOutcomeStore> =
-        Arc::new(InMemoryUploadOutcomeStore::new());
-
-    let app_state = AppState {
-        flag_handle_key: Arc::new(FlagHandleKey::generate()),
-        object_store: object_store.clone(),
-        conversation_summary_store: conversation_summary_store.clone(),
-        flags_reader: flags_store.clone(),
-        user_flag_writer: flags_store.clone(),
-        auto_flag_writer: flags_store.clone(),
-        upload_outcome_store: upload_outcome_store.clone(),
-        verifier: Arc::new(CognitoVerifier::new(
-            jwks.clone(),
-            DEV_ONLY_ISSUER,
-            DEV_ONLY_CLIENT_ID,
-        )),
-    };
-    let dev_state = DevState {
-        object_store,
-        upload_outcome_store: upload_outcome_store.clone(),
-        conversation_summary_store,
-        user_flag_writer: flags_store.clone(),
-        auto_flag_writer: flags_store,
-        // Nothing here calls POST /_dev/reset, so there is nothing for it to
-        // empty. Left explicitly empty rather than wired up, so that a test
-        // added later which *does* reset fails loudly instead of quietly
-        // clearing nothing.
-        resettable: Arc::new(vec![]),
-    };
-    build_router(app_state).merge(build_dev_router(dev_state))
+    local_app::router()
 }
 
 async fn body_json(response: axum::response::Response) -> Value {
@@ -162,7 +113,9 @@ async fn putting_a_raw_upload_through_local_storage_triggers_processing() {
         .body(Body::empty())
         .unwrap();
     let list_response = router.clone().oneshot(list_request).await.unwrap();
-    let convs = body_json(list_response).await;
+    // The records are inside the reply in parts (plan
+    // 2026-10-06-load-only-what-the-page-shows.md §8c).
+    let convs = body_json(list_response).await["conversations"].clone();
     assert_eq!(convs.as_array().unwrap().len(), 1);
     assert_eq!(convs[0]["name"], "Hi");
     assert_eq!(convs[0]["message_count"], 1);
@@ -198,6 +151,6 @@ async fn a_non_raw_key_stores_bytes_but_does_not_trigger_processing() {
         .body(Body::empty())
         .unwrap();
     let list_response = router.oneshot(list_request).await.unwrap();
-    let convs = body_json(list_response).await;
+    let convs = body_json(list_response).await["conversations"].clone();
     assert_eq!(convs.as_array().unwrap().len(), 0);
 }

@@ -3,6 +3,9 @@
 //! `2026-10-02-upload-processing-failures.md` §3). Runs `handle_s3_event`,
 //! what the Lambda runs, against the in-memory stores.
 
+#[path = "support/local_app.rs"]
+mod local_app;
+
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -14,9 +17,6 @@ use timeline_core::ports::ids::{UploadId, UserId};
 use timeline_core::ports::uploads::{
     raw_object_key, UploadOutcome, UploadOutcomeStore, UploadProgress,
 };
-use timeline_storage::memory::conversations::InMemoryConversationSummaryStore;
-use timeline_storage::memory::message_flags::InMemoryMessageFlagsStore;
-use timeline_storage::memory::object_store::InMemoryObjectStore;
 use timeline_storage::memory::uploads::InMemoryUploadOutcomeStore;
 
 const SAMPLE: &str = include_str!("fixtures/aws-samples/example-s3-event.json");
@@ -30,10 +30,8 @@ fn event_for(key: &str) -> S3Event {
 
 fn stores_with(upload_outcome_store: Arc<dyn UploadOutcomeStore>) -> ProcessingStores {
     ProcessingStores {
-        object_store: Arc::new(InMemoryObjectStore::new()),
         upload_outcome_store,
-        conversation_summary_store: Arc::new(InMemoryConversationSummaryStore::new()),
-        user_flag_writer: Arc::new(InMemoryMessageFlagsStore::new()),
+        ..local_app::memory_stores()
     }
 }
 
@@ -158,6 +156,14 @@ impl UploadOutcomeStore for ProgressWritesFail {
         _: String,
     ) -> Result<(), StoreError> {
         Err(StoreError::NotFound)
+    }
+    async fn record_processing_progress(
+        &self,
+        u: &UserId,
+        id: UploadId,
+        p: timeline_core::ports::uploads::ProcessingProgress,
+    ) -> Result<(), StoreError> {
+        self.inner.record_processing_progress(u, id, p).await
     }
     async fn get_progress(
         &self,

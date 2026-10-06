@@ -8,28 +8,13 @@
 //! `timeline_api::routes::detect`), so the behavior is verified where it now
 //! happens rather than deleted along with its old home.
 
-use std::sync::Arc;
+#[path = "support/local_app.rs"]
+mod local_app;
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::StatusCode;
 use axum::Router;
-use http_body_util::BodyExt;
 use serde_json::{json, Value};
-use timeline_api::app::{build_dev_router, build_router};
-use timeline_api::dev_only::{DEV_KEYPAIR, DEV_ONLY_CLIENT_ID, DEV_ONLY_ISSUER};
-use timeline_api::dev_state::DevState;
-use timeline_api::flag_handles::FlagHandleKey;
-use timeline_api::state::AppState;
-use timeline_auth::cognito::CognitoVerifier;
-use timeline_core::ports::conversations::ConversationSummaryStore;
-use timeline_core::ports::object_store::ObjectStore;
-use timeline_core::ports::uploads::UploadOutcomeStore;
 use timeline_core::unwrap_uploaded_json;
-use timeline_storage::memory::conversations::InMemoryConversationSummaryStore;
-use timeline_storage::memory::message_flags::InMemoryMessageFlagsStore;
-use timeline_storage::memory::object_store::InMemoryObjectStore;
-use timeline_storage::memory::uploads::InMemoryUploadOutcomeStore;
-use tower::ServiceExt;
 
 /// Text chosen to trip both the caps and criticism heuristics, per
 /// timeline-project-decisions.md section 5 -- so an assertion that flags are
@@ -37,133 +22,23 @@ use tower::ServiceExt;
 /// record exists".
 const HUMAN_TEXT: &str = "WRONG, you failed to fix it.";
 
-fn test_router() -> Router {
-    let (_, jwks) = &*DEV_KEYPAIR;
-    let flags_store = Arc::new(InMemoryMessageFlagsStore::new());
-    let object_store: Arc<dyn ObjectStore> = Arc::new(InMemoryObjectStore::new());
-    let conversation_summary_store: Arc<dyn ConversationSummaryStore> =
-        Arc::new(InMemoryConversationSummaryStore::new());
-
-    // One store for both halves, as the real local server shares it
-    // (src/main.rs): POST /uploads records facts that processing reads.
-    let upload_outcome_store: Arc<dyn UploadOutcomeStore> =
-        Arc::new(InMemoryUploadOutcomeStore::new());
-
-    let app_state = AppState {
-        flag_handle_key: Arc::new(FlagHandleKey::generate()),
-        object_store: object_store.clone(),
-        conversation_summary_store: conversation_summary_store.clone(),
-        flags_reader: flags_store.clone(),
-        user_flag_writer: flags_store.clone(),
-        auto_flag_writer: flags_store.clone(),
-        upload_outcome_store: upload_outcome_store.clone(),
-        verifier: Arc::new(CognitoVerifier::new(
-            jwks.clone(),
-            DEV_ONLY_ISSUER,
-            DEV_ONLY_CLIENT_ID,
-        )),
-    };
-    let dev_state = DevState {
-        object_store,
-        upload_outcome_store: upload_outcome_store.clone(),
-        conversation_summary_store,
-        user_flag_writer: flags_store.clone(),
-        auto_flag_writer: flags_store,
-        // Nothing here calls POST /_dev/reset, so there is nothing for it to
-        // empty. Left explicitly empty rather than wired up, so that a test
-        // added later which *does* reset fails loudly instead of quietly
-        // clearing nothing.
-        resettable: Arc::new(vec![]),
-    };
-    build_router(app_state).merge(build_dev_router(dev_state))
-}
-
-async fn body_json(response: axum::response::Response) -> Value {
-    let bytes = response.into_body().collect().await.unwrap().to_bytes();
-    serde_json::from_slice(&bytes).unwrap()
-}
-
-async fn dev_login(router: &Router, sub: &str) -> String {
-    let request = Request::builder()
-        .method("POST")
-        .uri("/_dev/login")
-        .header("content-type", "application/json")
-        .body(Body::from(json!({ "sub": sub }).to_string()))
-        .unwrap();
-    let response = router.clone().oneshot(request).await.unwrap();
-    body_json(response).await["token"]
-        .as_str()
-        .unwrap()
-        .to_string()
-}
-
 /// Uploads `raw` through the real `_dev` local flow and returns the token.
 async fn upload(router: &Router, raw: &str) -> String {
-    let token = dev_login(router, "alice").await;
-    let create_request = Request::builder()
-        .method("POST")
-        .uri("/uploads")
-        .header("Authorization", format!("Bearer {token}"))
-        .header("Content-Type", "application/json")
-        .body(Body::from(
-            r#"{"file_name":"conversations.json","human_name":"Alice"}"#,
-        ))
-        .unwrap();
-    let create_response = router.clone().oneshot(create_request).await.unwrap();
-    let upload_url = body_json(create_response).await["upload_url"]
-        .as_str()
-        .unwrap()
-        .to_string();
-
-    let put_request = Request::builder()
-        .method("PUT")
-        .uri(&upload_url)
-        .body(Body::from(raw.to_string()))
-        .unwrap();
-    let put_response = router.clone().oneshot(put_request).await.unwrap();
-    assert_eq!(put_response.status(), StatusCode::OK);
-    token
+    local_app::signed_in_with(router, "alice", raw).await
 }
 
 async fn detect(router: &Router, token: &str, body: Value) -> Value {
-    let request = Request::builder()
-        .method("POST")
-        .uri("/detect")
-        .header("Authorization", format!("Bearer {token}"))
-        .header("content-type", "application/json")
-        .body(Body::from(body.to_string()))
-        .unwrap();
-    let response = router.clone().oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    body_json(response).await
+    let (status, reply) = local_app::send(
+        router,
+        local_app::request("POST", "/detect", token, Some(body)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{reply}");
+    reply
 }
 
 async fn export_text(router: &Router, token: &str) -> String {
-    let export_request = Request::builder()
-        .method("GET")
-        .uri("/export")
-        .header("Authorization", format!("Bearer {token}"))
-        .body(Body::empty())
-        .unwrap();
-    let export_response = router.clone().oneshot(export_request).await.unwrap();
-    let export_url = body_json(export_response).await["export_url"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    let download_request = Request::builder()
-        .method("GET")
-        .uri(&export_url)
-        .body(Body::empty())
-        .unwrap();
-    let download_response = router.clone().oneshot(download_request).await.unwrap();
-    let bytes = download_response
-        .into_body()
-        .collect()
-        .await
-        .unwrap()
-        .to_bytes()
-        .to_vec();
-    String::from_utf8(bytes).unwrap()
+    local_app::export(router, token).await.0
 }
 
 fn one_conversation(uuid: &str, name: &str) -> String {
@@ -177,7 +52,7 @@ fn one_conversation(uuid: &str, name: &str) -> String {
 
 #[tokio::test]
 async fn an_upload_has_no_automatic_flags_until_detection_is_asked_for() {
-    let router = test_router();
+    let router = local_app::router();
     let raw = format!(
         "[{}]",
         one_conversation("11111111-1111-4111-8111-111111111111", "Hi")
@@ -197,17 +72,21 @@ async fn an_upload_has_no_automatic_flags_until_detection_is_asked_for() {
 
 #[tokio::test]
 async fn detection_computes_the_real_heuristic_flags_not_a_hardcoded_stand_in() {
-    let router = test_router();
+    let router = local_app::router();
     let raw = format!(
         "[{}]",
         one_conversation("11111111-1111-4111-8111-111111111111", "Hi")
     );
     let token = upload(&router, &raw).await;
 
-    let result = detect(&router, &token, json!({ "offset": 0 })).await;
+    let result = detect(&router, &token, json!({})).await;
     assert_eq!(result["messages_detected"], json!(1));
-    assert_eq!(result["total_conversations"], json!(1));
-    assert_eq!(result["next_offset"], Value::Null);
+    // Fields renamed for answering in parts (plan
+    // 2026-10-06-load-only-what-the-page-shows.md §8, §10b): sessions done
+    // of the total, and no cursor once the scan is complete.
+    assert_eq!(result["sessions_total"], json!(1));
+    assert_eq!(result["sessions_done"], json!(1));
+    assert_eq!(result["cursor"], Value::Null);
 
     let text = export_text(&router, &token).await;
     let reparsed = unwrap_uploaded_json(&text).unwrap();
@@ -231,13 +110,13 @@ async fn detection_computes_the_real_heuristic_flags_not_a_hardcoded_stand_in() 
 
 #[tokio::test]
 async fn detection_never_gives_an_assistant_message_an_auto_flag_record() {
-    let router = test_router();
+    let router = local_app::router();
     let raw = format!(
         "[{}]",
         one_conversation("11111111-1111-4111-8111-111111111111", "Hi")
     );
     let token = upload(&router, &raw).await;
-    detect(&router, &token, json!({ "offset": 0 })).await;
+    detect(&router, &token, json!({})).await;
 
     let text = export_text(&router, &token).await;
     let reparsed = unwrap_uploaded_json(&text).unwrap();
@@ -248,9 +127,15 @@ async fn detection_never_gives_an_assistant_message_an_auto_flag_record() {
     );
 }
 
+/// Rewritten for the time limit (plan
+/// 2026-10-06-load-only-what-the-page-shows.md §8, §10b; it was
+/// `paging_covers_every_conversation_exactly_once`): with a budget of one
+/// step per request, each request reads one row and answers with where to
+/// carry on; the parts cover every message exactly once, the sessions
+/// done climb to the total, and the last part has no cursor.
 #[tokio::test]
-async fn paging_covers_every_conversation_exactly_once() {
-    let router = test_router();
+async fn the_scan_in_parts_covers_every_message_exactly_once() {
+    let (router, _, _) = local_app::app_in_steps(1);
     let raw = format!(
         "[{},{},{}]",
         one_conversation("11111111-1111-4111-8111-111111111111", "One"),
@@ -259,25 +144,26 @@ async fn paging_covers_every_conversation_exactly_once() {
     );
     let token = upload(&router, &raw).await;
 
-    // Drive the loop the way the page does, one page at a time, and confirm
-    // the windows tile the whole set rather than skipping or repeating --
-    // the property the route's id-sorting exists to guarantee, given the
-    // store itself returns summaries in an arbitrary order.
-    let mut offset = 0;
-    let mut pages = 0;
+    let mut body = json!({});
+    let mut parts = 0;
     let mut total_detected = 0;
+    let mut done = Vec::new();
     loop {
-        let result = detect(&router, &token, json!({ "offset": offset, "limit": 1 })).await;
-        assert_eq!(result["total_conversations"], json!(3));
-        assert_eq!(result["conversations_processed"], json!(1));
+        let result = detect(&router, &token, body).await;
+        assert_eq!(result["sessions_total"], json!(3));
         total_detected += result["messages_detected"].as_u64().unwrap();
-        pages += 1;
-        match result["next_offset"].as_u64() {
-            Some(next) => offset = next,
+        done.push(result["sessions_done"].as_u64().unwrap());
+        parts += 1;
+        match result["cursor"].as_str() {
+            Some(cursor) => body = json!({ "cursor": cursor }),
             None => break,
         }
-        assert!(pages <= 3, "paging did not terminate");
+        assert!(parts <= 10, "the scan did not finish");
     }
-    assert_eq!(pages, 3, "each conversation should be its own page");
+    // A step is one row read (plan §8b), Claude's replies included: two rows
+    // per conversation, six parts.
+    assert_eq!(parts, 6, "{done:?}");
     assert_eq!(total_detected, 3, "one human message per conversation");
+    assert!(done.windows(2).all(|w| w[0] <= w[1]), "{done:?}");
+    assert_eq!(done.last(), Some(&3));
 }

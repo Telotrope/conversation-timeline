@@ -138,7 +138,11 @@ async fn every_record_and_analysis_method_reports_a_missing_table_as_a_backend_e
         Err(StoreError::Backend(_))
     ));
     assert!(matches!(
-        store.record_change(&alice(), Totals::default()).await,
+        store.raise_version(&alice()).await,
+        Err(StoreError::Backend(_))
+    ));
+    assert!(matches!(
+        store.record_totals(&alice(), Totals::default()).await,
         Err(StoreError::Backend(_))
     ));
     assert!(matches!(
@@ -185,7 +189,7 @@ async fn a_record_number_of_the_wrong_type_is_an_error_naming_it() {
 async fn a_record_number_that_is_not_whole_is_an_error_naming_it() {
     let text = record_with("messages", AttributeValue::N("1.5".to_string())).await;
     assert!(
-        text.contains("`messages` should be a whole number"),
+        text.contains("`messages` should be a whole number of 0 or more"),
         "{text}"
     );
 }
@@ -193,7 +197,10 @@ async fn a_record_number_that_is_not_whole_is_an_error_naming_it() {
 #[tokio::test]
 async fn a_negative_data_version_is_an_error() {
     let text = record_with("data_version", AttributeValue::N("-1".to_string())).await;
-    assert!(text.contains("data_version is negative"), "{text}");
+    assert!(
+        text.contains("`data_version` should be a whole number of 0 or more"),
+        "{text}"
+    );
 }
 
 #[tokio::test]

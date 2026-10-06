@@ -11,8 +11,10 @@
 //! `processing::process_upload` (its `request_record::note` calls); and each
 //! outcome -- ready, unusable file, error -- is named.
 
+#[path = "support/local_app.rs"]
+mod local_app;
+
 use std::cell::RefCell;
-use std::sync::Arc;
 
 use serde_json::{json, Value};
 use timeline_api::aws_settings::{DeliberateFailure, EventLogging, LoginSettings, MissingSettings};
@@ -20,9 +22,6 @@ use timeline_api::failed_upload::handle_failed_invocation_logged;
 use timeline_api::s3_trigger::{handle_raw_s3_event_recorded, ProcessingStores};
 use timeline_core::ports::ids::{UploadId, UserId};
 use timeline_core::ports::uploads::raw_object_key;
-use timeline_storage::memory::conversations::InMemoryConversationSummaryStore;
-use timeline_storage::memory::message_flags::InMemoryMessageFlagsStore;
-use timeline_storage::memory::object_store::InMemoryObjectStore;
 use timeline_storage::memory::uploads::InMemoryUploadOutcomeStore;
 
 const S3_SAMPLE: &str = include_str!("fixtures/aws-samples/example-s3-event.json");
@@ -30,12 +29,7 @@ const FAILURE_SAMPLE: &str = include_str!("fixtures/aws-samples/example-destinat
 const FIXTURE: &str = include_str!("../../timeline-core/tests/fixtures/sample_conversations.json");
 
 fn stores() -> ProcessingStores {
-    ProcessingStores {
-        object_store: Arc::new(InMemoryObjectStore::new()),
-        upload_outcome_store: Arc::new(InMemoryUploadOutcomeStore::new()),
-        conversation_summary_store: Arc::new(InMemoryConversationSummaryStore::new()),
-        user_flag_writer: Arc::new(InMemoryMessageFlagsStore::new()),
-    }
+    local_app::memory_stores()
 }
 
 /// An S3 notification naming `keys`; `None` is a record with no key.
@@ -103,9 +97,32 @@ async fn a_ready_upload_logs_what_was_read_and_stored_on_its_own_channel() {
     assert_eq!(run["upload_id"], upload.0.to_string());
     assert_eq!(run["outcome"], "ready");
     assert_eq!(run["error"], Value::Null);
+    // Changed as approved in plan 2026-10-06-load-only-what-the-page-shows.md
+    // §10b: the facts gain each step's duration (which vary, so only their
+    // presence is checked), the size once decompressed, and the totals
+    // counted afresh after the upload.
+    let mut facts = run["facts"].as_object().unwrap().clone();
+    for step in [
+        "ms_read",
+        "ms_decompress",
+        "ms_parse",
+        "ms_files",
+        "ms_rows",
+        "ms_sessions",
+        "ms_record",
+    ] {
+        assert!(facts.remove(step).unwrap().is_u64(), "{step}");
+    }
     assert_eq!(
-        run["facts"],
-        json!({ "attempt": 1, "bytes": FIXTURE.len(), "reviews": 0, "conversations": 6 })
+        Value::Object(facts),
+        json!({
+            "attempt": 1,
+            "bytes": FIXTURE.len(),
+            "bytes_plain": FIXTURE.len(),
+            "reviews": 0,
+            "conversations": 6,
+            "totals": {"conversations": 6, "sessions": 7, "your_messages": 14, "messages": 30},
+        })
     );
     assert!(run["ms"].is_u64());
     assert_eq!(run["aws_calls"], json!({}));

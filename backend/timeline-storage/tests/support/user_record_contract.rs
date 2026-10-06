@@ -24,7 +24,7 @@ macro_rules! user_record_contract {
             RecUserId(name.to_string())
         }
 
-        fn totals(c: i64, s: i64, y: i64, m: i64) -> RecTotals {
+        fn totals(c: usize, s: usize, y: usize, m: usize) -> RecTotals {
             RecTotals {
                 conversations: c,
                 sessions: s,
@@ -51,34 +51,26 @@ macro_rules! user_record_contract {
         }
 
         #[tokio::test]
-        async fn each_change_raises_the_version_and_adds_to_the_totals() {
+        async fn raising_the_version_counts_up_and_keeps_the_totals() {
             let (store, _keep) = $make().await;
-            let first = store
-                .record_change(&rec_user("alice"), totals(3, 5, 40, 80))
-                .await
-                .unwrap();
+            let first = store.raise_version(&rec_user("alice")).await.unwrap();
             assert_eq!(
                 first,
                 RecRecord {
                     data_version: 1,
-                    totals: totals(3, 5, 40, 80)
+                    totals: RecTotals::default()
                 }
             );
-            // A flag save changes no totals, and a branch revived later can
-            // take some away.
             store
-                .record_change(&rec_user("alice"), RecTotals::default())
+                .record_totals(&rec_user("alice"), totals(3, 5, 40, 80))
                 .await
                 .unwrap();
-            let third = store
-                .record_change(&rec_user("alice"), totals(1, -2, -1, -3))
-                .await
-                .unwrap();
+            let third = store.raise_version(&rec_user("alice")).await.unwrap();
             assert_eq!(
                 third,
                 RecRecord {
                     data_version: 3,
-                    totals: totals(4, 3, 39, 77)
+                    totals: totals(3, 5, 40, 80)
                 }
             );
             assert_eq!(
@@ -87,11 +79,37 @@ macro_rules! user_record_contract {
             );
         }
 
+        /// Processing counts the totals afresh after every upload: each
+        /// write replaces them, and raises the version.
+        #[tokio::test]
+        async fn recording_totals_replaces_them_and_raises_the_version() {
+            let (store, _keep) = $make().await;
+            store
+                .record_totals(&rec_user("alice"), totals(3, 5, 40, 80))
+                .await
+                .unwrap();
+            let second = store
+                .record_totals(&rec_user("alice"), totals(2, 4, 30, 60))
+                .await
+                .unwrap();
+            assert_eq!(
+                second,
+                RecRecord {
+                    data_version: 2,
+                    totals: totals(2, 4, 30, 60)
+                }
+            );
+            assert_eq!(
+                RecStore::get(&store, &rec_user("alice")).await.unwrap(),
+                second
+            );
+        }
+
         #[tokio::test]
         async fn one_users_record_is_invisible_to_another() {
             let (store, _keep) = $make().await;
             store
-                .record_change(&rec_user("alice"), totals(1, 1, 1, 1))
+                .record_totals(&rec_user("alice"), totals(1, 1, 1, 1))
                 .await
                 .unwrap();
             assert_eq!(

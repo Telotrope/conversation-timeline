@@ -4,7 +4,8 @@
 //! and returned as an error for AWS to retry, without reading the file.
 //! Off by default; anything but `on` or `off` is refused.
 
-use std::sync::Arc;
+#[path = "support/local_app.rs"]
+mod local_app;
 
 use aws_lambda_events::event::s3::S3Event;
 use serde_json::{json, Value};
@@ -14,10 +15,6 @@ use timeline_api::s3_trigger::{
 };
 use timeline_core::ports::ids::{UploadId, UserId};
 use timeline_core::ports::uploads::{raw_object_key, UploadOutcome, UploadProgress};
-use timeline_storage::memory::conversations::InMemoryConversationSummaryStore;
-use timeline_storage::memory::message_flags::InMemoryMessageFlagsStore;
-use timeline_storage::memory::object_store::InMemoryObjectStore;
-use timeline_storage::memory::uploads::InMemoryUploadOutcomeStore;
 
 const SAMPLE: &str = include_str!("fixtures/aws-samples/example-s3-event.json");
 const FIXTURE: &str = include_str!("../../timeline-core/tests/fixtures/sample_conversations.json");
@@ -52,12 +49,7 @@ fn raw_event(key: &str) -> Value {
 }
 
 async fn stored_upload() -> (ProcessingStores, UserId, UploadId, String) {
-    let stores = ProcessingStores {
-        object_store: Arc::new(InMemoryObjectStore::new()),
-        upload_outcome_store: Arc::new(InMemoryUploadOutcomeStore::new()),
-        conversation_summary_store: Arc::new(InMemoryConversationSummaryStore::new()),
-        user_flag_writer: Arc::new(InMemoryMessageFlagsStore::new()),
-    };
+    let stores = local_app::memory_stores();
     let (user, upload) = (
         UserId("alice".to_string()),
         UploadId(uuid::Uuid::from_u128(4)),

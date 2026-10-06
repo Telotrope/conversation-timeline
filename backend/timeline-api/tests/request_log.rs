@@ -20,62 +20,24 @@ use http_body_util::BodyExt;
 use lambda_http::aws_lambda_events::apigw::ApiGatewayV2httpRequestContext;
 use lambda_http::request::RequestContext;
 use serde_json::{json, Value};
-use timeline_api::app::{build_dev_router, build_router};
-use timeline_api::dev_only::{DEV_KEYPAIR, DEV_ONLY_CLIENT_ID, DEV_ONLY_ISSUER};
-use timeline_api::dev_state::DevState;
-use timeline_api::flag_handles::FlagHandleKey;
 use timeline_api::request_log::{
     api_request_line, with_request_log, LineSink, RequestIds, SessionId,
 };
 use timeline_api::request_record::RequestRecord;
-use timeline_api::state::AppState;
-use timeline_auth::cognito::CognitoVerifier;
-use timeline_core::ports::conversations::ConversationSummaryStore;
-use timeline_core::ports::object_store::ObjectStore;
-use timeline_storage::memory::conversations::InMemoryConversationSummaryStore;
-use timeline_storage::memory::message_flags::InMemoryMessageFlagsStore;
-use timeline_storage::memory::object_store::InMemoryObjectStore;
-use timeline_storage::memory::uploads::InMemoryUploadOutcomeStore;
 use tower::ServiceExt;
+
+#[path = "support/local_app.rs"]
+mod local_app;
 
 const FIXTURE: &str = include_str!("../../timeline-core/tests/fixtures/sample_conversations.json");
 const SESSION: &str = "5c1e2a3b-4d5e-4f60-8172-839405a6b7c8";
 
 /// The local router, logged to a sink whose lines the test can read.
 fn logged_router() -> (Router, Arc<Mutex<Vec<String>>>) {
-    let (_, jwks) = &*DEV_KEYPAIR;
-    let flags_store = Arc::new(InMemoryMessageFlagsStore::new());
-    let object_store: Arc<dyn ObjectStore> = Arc::new(InMemoryObjectStore::new());
-    let summaries: Arc<dyn ConversationSummaryStore> =
-        Arc::new(InMemoryConversationSummaryStore::new());
-    let outcomes = Arc::new(InMemoryUploadOutcomeStore::new());
-    let app_state = AppState {
-        object_store: object_store.clone(),
-        conversation_summary_store: summaries.clone(),
-        flags_reader: flags_store.clone(),
-        user_flag_writer: flags_store.clone(),
-        auto_flag_writer: flags_store.clone(),
-        upload_outcome_store: outcomes.clone(),
-        verifier: Arc::new(CognitoVerifier::new(
-            jwks.clone(),
-            DEV_ONLY_ISSUER,
-            DEV_ONLY_CLIENT_ID,
-        )),
-        flag_handle_key: Arc::new(FlagHandleKey::generate()),
-    };
-    let dev_state = DevState {
-        object_store,
-        upload_outcome_store: outcomes,
-        conversation_summary_store: summaries,
-        user_flag_writer: flags_store.clone(),
-        auto_flag_writer: flags_store,
-        resettable: Arc::new(vec![]),
-    };
     let lines = Arc::new(Mutex::new(Vec::new()));
     let collected = lines.clone();
     let sink: LineSink = Arc::new(move |line| collected.lock().unwrap().push(line.to_string()));
-    let router = build_router(app_state).merge(build_dev_router(dev_state));
-    (with_request_log(router, sink), lines)
+    (with_request_log(local_app::router(), sink), lines)
 }
 
 async fn send(router: &Router, request: Request<Body>) -> (StatusCode, Value) {
@@ -253,26 +215,26 @@ async fn detection_uploads_and_exports_log_their_facts() {
 
     let (status, page) = send(
         &router,
-        request(
-            "POST",
-            "/detect",
-            Some(&token),
-            Some(json!({ "offset": 0, "limit": 2 })),
-        ),
+        request("POST", "/detect", Some(&token), Some(json!({}))),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
 
+    // The scan's facts changed with the scan (plan
+    // 2026-10-06-load-only-what-the-page-shows.md §8, §10b): sessions done
+    // of the total and the messages scanned, and whether it carried on from
+    // a cursor.
     let detect = &lines_for(&lines, "POST", "/detect")[0];
     assert_eq!(
         detect["facts"],
         json!({
-            "offset": 0,
-            "limit": 2,
-            "conversations_processed": page["conversations_processed"],
+            "resumed": false,
+            "sessions_done": page["sessions_done"],
+            "sessions_total": page["sessions_total"],
             "messages_detected": page["messages_detected"],
         })
     );
+    assert_eq!(page["sessions_done"], page["sessions_total"]);
     let upload = &lines_for(&lines, "POST", "/uploads")[0];
     assert!(uuid::Uuid::parse_str(upload["facts"]["upload_id"].as_str().unwrap()).is_ok());
     let export = &lines_for(&lines, "GET", "/export")[0];

@@ -12,44 +12,21 @@
 //! So: build exactly what the Lambda branch builds, and check every `_dev`
 //! path answers 404.
 
-use std::sync::Arc;
-
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use timeline_api::app::build_router;
-use timeline_api::dev_only::{DEV_KEYPAIR, DEV_ONLY_CLIENT_ID, DEV_ONLY_ISSUER};
-use timeline_api::flag_handles::FlagHandleKey;
 use timeline_api::state::AppState;
-use timeline_auth::cognito::CognitoVerifier;
-use timeline_core::ports::conversations::ConversationSummaryStore;
-use timeline_core::ports::object_store::ObjectStore;
-use timeline_storage::memory::conversations::InMemoryConversationSummaryStore;
-use timeline_storage::memory::message_flags::InMemoryMessageFlagsStore;
-use timeline_storage::memory::object_store::InMemoryObjectStore;
-use timeline_storage::memory::uploads::InMemoryUploadOutcomeStore;
 use tower::ServiceExt;
 
 /// Exactly the state `main.rs` hands `build_router` on the Lambda path.
 fn lambda_state() -> AppState {
-    let (_, jwks) = &*DEV_KEYPAIR;
-    let flags_store = Arc::new(InMemoryMessageFlagsStore::new());
-    let object_store: Arc<dyn ObjectStore> = Arc::new(InMemoryObjectStore::new());
-    let conversation_summary_store: Arc<dyn ConversationSummaryStore> =
-        Arc::new(InMemoryConversationSummaryStore::new());
-    AppState {
-        flag_handle_key: Arc::new(FlagHandleKey::generate()),
-        object_store,
-        conversation_summary_store,
-        flags_reader: flags_store.clone(),
-        user_flag_writer: flags_store.clone(),
-        auto_flag_writer: flags_store,
-        upload_outcome_store: Arc::new(InMemoryUploadOutcomeStore::new()),
-        verifier: Arc::new(CognitoVerifier::new(
-            jwks.clone(),
-            DEV_ONLY_ISSUER,
-            DEV_ONLY_CLIENT_ID,
-        )),
-    }
+    timeline_api::local_state::build_local_state(
+        timeline_api::flag_handles::FlagHandleKey::generate(),
+        timeline_core::work_budget::BudgetSetting::Clock(
+            timeline_core::work_budget::REQUEST_WORK_LIMIT,
+        ),
+    )
+    .0
 }
 
 async fn status_of(method: &str, uri: &str) -> StatusCode {
@@ -109,27 +86,14 @@ async fn reset_empties_the_stores_it_is_given() {
     // Exercised through the dev router, which is where it actually lives.
     use axum::Router;
     use timeline_api::app::build_dev_router;
-    use timeline_api::dev_state::DevState;
-    use timeline_storage::memory::uploads::InMemoryUploadOutcomeStore;
 
-    let flags_store = Arc::new(InMemoryMessageFlagsStore::new());
-    let object_store_concrete = Arc::new(InMemoryObjectStore::new());
-    let summaries_concrete = Arc::new(InMemoryConversationSummaryStore::new());
-    let outcomes = Arc::new(InMemoryUploadOutcomeStore::new());
-
-    let dev_state = DevState {
-        object_store: object_store_concrete.clone(),
-        upload_outcome_store: outcomes.clone(),
-        conversation_summary_store: summaries_concrete.clone(),
-        user_flag_writer: flags_store.clone(),
-        auto_flag_writer: flags_store.clone(),
-        resettable: Arc::new(vec![
-            object_store_concrete.clone(),
-            summaries_concrete.clone(),
-            flags_store,
-            outcomes,
-        ]),
-    };
+    let (_, dev_state) = timeline_api::local_state::build_local_state(
+        timeline_api::flag_handles::FlagHandleKey::generate(),
+        timeline_core::work_budget::BudgetSetting::Clock(
+            timeline_core::work_budget::REQUEST_WORK_LIMIT,
+        ),
+    );
+    let object_store_concrete = dev_state.processing.object_store.clone();
     let router: Router = build_dev_router(dev_state);
 
     // Put something in, through the store's own port rather than a back door.

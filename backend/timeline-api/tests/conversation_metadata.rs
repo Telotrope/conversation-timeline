@@ -4,6 +4,9 @@
 //! recognising conversations an earlier file brought, the export and the
 //! scan seeing messages a later file added, and the metadata routes.
 
+#[path = "support/local_app.rs"]
+mod local_app;
+
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -12,61 +15,13 @@ use axum::Router;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use timeline_api::app::{build_dev_router, build_router};
-use timeline_api::dev_only::{DEV_KEYPAIR, DEV_ONLY_CLIENT_ID, DEV_ONLY_ISSUER};
-use timeline_api::dev_state::DevState;
-use timeline_api::flag_handles::FlagHandleKey;
-use timeline_api::state::AppState;
-use timeline_auth::cognito::CognitoVerifier;
-use timeline_core::ports::conversations::ConversationSummaryStore;
-use timeline_core::ports::object_store::ObjectStore;
-use timeline_core::ports::uploads::UploadOutcomeStore;
-use timeline_storage::memory::conversations::InMemoryConversationSummaryStore;
-use timeline_storage::memory::message_flags::InMemoryMessageFlagsStore;
-use timeline_storage::memory::object_store::InMemoryObjectStore;
-use timeline_storage::memory::uploads::InMemoryUploadOutcomeStore;
 use tower::ServiceExt;
 
 const CONV_A: &str = "aaaaaaaa-0000-4000-8000-000000000001";
 const CONV_B: &str = "bbbbbbbb-0000-4000-8000-000000000002";
 
 fn router() -> Router {
-    router_on(
-        Arc::new(InMemoryObjectStore::new()),
-        Arc::new(InMemoryConversationSummaryStore::new()),
-    )
-}
-
-/// The local server over these stores, for tests that damage stored data.
-fn router_on(
-    objects: Arc<dyn ObjectStore>,
-    summaries: Arc<dyn ConversationSummaryStore>,
-) -> Router {
-    let (_, jwks) = &*DEV_KEYPAIR;
-    let flags = Arc::new(InMemoryMessageFlagsStore::new());
-    let outcomes: Arc<dyn UploadOutcomeStore> = Arc::new(InMemoryUploadOutcomeStore::new());
-    let app_state = AppState {
-        flag_handle_key: Arc::new(FlagHandleKey::generate()),
-        object_store: objects.clone(),
-        conversation_summary_store: summaries.clone(),
-        flags_reader: flags.clone(),
-        user_flag_writer: flags.clone(),
-        auto_flag_writer: flags.clone(),
-        upload_outcome_store: outcomes.clone(),
-        verifier: Arc::new(CognitoVerifier::new(
-            jwks.clone(),
-            DEV_ONLY_ISSUER,
-            DEV_ONLY_CLIENT_ID,
-        )),
-    };
-    let dev_state = DevState {
-        object_store: objects,
-        upload_outcome_store: outcomes,
-        conversation_summary_store: summaries,
-        user_flag_writer: flags.clone(),
-        auto_flag_writer: flags,
-        resettable: Arc::new(vec![]),
-    };
-    build_router(app_state).merge(build_dev_router(dev_state))
+    local_app::router()
 }
 
 async fn call(
@@ -174,10 +129,10 @@ fn later_a() -> Value {
     )
 }
 
+/// Every record, from inside the reply in parts (plan
+/// 2026-10-06-load-only-what-the-page-shows.md §8c).
 async fn conversations(router: &Router, token: &str) -> Vec<Value> {
-    let (status, body) = call(router, "GET", "/conversations", Some(token), None).await;
-    assert_eq!(status, StatusCode::OK);
-    body.as_array().unwrap().clone()
+    local_app::conversations(router, token).await
 }
 
 fn find<'a>(list: &'a [Value], id: &str) -> &'a Value {
@@ -186,23 +141,12 @@ fn find<'a>(list: &'a [Value], id: &str) -> &'a Value {
         .unwrap_or_else(|| panic!("no conversation {id} in {list:?}"))
 }
 
+/// The annotated download's conversations, joined from its parts.
 async fn exported(router: &Router, token: &str) -> Vec<Value> {
-    let (status, body) = call(router, "GET", "/export", Some(token), None).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let url = body["export_url"].as_str().unwrap().to_string();
-    let get = Request::builder().uri(url).body(Body::empty()).unwrap();
-    let bytes = router
+    local_app::exported(router, token).await["conversations"]
+        .as_array()
+        .unwrap()
         .clone()
-        .oneshot(get)
-        .await
-        .unwrap()
-        .into_body()
-        .collect()
-        .await
-        .unwrap()
-        .to_bytes();
-    let file: Value = serde_json::from_slice(&bytes).unwrap();
-    file["conversations"].as_array().unwrap().clone()
 }
 
 fn message_ids(conversation: &Value) -> Vec<String> {
@@ -386,14 +330,10 @@ async fn the_scan_reads_messages_a_later_file_added() {
     let token = login(&router, "alice").await;
     upload(&router, &token, "first.json", None, &json!([first_a()])).await;
     upload(&router, &token, "second.json", None, &json!([later_a()])).await;
-    let (status, body) = call(
-        &router,
-        "POST",
-        "/detect",
-        Some(&token),
-        Some(json!({"offset": 0, "limit": 10})),
-    )
-    .await;
+    // Rewritten as approved in plan 2026-10-06-load-only-what-the-page-shows.md
+    // §10b: the scan reads message rows, and its request carries a cursor,
+    // not an offset; one part holds everything here.
+    let (status, body) = call(&router, "POST", "/detect", Some(&token), Some(json!({}))).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
         body["messages_detected"], 2,
@@ -442,7 +382,9 @@ async fn the_file_list_counts_each_files_conversations_and_says_varies() {
 
     let (status, files) = call(&router, "GET", "/uploads", Some(&token), None).await;
     assert_eq!(status, StatusCode::OK);
-    let files = files.as_array().unwrap();
+    // The files are inside the reply in parts (§8c); one part here.
+    assert_eq!(files["cursor"], Value::Null);
+    let files = files["uploads"].as_array().unwrap();
     assert_eq!(files.len(), 2);
     assert_eq!(files[0]["upload_id"], second, "newest first");
     assert_eq!(files[0]["file_name"], "second.json");
@@ -468,7 +410,7 @@ async fn the_file_list_counts_each_files_conversations_and_says_varies() {
 
     let bob = login(&router, "bob").await;
     let (_, none) = call(&router, "GET", "/uploads", Some(&bob), None).await;
-    assert_eq!(none, json!([]));
+    assert_eq!(none["uploads"], json!([]));
 }
 
 #[tokio::test]
@@ -510,7 +452,8 @@ async fn a_file_edit_changes_only_the_fields_given_on_every_conversation_of_the_
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{changed}");
-    assert_eq!(changed.as_array().unwrap().len(), 2);
+    // The changed records are inside the reply in parts (§8c).
+    assert_eq!(changed["conversations"].as_array().unwrap().len(), 2);
 
     let list = conversations(&router, &token).await;
     for id in [CONV_A, CONV_B] {
@@ -605,50 +548,62 @@ async fn a_conversation_edit_sets_its_start_and_end_and_answers_with_the_record(
 }
 
 /// Stored data our own processing wrote can't normally go bad; when it
-/// does, the export fails as a server error (its detail goes to the log,
-/// not the page) rather than leaving a conversation out. One case for each
-/// way the rebuild can find stored data broken.
+/// does, the export and the scan fail as a server error (the detail goes to
+/// the log, not the page) rather than leaving a conversation out.
+///
+/// Rewritten as approved in plan 2026-10-06-load-only-what-the-page-shows.md
+/// §10b: both read message rows now, so damage is a damaged row. The
+/// in-memory store holds typed rows that can't be damaged, so a reader
+/// stands in that reports a damaged row the way the DynamoDB adapter does
+/// (a backend error naming the row; see `timeline-storage`'s
+/// `tests/dynamo_message_rows.rs`).
 #[tokio::test]
-async fn damaged_stored_data_is_a_server_error() {
-    use timeline_core::ports::ids::{UploadId, UserId};
-    use timeline_core::ports::uploads::{addition_object_key, raw_object_key};
-    let objects: Arc<dyn ObjectStore> = Arc::new(InMemoryObjectStore::new());
-    let summaries: Arc<dyn ConversationSummaryStore> =
-        Arc::new(InMemoryConversationSummaryStore::new());
-    let router = router_on(objects.clone(), summaries.clone());
-    let token = login(&router, "alice").await;
-    let first = upload(&router, &token, "first.json", None, &json!([first_a()])).await;
-    upload(&router, &token, "second.json", None, &json!([later_a()])).await;
-    let alice = UserId("alice".to_string());
-    let first = UploadId(first.parse().unwrap());
-    let record = summaries.list_for_user(&alice).await.unwrap().remove(0);
-    let added = addition_object_key(&alice, record.conversation_id, record.additions[0]);
+async fn damaged_stored_rows_are_a_server_error() {
+    use timeline_core::model::{ConversationId, MessageId};
+    use timeline_core::ports::errors::StoreError;
+    use timeline_core::ports::ids::UserId;
+    use timeline_core::ports::messages::{EntryRange, MessageReader};
+    use timeline_core::stored_message::{Entry, EntryKey};
 
-    objects.put(&added, b"not json".to_vec()).await.unwrap();
-    let (status, _) = call(&router, "GET", "/export", Some(&token), None).await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    struct DamagedRows;
 
-    objects
-        .put(
-            &raw_object_key(&alice, first),
-            json!([]).to_string().into_bytes(),
-        )
-        .await
-        .unwrap();
-    let (status, _) = call(&router, "GET", "/export", Some(&token), None).await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    fn damaged() -> StoreError {
+        StoreError::Backend(Box::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "row with sk \"MSG#...\": attribute `entry` is not the expected JSON",
+        )))
+    }
 
-    objects
-        .put(&raw_object_key(&alice, first), vec![0xff, 0xfe])
-        .await
-        .unwrap();
-    let (status, _) = call(&router, "GET", "/export", Some(&token), None).await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    #[async_trait::async_trait]
+    impl MessageReader for DamagedRows {
+        async fn read_entries(&self, _: &UserId, _: EntryRange) -> Result<Vec<Entry>, StoreError> {
+            Err(damaged())
+        }
+        async fn find_entry(
+            &self,
+            _: &UserId,
+            _: ConversationId,
+            _: MessageId,
+        ) -> Result<Option<Entry>, StoreError> {
+            Err(damaged())
+        }
+        async fn entry_after(&self, _: &UserId, _: EntryKey) -> Result<Option<Entry>, StoreError> {
+            Err(damaged())
+        }
+    }
 
-    objects
-        .put(&raw_object_key(&alice, first), b"{".to_vec())
-        .await
-        .unwrap();
-    let (status, _) = call(&router, "GET", "/export", Some(&token), None).await;
+    let (healthy, mut state, dev) = local_app::app();
+    let token = login(&healthy, "alice").await;
+    upload(&healthy, &token, "first.json", None, &json!([first_a()])).await;
+    state.message_reader = Arc::new(DamagedRows);
+    let router = build_router(state).merge(build_dev_router(dev));
+
+    let (status, body) = call(&router, "GET", "/export", Some(&token), None).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert_eq!(
+        body["error"], "storage backend error",
+        "no detail on the page"
+    );
+    let (status, _) = call(&router, "POST", "/detect", Some(&token), Some(json!({}))).await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
 }
