@@ -112,7 +112,7 @@ impl<'de> Deserialize<'de> for PieceType {
 /// type from [`ConversationId`] specifically so the two can't be swapped at
 /// a call site that takes both — the newtype pattern costs nothing at
 /// runtime and turns that mistake into a compile error instead of a bug.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct MessageId(pub uuid::Uuid);
 
@@ -124,7 +124,7 @@ impl std::fmt::Display for MessageId {
 
 /// A conversation's own identity — see [`MessageId`] for why this is a
 /// distinct type rather than reusing it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ConversationId(pub uuid::Uuid);
 
@@ -174,4 +174,37 @@ pub struct Conversation {
     pub chat_messages: Vec<ChatMessage>,
     #[serde(flatten)]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+/// What a message's `parent_message_uuid` says about where it sits in the
+/// conversation's tree (plan
+/// `docs/plans/2026-10-06-load-only-what-the-page-shows.md` §4d).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParentLink {
+    /// The file has no parent field for this message: it says nothing about
+    /// branches.
+    Unstated,
+    /// The message starts the conversation. claude.ai writes the all-zero
+    /// id `00000000-0000-4000-8000-000000000000` for this.
+    Root,
+    /// The message answers this one.
+    Message(MessageId),
+}
+
+/// The id claude.ai gives as the parent of a conversation's first message.
+pub const ROOT_PARENT: uuid::Uuid = uuid::uuid!("00000000-0000-4000-8000-000000000000");
+
+impl ChatMessage {
+    /// This message's parent link. A field that is present but isn't an id
+    /// counts as unstated: nothing can be built on it.
+    pub fn parent(&self) -> ParentLink {
+        let Some(value) = self.extra.get("parent_message_uuid") else {
+            return ParentLink::Unstated;
+        };
+        match value.as_str().and_then(|s| s.parse::<uuid::Uuid>().ok()) {
+            None => ParentLink::Unstated,
+            Some(id) if id == ROOT_PARENT => ParentLink::Root,
+            Some(id) => ParentLink::Message(MessageId(id)),
+        }
+    }
 }
