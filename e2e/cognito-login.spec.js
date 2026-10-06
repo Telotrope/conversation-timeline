@@ -60,8 +60,8 @@ test('signing in through Cognito, then uploading, then reloading', async ({ page
   await expect(page.locator('#mainContent')).toBeVisible({ timeout: 30_000 });
 
   // Same tab: still signed in, and the session comes back behind the
-  // loading modal (held for half a second so it can be seen).
-  await page.route(`${API_BASE}/export`, async (route) => {
+  // loading modal (its sessions held for half a second so it can be seen).
+  await page.route((url) => url.origin === API_BASE && url.pathname === '/sessions', async (route) => {
     await new Promise((resolve) => setTimeout(resolve, 500));
     await route.continue();
   });

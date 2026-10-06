@@ -200,8 +200,9 @@ test("one session's activity reaches the backend's log, in order, without messag
     ['click on Load', (x) => x.kind === 'click' && x.target.id === 'loadBtn'],
     ['POST /uploads with the scan box ticked', (x) => x.kind === 'request' && x.method === 'POST' && x.route === '/uploads' && x.scan === true && x.status === 200],
     ['the S3 PUT', (x) => x.kind === 'request' && x.method === 'PUT' && x.route === S3_PUT_ROUTE && x.status === 200],
-    ['POST /detect, first page', (x) => x.kind === 'request' && x.route === '/detect' && x.offset === 0 && x.limit === 5],
-    ['POST /detect, second page', (x) => x.kind === 'request' && x.route === '/detect' && x.offset === 5 && x.limit === 5],
+    // The scan's parts, each continuing from the cursor the last one returned.
+    ['POST /detect, first part', (x) => x.kind === 'request' && x.route === '/detect' && x.part === 0 && x.status === 200],
+    ['POST /detect, second part', (x) => x.kind === 'request' && x.route === '/detect' && x.part === 1 && x.status === 200],
     ['click on the review tab', (x) => x.kind === 'click' && x.target.tab === 'review'],
     ['click on Approve, with its message id', (x) => x.kind === 'click' && x.target.message_id === messageId && x.target.column === 'approve'],
     ['the flag save', (x) => x.kind === 'request' && x.method === 'PATCH' && x.route === '/conversations/{id}/messages/{id}/flags' && x.status === 200],

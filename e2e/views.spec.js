@@ -170,46 +170,116 @@ for (const analysis of ANALYSES) {
   });
 }
 
-test('review search and filter narrow the table, and pagination moves through it', async ({ page }) => {
-  const consoleErrors = await loadFixture(page);
+test('review search and filter narrow the table, and pagination moves through it', async ({ page }, testInfo) => {
+  // More than 50 messages of yours, so Review has pages, read through
+  // GET /messages in parts (plan
+  // docs/plans/2026-10-06-load-only-what-the-page-shows.md §5b, §8c, §10b;
+  // the test backend's short time limit makes every walk take several).
+  // 130 messages of yours: 7 mention pineapples; 5 shout.
+  const start = Date.parse('2026-03-02T09:00:00Z');
+  const at = (n) => new Date(start + n * 60_000);
+  const text = (n) => (n % 20 === 3 ? `message ${n} about a pineapple`
+    : n % 25 === 7 ? `message ${n}: THIS IS COMPLETELY WRONG AGAIN` : `message ${n}`);
+  const first = [];
+  for (let n = 0; n < 70; n++) {
+    first.push({ sender: 'human', text: text(n), at: at(2 * n) });
+    first.push({ sender: 'assistant', text: `reply ${n}`, at: at(2 * n + 1) });
+  }
+  const second = Array.from({ length: 60 }, (_, i) => ({ sender: 'human', text: text(70 + i), at: at(1000 + i) }));
+  const consoleErrors = [];
+  page.on('pageerror', (err) => consoleErrors.push(String(err)));
+  await loadFile(page, writeExport(testInfo, 'many.json', [
+    { name: 'First', messages: first },
+    { name: 'Second', messages: second },
+  ]), { detect: true });
 
   await page.click('button[data-tab="review"]');
   const count = page.locator('#reviewCount');
-  await expect(count).toContainText('message');
+  const rows = page.locator('#reviewTable tbody tr[data-msg-id]');
+  const pages = page.locator('#pagination');
+  // The count is final once it no longer says "at least".
+  await expect(count).toHaveText('130 messages', { timeout: 30_000 });
+  await expect(rows).toHaveCount(50);
+  await expect(pages).toContainText('Page 1 of 3');
 
-  const readCount = async () => {
-    const text = await count.textContent();
-    return parseInt(text.replace(/[^0-9]/g, ''), 10);
-  };
-  const unfiltered = await readCount();
-  expect(unfiltered).toBeGreaterThan(0);
-
-  // A search for something no message contains must empty the table; this
-  // is what proves the filter is actually applied rather than ignored.
+  // A search for something no message contains empties the table.
   await page.fill('#reviewSearch', 'zzzzzzzzzznotinanymessage');
   await expect(count).toHaveText('0 messages');
+  await expect(rows).toHaveCount(0);
+
+  await page.fill('#reviewSearch', 'pineapple');
+  await expect(count).toHaveText('7 messages');
+  await expect(rows).toHaveCount(7);
+  for (const row of await rows.all()) await expect(row).toContainText('pineapple');
 
   await page.fill('#reviewSearch', '');
-  await expect.poll(readCount).toBe(unfiltered);
+  await expect(count).toHaveText('130 messages');
 
-  // "Any flag" can only ever be a subset of all messages.
+  // "Any flag": the shouted messages, each with a flag in effect.
   await page.selectOption('#reviewFilter', 'flagged');
-  const flagged = await readCount();
-  expect(flagged).toBeLessThanOrEqual(unfiltered);
+  await expect(count).not.toContainText('at least');
+  await expect(rows.first()).toBeVisible();
+  const flagged = await rows.count();
+  expect(flagged).toBeGreaterThan(0);
+  expect(flagged).toBeLessThan(130);
+  for (const row of await rows.all()) await expect(row.locator('input[type="checkbox"]:checked').first()).toBeVisible();
 
   await page.selectOption('#reviewFilter', 'all');
-  await expect.poll(readCount).toBe(unfiltered);
+  await expect(count).toHaveText('130 messages');
 
-  // Pagination only exists past one page (PAGE_SIZE is 50).
-  if (unfiltered > 50) {
-    const firstRowBefore = await page.locator('#reviewTable tbody tr').first().innerText();
-    await page.click('#nextPage');
-    await expect
-      .poll(async () => page.locator('#reviewTable tbody tr').first().innerText())
-      .not.toBe(firstRowBefore);
-  }
+  // Each page from its own starting point: 50, 50, then 30.
+  const firstRowBefore = await rows.first().getAttribute('data-msg-id');
+  await page.click('#nextPage');
+  await expect(pages).toContainText('Page 2 of 3');
+  await expect(rows).toHaveCount(50);
+  await expect(rows.first()).not.toHaveAttribute('data-msg-id', firstRowBefore);
+  await page.click('#nextPage');
+  await expect(pages).toContainText('Page 3 of 3');
+  await expect(rows).toHaveCount(30);
+  await page.click('#prevPage');
+  await page.click('#prevPage');
+  await expect(rows.first()).toHaveAttribute('data-msg-id', firstRowBefore);
 
-  expect(consoleErrors, `console errors:\n${consoleErrors.join('\n')}`).toEqual([]);
+  expect(consoleErrors, `page errors:\n${consoleErrors.join('\n')}`).toEqual([]);
+});
+
+test("the scan's bar and Review's count grow part by part", async ({ page }, testInfo) => {
+  // Every text the load bar's label and Review's count show, as they change
+  // (plan docs/plans/2026-10-06-load-only-what-the-page-shows.md §8, §8b,
+  // §8c). The test backend's short time limit makes the scan and the count
+  // each take several requests.
+  await page.addInitScript(() => {
+    window.__seen = { bar: [], count: [] };
+    new MutationObserver(() => {
+      for (const [key, id] of [['bar', 'loadProgressLabel'], ['count', 'reviewCount']]) {
+        const text = document.getElementById(id)?.textContent;
+        const seen = window.__seen[key];
+        if (text && seen[seen.length - 1] !== text) seen.push(text);
+      }
+    }).observe(document, { subtree: true, childList: true, characterData: true });
+  });
+  const start = Date.parse('2026-03-02T09:00:00Z');
+  // 20 sessions of 3 messages each, an hour apart.
+  const messages = Array.from({ length: 60 }, (_, n) => ({
+    sender: 'human', text: `message ${n}`, at: new Date(start + Math.floor(n / 3) * 3_600_000 + (n % 3) * 60_000),
+  }));
+  await loadFile(page, writeExport(testInfo, 'parts.json', [{ name: 'Parts', messages }]), { detect: true });
+  await expect(page.locator('#mainContent')).toBeVisible({ timeout: 30_000 });
+
+  const scanned = (await page.evaluate(() => window.__seen.bar))
+    .map((t) => /^Scanning your messages — (\d+) of (\d+) sessions/.exec(t))
+    .filter(Boolean)
+    .map((m) => [Number(m[1]), Number(m[2])]);
+  expect(scanned.length, 'the scan reported more than one part').toBeGreaterThan(1);
+  expect(scanned.every(([, total]) => total === 20)).toBe(true);
+  expect(scanned.map(([done]) => done)).toEqual([...scanned.map(([done]) => done)].sort((a, b) => a - b));
+  expect(scanned[scanned.length - 1][0]).toBe(20);
+
+  await page.click('button[data-tab="review"]');
+  await expect(page.locator('#reviewCount')).toHaveText('60 messages', { timeout: 30_000 });
+  const counts = await page.evaluate(() => window.__seen.count);
+  expect(counts.some((t) => /^at least \d+ messages?$/.test(t)), JSON.stringify(counts)).toBe(true);
+  expect(counts[counts.length - 1]).toBe('60 messages');
 });
 
 test('a message the backend flagged renders as flagged', async ({ page }) => {
@@ -233,7 +303,9 @@ test('a message the backend flagged renders as flagged', async ({ page }) => {
 });
 
 test('the annotated export downloads a file carrying the flags', async ({ page }) => {
-  const consoleErrors = await loadFixture(page);
+  // Scanned, so the automatic flags exist to be written (the download
+  // writes them only once the scan has looked at a message).
+  const consoleErrors = await loadFixture(page, { detect: true });
 
   await page.click('button[data-tab="review"]');
 
@@ -258,6 +330,27 @@ test('the annotated export downloads a file carrying the flags', async ({ page }
     .flatMap((c) => c.chat_messages || [])
     .filter((m) => m._claude_timeline_auto);
   expect(annotated.length, 'export contained no _claude_timeline_auto fields').toBeGreaterThan(0);
+
+  // The download is rebuilt from the stored rows (plan
+  // docs/plans/2026-10-06-load-only-what-the-page-shows.md §10b): each
+  // message's text pieces are the uploaded ones, and its files keep their names.
+  const uploaded = new Map(JSON.parse(fs.readFileSync(FIXTURE, 'utf8'))
+    .flatMap((c) => c.chat_messages).map((m) => [m.uuid, m]));
+  const downloaded = conversations.flatMap((c) => c.chat_messages || []);
+  // A message's text pieces, as the download keeps only those.
+  const textOf = (m) => (m.content || []).filter((p) => p.type === 'text').map((p) => p.text).join('\n');
+  expect(downloaded.length).toBeGreaterThan(0);
+  for (const m of downloaded) {
+    expect(uploaded.has(m.uuid), m.uuid).toBe(true);
+    expect(textOf(m), m.uuid).toBe(textOf(uploaded.get(m.uuid)));
+  }
+  const withFiles = [...uploaded.values()].filter((m) => (m.files || []).length);
+  expect(withFiles.length).toBeGreaterThan(0);
+  for (const m of withFiles) {
+    const got = downloaded.find((d) => d.uuid === m.uuid);
+    expect(got, m.uuid).toBeTruthy();
+    expect(got.files.map((f) => f.file_name)).toEqual(m.files.map((f) => f.file_name));
+  }
 
   expect(consoleErrors, `console errors:\n${consoleErrors.join('\n')}`).toEqual([]);
 });
@@ -381,10 +474,11 @@ test('an open conversation is addressable in the hash', async ({ page }) => {
   expect(consoleErrors, `console errors:\n${consoleErrors.join('\n')}`).toEqual([]);
 });
 
-// Holds the timeline's download for half a second, long enough to see the
-// loading modal that stands in front of the timeline while it runs.
+// Holds the timeline's sessions (GET /sessions) for half a second, long
+// enough to see the loading modal that stands in front of the timeline
+// while it is read.
 async function slowExport(page) {
-  await page.route(`${API_BASE}/export`, async (route) => {
+  await page.route((url) => url.origin === API_BASE && url.pathname === '/sessions', async (route) => {
     await new Promise((resolve) => setTimeout(resolve, 500));
     await route.continue();
   });
@@ -699,7 +793,9 @@ test('opening the page at a conversation address restores the session into that 
 test('an approved flag is written into the annotated export as yours', async ({ page }) => {
   await loadFixture(page);
   await page.click('button[data-tab="review"]');
-  await page.locator('.approve-btn').first().click();
+  const approve = page.locator('.approve-btn').first();
+  const approvedId = await approve.getAttribute('data-id');
+  await approve.click();
   await expect(page.locator('#saveStatus')).toHaveText('Saved.');
 
   const [download] = await Promise.all([
@@ -713,6 +809,13 @@ test('an approved flag is written into the annotated export as yours', async ({ 
     .flatMap((c) => c.chat_messages || [])
     .filter((m) => m._claude_timeline_user);
   expect(yours).toHaveLength(1);
+  // The download is rebuilt from the stored rows (plan
+  // docs/plans/2026-10-06-load-only-what-the-page-shows.md §10b): the
+  // approved message, with all three of its flags as you saved them, and
+  // no automatic flags, since nothing was scanned.
+  expect(yours[0].uuid).toBe(approvedId);
+  expect(yours[0]._claude_timeline_user).toEqual({ caps: false, critical: false, angry: false });
+  expect(yours[0]._claude_timeline_auto).toBeUndefined();
 });
 
 test('a failed save says so and names the error', async ({ page }) => {
@@ -801,13 +904,15 @@ test('an unreachable backend is reported with a hint', async ({ page }) => {
 
 test('a session that cannot be fetched on reload shows the error in the loading modal, with Try again', async ({ page }) => {
   await loadFixture(page);
-  await page.route(`${API_BASE}/export`, (route) => route.abort());
+  // Opening the timeline reads its sessions (GET /sessions, in parts).
+  const sessions = (url) => url.origin === API_BASE && url.pathname === '/sessions';
+  await page.route(sessions, (route) => route.abort());
   await page.reload();
   const modal = page.locator('#loadingModal');
   await expect(modal).toBeVisible({ timeout: 30_000 });
   await expect(page.locator('#loadStatus')).toContainText('Is the backend running');
   await expect(page.locator('#loadingRetryBtn')).toBeVisible();
-  await page.unroute(`${API_BASE}/export`);
+  await page.unroute(sessions);
   await page.click('#loadingRetryBtn');
   await expect(modal).toBeHidden({ timeout: 30_000 });
   await expect(page.locator('#convItems .conv-item')).not.toHaveCount(0);
@@ -845,10 +950,10 @@ test('a session crossing midnight is one session, drawn on both days', async ({ 
     name: 'Late night',
     messages: [
       { sender: 'human', at: new Date('2026-03-02T23:55:00Z'), text: 'still up' },
-      { sender: 'human', at: new Date('2026-03-03T00:05:00Z'), text: 'and now it is tomorrow' },
+      { sender: 'human', at: new Date('2026-03-03T00:05:00Z'), text: 'and now it is tomorrow, THIS IS COMPLETELY WRONG' },
     ],
   }]);
-  await loadFile(page, file);
+  await loadFile(page, file, { detect: true });
   await expect(page.locator('#mainContent')).toBeVisible({ timeout: 30_000 });
 
   const bars = page.locator('#calendarBody .bar');
@@ -858,6 +963,12 @@ test('a session crossing midnight is one session, drawn on both days', async ({ 
   await expect(page.locator('#calendarBody .day-row .day-label')).toHaveCount(2);
 
   await expect(page.locator('.conv-item .meta')).toContainText('2 messages · 2 days');
+  // The session's flags come counted with it, so both days draw the same
+  // ones (plan docs/plans/2026-10-06-load-only-what-the-page-shows.md §10b).
+  const flagsOn = async (bar) => bars.nth(bar).locator('.flag-icon').evaluateAll((els) => els.map((e) => e.textContent).join(''));
+  const firstDay = await flagsOn(0);
+  expect(firstDay.length).toBeGreaterThan(0);
+  expect(await flagsOn(1)).toBe(firstDay);
   await bars.nth(1).dispatchEvent('click');
   await expect(page.locator('#reviewCount')).toHaveText('2 messages');
 });

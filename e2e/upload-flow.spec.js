@@ -74,7 +74,20 @@ test('a file bigger than axum\'s default 2MB body limit still uploads', async ({
   const consoleErrors = [];
   page.on('console', (msg) => { if (msg.type() === 'error') consoleErrors.push(msg.text()); });
 
-  await page.goto(TIMELINE_HTML);
+  // Sent as it is, not slimmed and compressed first (plan
+  // docs/plans/2026-10-06-load-only-what-the-page-shows.md §10b), so the
+  // bytes reaching the server are still over the old limit.
+  // The size of each body handed to an upload request (Playwright can't read
+  // a Blob body from outside the page).
+  await page.addInitScript(() => {
+    window.__sentSizes = [];
+    const send = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function (body) {
+      window.__sentSizes.push(body && body.size !== undefined ? body.size : null);
+      return send.call(this, body);
+    };
+  });
+  await page.goto(`${TIMELINE_HTML}&upload=unslimmed`);
   await signInToUpload(page);
   await page.setInputFiles('#loadConvFile', {
     name: 'large-export.json',
@@ -87,6 +100,7 @@ test('a file bigger than axum\'s default 2MB body limit still uploads', async ({
   await expect(page.locator('#mainContent')).toBeVisible({ timeout: 30_000 });
   await expect(page.locator('#loadStatus')).not.toContainText('413');
   await expect(page.locator('#convItems')).toContainText('Large upload test');
+  expect(await page.evaluate(() => window.__sentSizes)).toEqual([buffer.byteLength]);
   expect(consoleErrors, `console errors:\n${consoleErrors.join('\n')}`).toEqual([]);
 });
 
@@ -96,23 +110,22 @@ test('confirming a flag in the review table persists through a reload', async ({
   await page.click('button[data-tab="review"]');
   const firstApprove = page.locator('.approve-btn').first();
   await expect(firstApprove).toBeVisible({ timeout: 10_000 });
+  const messageId = await firstApprove.getAttribute('data-id');
   await firstApprove.click();
 
   // patchFlagsToBackend's success path sets this status text.
   await expect(page.locator('#saveStatus')).toHaveText('Saved.', { timeout: 10_000 });
 
   // Reload and re-upload the same file: if the PATCH really reached the
-  // backend, the export this time embeds the confirmed override, and
-  // parseUploadedConversations picks it up as an embedded override.
+  // backend, the message's row there holds your flags, and the same file
+  // sent again leaves them as they are.
   await loadFixtureAndWaitForRender(page);
-  // The page announces confirmed flags that arrive embedded in the export,
-  // and says nothing when there are none.
-  await expect(page.locator('#saveStatus'))
-    .toHaveText(/^Loaded [1-9]\d* of your confirmed flags? from the server\.$/);
+  await page.click('button[data-tab="review"]');
+  await expect(page.locator(`#reviewTable tr[data-msg-id="${messageId}"] .review-status`)).toHaveText('Reviewed', { timeout: 10_000 });
 });
 
-test('a timeline download without a stated size reports what has arrived', async ({ page }) => {
-  // Every text the progress label shows, kept as it changes (the download
+test('the timeline\'s records and sessions, answered without a stated size, show what has arrived', async ({ page }) => {
+  // Every text the progress label shows, kept as it changes (the reading
   // is over within a moment).
   await page.addInitScript(() => {
     window.__progressLabels = [];
@@ -121,37 +134,50 @@ test('a timeline download without a stated size reports what has arrived', async
       if (label && label.textContent) window.__progressLabels.push(label.textContent);
     }).observe(document, { subtree: true, childList: true, characterData: true });
   });
-  // The processed timeline's download, sent on to a server that streams it
-  // in pieces with no Content-Length (Playwright's route.fulfill always adds
-  // one); plan docs/plans/completed/2026-10-05-page-coverage-gaps.md.
+  // GET /conversations and GET /sessions, sent on to a server that streams
+  // each answer in pieces with no Content-Length (Playwright's
+  // route.fulfill always adds one). Plan
+  // docs/plans/2026-10-06-load-only-what-the-page-shows.md §10b: opening the
+  // timeline now reads these, in parts, instead of one download.
   const http = require('http');
   const streamer = http.createServer(async (req, res) => {
-    const original = await fetch(`${API_BASE}${req.url}`);
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204, {
+        'access-control-allow-origin': '*',
+        'access-control-allow-headers': '*',
+        'access-control-allow-methods': 'GET',
+      });
+      return res.end();
+    }
+    const original = await fetch(`${API_BASE}${req.url}`, { headers: { authorization: req.headers.authorization } });
     const body = Buffer.from(await original.arrayBuffer());
     res.writeHead(original.status, {
       'content-type': original.headers.get('content-type') || 'application/json',
       'access-control-allow-origin': '*',
     });
-    for (let at = 0; at < body.length; at += 64 * 1024) res.write(body.subarray(at, at + 64 * 1024));
+    for (let at = 0; at < body.length; at += 256) res.write(body.subarray(at, at + 256));
     res.end();
   });
   await new Promise((resolve) => streamer.listen(0, '127.0.0.1', resolve));
   const streamerBase = `http://127.0.0.1:${streamer.address().port}`;
+  const sizes = [];
+  const read = (url) => url.origin === API_BASE && ['/conversations', '/sessions'].includes(url.pathname);
   try {
-    await page.route((url) => url.pathname.includes('/_dev/local-storage/get/export/'), (route) => {
+    await page.route((url) => read(url), (route) => {
       const url = new URL(route.request().url());
       return route.continue({ url: `${streamerBase}${url.pathname}${url.search}` });
     });
-    let sizeSeen = 'not seen';
     page.on('response', (res) => {
-      if (res.url().includes('/_dev/local-storage/get/export/')) sizeSeen = res.headers()['content-length'];
+      if (res.url().startsWith(streamerBase)) sizes.push(res.headers()['content-length']);
     });
 
     await loadFixtureAndWaitForRender(page);
 
-    expect(sizeSeen, 'the browser saw no size').toBeUndefined();
+    expect(sizes.length, 'answers went through the streaming server').toBeGreaterThan(1);
+    expect(sizes.filter((size) => size !== undefined), 'the browser saw no size').toEqual([]);
     const labels = await page.evaluate(() => window.__progressLabels);
-    expect(labels.some((t) => /^Receiving your processed timeline — .+ so far$/.test(t)), JSON.stringify(labels)).toBe(true);
+    expect(labels.some((t) => /^Receiving your conversations — \d+ of \d+/.test(t)), JSON.stringify(labels)).toBe(true);
+    expect(labels.some((t) => /^Receiving your sessions — \d+ of \d+/.test(t)), JSON.stringify(labels)).toBe(true);
   } finally {
     await new Promise((resolve) => streamer.close(resolve));
   }

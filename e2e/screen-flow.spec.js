@@ -57,10 +57,21 @@ async function signedInToken(page) {
   }, API_BASE);
 }
 
+// GET /uploads answers in parts (plan
+// docs/plans/2026-10-06-load-only-what-the-page-shows.md §8c): every part's
+// files, following each cursor.
 async function serverFiles(page) {
   const token = await signedInToken(page);
-  const res = await fetch(`${API_BASE}/uploads`, { headers: { Authorization: `Bearer ${token}` } });
-  return res.json();
+  const files = [];
+  let cursor = null;
+  do {
+    const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
+    const res = await fetch(`${API_BASE}/uploads${query}`, { headers: { Authorization: `Bearer ${token}` } });
+    const part = await res.json();
+    files.push(...part.uploads);
+    cursor = part.cursor;
+  } while (cursor);
+  return files;
 }
 
 test('signed out: the Sign-in page explains the app; signing in with nothing uploaded opens Upload', async ({ page }) => {
