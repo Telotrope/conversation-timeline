@@ -448,13 +448,12 @@ than Node; C11.
 
 ## 8. The scan
 
-`POST /detect` reads your message rows instead of the file, and works for up to **2 seconds**
-before answering with how many sessions it has done of how many in total, and where to carry on
-(the user's suggestion, at first 10 seconds; shortened by §8b, which gives every request the same
-budget). The page asks again until all are done, so its bar shows a real percentage. Each request
-stays far inside the deployment's 30-second limit
+`POST /detect` reads your message rows instead of the file, and works within the request time
+limit of §8c (about 9 seconds) before answering with how many sessions it has done of how many in
+total, and where to carry on (the user's suggestion). The page asks again until all are done, so
+its bar shows a real percentage. Each request stays well inside the deployment's 30-second limit
 ([template.yaml:148](../../infra/template.yaml#L148)). Tests start the server with a shorter
-budget, so a small scan still takes several requests.
+limit, so a small scan still takes several requests.
 
 ## 8b. The progress bar moves at least every 10 seconds while you wait
 
@@ -481,7 +480,7 @@ the browser hands over), which takes milliseconds whatever the data:
 | A transfer (sending, receiving) | none needed: the browser reports as bytes move | | bytes of the stated size; every answer this server sends states its size |
 | Preparing the file, in a Web Worker (§7b) | reports every **0.5 s** | one piece of the file stream; one message slimmed; one piece compressed | bytes read and parsed, conversations slimmed, bytes compressed, each of its total |
 | Drawing the timeline in the page | hands the screen back every **50 ms**, reporting each time | one session drawn | sessions drawn of the total |
-| A server request (the timeline's records and sessions, Review's messages, a search, the two server analyses, the scan, the annotated download) | answers after at most **2 s** of work, with what it has and a **cursor** (where to carry on); the page asks again | one entry read, matched, scanned or written | sessions (or conversations) done of the total |
+| A server request (the timeline's records and sessions, Review's messages, a search, the two server analyses, the scan, the annotated download) | answers when its work is done, or at the **request time limit** (§8c: about 9 s of work, so that with the round trip the bar moves within 10 s), with what it has and a **cursor** (where to carry on); the page asks again | one entry read, matched, scanned or written | sessions (or conversations) done of the total |
 | Processing an upload | writes its progress row every **1 s**; the page reads it every second (exists) | one message parsed and written | bytes of the file read, conversations written |
 
 **Totals known in advance.** A bar needs a total. The user's record (which already holds the data
@@ -490,12 +489,12 @@ kept current by processing. A request that walks sessions reports "done of total
 
 **What this changes, wait by wait:**
 
-- **Opening the timeline.** `GET /conversations` and `GET /sessions` each answer after at most
-  2 s with the total and a cursor; the bar is conversations, then sessions, received of their
+- **Opening the timeline.** `GET /conversations` and `GET /sessions` each answer within the request
+  time limit with the total and a cursor; the bar is conversations, then sessions, received of their
   totals, and within a part bytes of the part. Drawing the Calendar and the Conversations tab then
   runs in 50 ms turns, with the bar showing sessions drawn.
 - **Review, any filter, including search** (closes C17's stall; its cost stays). The shared
-  `find_messages` (§5b) gains the 2-second budget and the cursor: it reads the admitted sessions in
+  `find_messages` (§5b) gains the request time limit and the cursor: it reads the admitted sessions in
   key order, stops at the budget, and returns what it found with "sessions searched of sessions to
   search". The page shows the first page of 50 as soon as it has 50 (or the search ends), with the
   bar still moving below it until the search finishes; the page count is final only then, and says
@@ -504,7 +503,7 @@ kept current by processing. A request that walks sessions reports "done of total
   messages to a partial result kept in the analysis row (§5c) with its cursor, and answers with
   sessions done of the total. Once finished, the row is the saved result, as before.
 - **The scan.** It checks the clock after every message, not after every conversation, so one very
-  long conversation can't make a request run past its 2 seconds; the cursor can stop inside a
+  long conversation can't make a request run past its time limit; the cursor can stop inside a
   session.
 - **The annotated download.** Built in parts the same way into the file store, then received with
   its size stated.
@@ -520,9 +519,10 @@ or one session per check): it copied the page's existing pattern (`computeWithPr
 [analytics.js](../../frontend/ui/views/analytics.js), 400 items per chunk) instead of the time
 limit the user had already chosen. Corrected the same day at the user's question.
 
-**What it costs.** More requests: a search over 300 sessions that takes 6 seconds of server work is
-three requests instead of one, each with its own sign-in check and round trip (about 50–100 ms on
-AWS, from memory, not checked). Analysis rows hold partial results while being computed. The page's
+**What it costs.** Only work longer than the time limit is split: a search needing 6 seconds of
+server work is still one request (the user, 2026-10-06: a 2-second limit would have split it into
+three for no reason); one needing 25 seconds is three, each with its own sign-in check and round
+trip (about 50–100 ms on AWS, from memory, not checked). Analysis rows hold partial results while being computed. The page's
 code for Review gains a loop it didn't have.
 
 **The one step left that can't be split:** a single entry. The largest message here is 18 KB, and
@@ -562,6 +562,40 @@ Web Worker (a second thread the browser provides, built in; no library), which s
 progress as it goes; the page's thread stays free, and the bar and clock keep moving. Measured in
 step 7: the longest gap between two moves of the bar, in each wait, on the user's computer and on
 AWS; any gap over ten seconds is a failure of this plan.
+
+## 8c. Requests in parts: the time limit, and how the page carries on
+
+**The time limit.** The user chose 10 seconds (2026-10-06). The bar moves when an answer arrives,
+so the limit is on the server's work, set so that work plus the round trip stays within 10 seconds:
+the server starts no new step after **9 seconds** of work (a step takes milliseconds, §8b), and
+answers. On AWS the round trip measured about 0.1–0.3 s on top of our code (API Gateway's time
+against our code's, 2026-10-05), so the bar moves within about 9.5 s of the request leaving. A
+request that finishes sooner answers sooner; nothing is split before the limit. Tests run the
+server with a shorter limit (an environment setting) so that small test data still makes several
+requests.
+
+**The server keeps no state between requests**, except where noted below. Each answer carries a
+**cursor**: an opaque text the page sends back unchanged with the same request to carry on. The
+server parses it (it crosses a trust boundary: the page could send anything) into a typed
+`Cursor` naming where the previous request stopped: the session (conversation and start time) and
+the last entry key done within it, or the last DynamoDB key read. A cursor that doesn't parse is a
+400 naming what was wrong; a cursor can only point into the signed-in user's own rows, since the
+user comes from the sign-in, never from the cursor. Each answer also carries the user's **data
+version** (§5c); if it changes between two parts, data changed underneath (an upload finished, a
+flag was saved elsewhere), so the page starts that request over from the beginning and says so
+("Your data changed; starting again").
+
+| Request | What the page sends back | What the page keeps between parts |
+|---|---|---|
+| `GET /conversations`, `GET /sessions` | the cursor | the records and sessions received so far (it keeps these anyway) |
+| `GET /messages` (Review: any filter, search) | the same filters and the cursor | only what the page needs to show and to page: the rows of the page on screen, how many matches so far, and **for each page of 50 its starting cursor**, so "page 7" asks the server to carry on from page 7's cursor and collect 50, without the page ever holding every match. Until the search finishes, the page count reads "at least N pages" |
+| `POST /detect` (the scan) | the cursor | nothing: flags are written as the scan goes; only the bar's numbers |
+| `GET /analyses/{name}` (the two server analyses) | the same options; no cursor | nothing. **This one keeps state on the server**: the partial result and its cursor are kept in the analysis's own row (§5c), keyed by the analysis, its options, the view and the time zone, so any request with the same options carries on from it; a finished row is the saved result |
+| `GET /export` (the annotated download) | the cursor | the parts received so far, joined into the file as a `Blob` in the page and saved when the last part arrives. Each part is also capped at 4 MB, under Lambda's 6 MB limit on an answer |
+
+**Stop and leaving the page.** The page stops asking; nothing on the server is left running (each
+request has already answered). A half-computed analysis row is carried on by the next request
+with the same options.
 
 ## 9. Expected times
 
