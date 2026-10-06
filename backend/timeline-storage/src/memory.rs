@@ -4,7 +4,9 @@
 //! adapter does, just with a `Mutex<HashMap<...>>` instead of a table.
 
 pub mod conversations;
-pub mod message_flags;
+pub mod messages;
 pub mod object_store;
 pub mod resettable;
+pub mod sessions;
 pub mod uploads;
+pub mod user_records;

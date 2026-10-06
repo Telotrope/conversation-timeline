@@ -60,6 +60,14 @@ impl ObjectStore for InMemoryObjectStore {
             .insert(key.to_string(), data);
         Ok(())
     }
+
+    async fn delete(&self, key: &str) -> Result<(), ObjectStoreError> {
+        self.objects
+            .lock()
+            .expect("in-memory store mutex poisoned")
+            .remove(key);
+        Ok(())
+    }
 }
 
 impl crate::memory::resettable::Resettable for InMemoryObjectStore {

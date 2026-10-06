@@ -121,4 +121,17 @@ impl ObjectStore for S3ObjectStore {
             .map_err(backend_error("S3.PutObject"))?;
         Ok(())
     }
+
+    async fn delete(&self, key: &str) -> Result<(), ObjectStoreError> {
+        // S3 answers a delete of a missing key with success, as the port
+        // promises.
+        self.client
+            .delete_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await
+            .map_err(backend_error("S3.DeleteObject"))?;
+        Ok(())
+    }
 }

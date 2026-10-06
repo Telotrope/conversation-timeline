@@ -1,6 +1,6 @@
 //! In-memory `ConversationSummaryStore`.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
@@ -11,7 +11,7 @@ use timeline_core::ports::ids::UserId;
 
 #[derive(Default)]
 pub struct InMemoryConversationSummaryStore {
-    summaries: Mutex<HashMap<(UserId, ConversationId), ConversationSummary>>,
+    summaries: Mutex<BTreeMap<(UserId, ConversationId), ConversationSummary>>,
 }
 
 impl InMemoryConversationSummaryStore {
@@ -19,10 +19,10 @@ impl InMemoryConversationSummaryStore {
         Self::default()
     }
 
-    /// Test-only convenience: populates a summary directly, without going
-    /// through the async trait method. `ConversationSummaryStore::put`
-    /// (below) delegates here; this inherent method exists so synchronous
-    /// test setup doesn't need a runtime just to seed a store.
+    /// Test-only convenience: populates a summary directly, as stored,
+    /// without the version check of `ConversationSummaryStore::put`; this
+    /// inherent method exists so synchronous test setup doesn't need a
+    /// runtime just to seed a store.
     pub fn insert(&self, user_id: UserId, summary: ConversationSummary) {
         self.summaries
             .lock()
@@ -47,6 +47,23 @@ impl ConversationSummaryStore for InMemoryConversationSummaryStore {
             .collect())
     }
 
+    async fn list_page(
+        &self,
+        user_id: &UserId,
+        after: Option<ConversationId>,
+        max: usize,
+    ) -> Result<Vec<ConversationSummary>, StoreError> {
+        Ok(self
+            .summaries
+            .lock()
+            .expect("in-memory store mutex poisoned")
+            .iter()
+            .filter(|((uid, id), _)| uid == user_id && after.is_none_or(|a| *id > a))
+            .take(max)
+            .map(|(_, summary)| summary.clone())
+            .collect())
+    }
+
     async fn get(
         &self,
         user_id: &UserId,
@@ -60,9 +77,23 @@ impl ConversationSummaryStore for InMemoryConversationSummaryStore {
             .cloned())
     }
 
-    async fn put(&self, user_id: &UserId, summary: ConversationSummary) -> Result<(), StoreError> {
-        self.insert(user_id.clone(), summary);
-        Ok(())
+    async fn put(
+        &self,
+        user_id: &UserId,
+        mut summary: ConversationSummary,
+    ) -> Result<ConversationSummary, StoreError> {
+        let mut summaries = self
+            .summaries
+            .lock()
+            .expect("in-memory store mutex poisoned");
+        let key = (user_id.clone(), summary.conversation_id);
+        let stored_version = summaries.get(&key).map_or(0, |s| s.version);
+        if stored_version != summary.version {
+            return Err(StoreError::Conflict);
+        }
+        summary.version += 1;
+        summaries.insert(key, summary.clone());
+        Ok(summary)
     }
 }
 

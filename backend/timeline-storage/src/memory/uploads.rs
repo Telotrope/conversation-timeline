@@ -7,7 +7,9 @@ use async_trait::async_trait;
 use timeline_core::conversation_metadata::UploadFacts;
 use timeline_core::ports::errors::StoreError;
 use timeline_core::ports::ids::{UploadId, UserId};
-use timeline_core::ports::uploads::{UploadOutcome, UploadOutcomeStore, UploadProgress};
+use timeline_core::ports::uploads::{
+    ProcessingProgress, UploadOutcome, UploadOutcomeStore, UploadProgress,
+};
 
 #[derive(Default)]
 pub struct InMemoryUploadOutcomeStore {
@@ -64,6 +66,7 @@ impl UploadOutcomeStore for InMemoryUploadOutcomeStore {
             .or_insert(UploadProgress {
                 attempts: 0,
                 last_error: None,
+                processing: None,
             });
         entry.attempts += 1;
         Ok(entry.attempts)
@@ -84,8 +87,30 @@ impl UploadOutcomeStore for InMemoryUploadOutcomeStore {
             .or_insert(UploadProgress {
                 attempts: 0,
                 last_error: None,
+                processing: None,
             })
             .last_error = Some(error);
+        Ok(())
+    }
+
+    async fn record_processing_progress(
+        &self,
+        user_id: &UserId,
+        upload_id: UploadId,
+        processing: ProcessingProgress,
+    ) -> Result<(), StoreError> {
+        let mut progress = self
+            .progress
+            .lock()
+            .expect("in-memory store mutex poisoned");
+        progress
+            .entry((user_id.clone(), upload_id))
+            .or_insert(UploadProgress {
+                attempts: 0,
+                last_error: None,
+                processing: None,
+            })
+            .processing = Some(processing);
         Ok(())
     }
 

@@ -9,12 +9,20 @@
 //! is no earlier, pending row), `CONV#<conversation_id>` for each
 //! conversation summary it eventually produces, and `RECEIVED#<upload_id>`
 //! for what `POST /uploads` learned about the file (its name, when it was
-//! uploaded and last written, the human's name).
+//! uploaded and last written, the human's name). The same table holds the
+//! sessions, message rows, the user's record and saved analyses, each under
+//! its own prefix (see `crate::dynamo`).
+//!
+//! A conversation record is written only if its stored `version` is still
+//! the one the writer read (plan
+//! `docs/plans/2026-10-06-load-only-what-the-page-shows.md` §7, C1): a
+//! DynamoDB condition on the write, so two files processed at once can't
+//! silently replace each other's changes.
 
-use crate::aws_failure::report;
 use std::collections::HashMap;
 
 use async_trait::async_trait;
+use aws_sdk_dynamodb::operation::put_item::PutItemError;
 use aws_sdk_dynamodb::types::AttributeValue;
 use aws_sdk_dynamodb::Client;
 use timeline_core::conversation_metadata::UploadFacts;
@@ -22,12 +30,16 @@ use timeline_core::model::{ConversationId, ConversationName};
 use timeline_core::ports::conversations::{ConversationSummary, ConversationSummaryStore};
 use timeline_core::ports::errors::StoreError;
 use timeline_core::ports::ids::{UploadId, UserId};
-use timeline_core::ports::uploads::{UploadOutcome, UploadOutcomeStore, UploadProgress};
+use timeline_core::ports::uploads::{
+    ProcessingProgress, UploadOutcome, UploadOutcomeStore, UploadProgress,
+};
 
 use super::attributes::{
     invalid_data, json_attribute, optional_string, required_count, required_id_list, required_json,
     required_string,
 };
+use super::backend_error;
+use super::query::query_all;
 
 pub struct DynamoConversationsTable {
     client: Client,
@@ -40,17 +52,6 @@ impl DynamoConversationsTable {
             client,
             table_name: table_name.into(),
         }
-    }
-}
-
-/// Maps a failed call to `operation` to a backend error, reporting it for
-/// the request's log line (`crate::aws_failure`).
-fn backend_error<E: std::error::Error + Send + Sync + 'static>(
-    operation: &'static str,
-) -> impl FnOnce(E) -> StoreError {
-    move |e| {
-        report(operation, &e);
-        StoreError::Backend(Box::new(e))
     }
 }
 
@@ -227,10 +228,34 @@ impl UploadOutcomeStore for DynamoConversationsTable {
             None => 0,
             Some(_) => required_count(&item, "attempts")?,
         };
+        let processing = match item.get("processing") {
+            None => None,
+            Some(_) => Some(required_json(&item, "processing")?),
+        };
         Ok(Some(UploadProgress {
             attempts,
             last_error: optional_string(&item, "last_error")?.map(str::to_string),
+            processing,
         }))
+    }
+
+    async fn record_processing_progress(
+        &self,
+        user_id: &UserId,
+        upload_id: UploadId,
+        progress: ProcessingProgress,
+    ) -> Result<(), StoreError> {
+        self.client
+            .update_item()
+            .table_name(&self.table_name)
+            .key("pk", AttributeValue::S(user_id.to_string()))
+            .key("sk", AttributeValue::S(progress_sort_key(upload_id)))
+            .update_expression("SET processing = :processing")
+            .expression_attribute_values(":processing", json_attribute(&progress))
+            .send()
+            .await
+            .map_err(backend_error("DynamoDB.UpdateItem"))?;
+        Ok(())
     }
 
     async fn record_received(
@@ -292,29 +317,65 @@ fn conversation_summary_from_item(
              uploaded again after the old rows are cleared"
         )));
     }
+    // Fields added later are read last, so a row damaged in an older field
+    // is reported as that.
+    let source = required_json(item, "source")?;
+    let additions = required_json(item, "additions")?;
+    let message_span = required_json(item, "message_span")?;
+    let participants = required_json(item, "participants")?;
+    let medium = required_json(item, "medium")?;
+    let details_origin = required_json(item, "details_origin")?;
+    let span = required_json(item, "span")?;
+    let span_origin = required_json(item, "span_origin")?;
     Ok(ConversationSummary {
         conversation_id,
         name: ConversationName(name),
-        source: required_json(item, "source")?,
-        additions: required_json(item, "additions")?,
+        version: required_count(item, "version")? as u64,
+        source,
+        additions,
         message_count,
-        message_span: required_json(item, "message_span")?,
-        participants: required_json(item, "participants")?,
-        medium: required_json(item, "medium")?,
-        details_origin: required_json(item, "details_origin")?,
-        span: required_json(item, "span")?,
-        span_origin: required_json(item, "span_origin")?,
+        untimed: required_count(item, "untimed")?,
+        message_span,
+        participants,
+        medium,
+        details_origin,
+        span,
+        span_origin,
+        branch_of: required_json(item, "branch_of")?,
+        branches: required_json(item, "branches")?,
     })
 }
 
-#[async_trait]
-impl ConversationSummaryStore for DynamoConversationsTable {
-    async fn list_for_user(
+/// A conversation record from a row of the `CONV#` prefix.
+fn summary_from_row(
+    item: &HashMap<String, AttributeValue>,
+) -> Result<ConversationSummary, StoreError> {
+    // Currently unreachable: the table's key schema makes `sk` required, so
+    // DynamoDB never returns a row without it. Kept as a backstop if the
+    // schema or this read changes.
+    let sk = item
+        .get("sk")
+        .and_then(|v| v.as_s().ok())
+        .ok_or_else(|| invalid_data("conversation item is missing sk"))?;
+    // Currently unreachable: every query here only asks for rows whose `sk`
+    // begins with `CONV#`. Kept as a backstop if a query changes.
+    let id_str = sk
+        .strip_prefix(CONVERSATION_SORT_PREFIX)
+        .ok_or_else(|| invalid_data(format!("unexpected sk {sk:?}")))?;
+    let conversation_id = ConversationId(
+        id_str
+            .parse()
+            .map_err(|e| invalid_data(format!("bad conversation id: {e}")))?,
+    );
+    conversation_summary_from_item(conversation_id, item)
+}
+
+impl DynamoConversationsTable {
+    fn conversations_query(
         &self,
         user_id: &UserId,
-    ) -> Result<Vec<ConversationSummary>, StoreError> {
-        let output = self
-            .client
+    ) -> aws_sdk_dynamodb::operation::query::builders::QueryFluentBuilder {
+        self.client
             .query()
             .table_name(&self.table_name)
             .key_condition_expression("pk = :pk AND begins_with(sk, :prefix)")
@@ -323,35 +384,39 @@ impl ConversationSummaryStore for DynamoConversationsTable {
                 ":prefix",
                 AttributeValue::S(CONVERSATION_SORT_PREFIX.to_string()),
             )
-            .send()
-            .await
-            .map_err(backend_error("DynamoDB.Query"))?;
-        output
-            .items
-            .unwrap_or_default()
-            .iter()
-            .map(|item| {
-                // Currently unreachable: the table's key schema makes `sk`
-                // required, so DynamoDB never returns a row without it.
-                // Kept as a backstop if the schema or this read changes.
-                let sk = item
-                    .get("sk")
-                    .and_then(|v| v.as_s().ok())
-                    .ok_or_else(|| invalid_data("conversation item is missing sk"))?;
-                // Currently unreachable: the query above only asks for rows
-                // whose `sk` begins with `CONV#`. Kept as a backstop if the
-                // query changes.
-                let id_str = sk
-                    .strip_prefix(CONVERSATION_SORT_PREFIX)
-                    .ok_or_else(|| invalid_data(format!("unexpected sk {sk:?}")))?;
-                let conversation_id = ConversationId(
-                    id_str
-                        .parse()
-                        .map_err(|e| invalid_data(format!("bad conversation id: {e}")))?,
-                );
-                conversation_summary_from_item(conversation_id, item)
-            })
-            .collect()
+            .consistent_read(true)
+    }
+}
+
+#[async_trait]
+impl ConversationSummaryStore for DynamoConversationsTable {
+    async fn list_for_user(
+        &self,
+        user_id: &UserId,
+    ) -> Result<Vec<ConversationSummary>, StoreError> {
+        let items = query_all(self.conversations_query(user_id), None, None).await?;
+        items.iter().map(summary_from_row).collect()
+    }
+
+    async fn list_page(
+        &self,
+        user_id: &UserId,
+        after: Option<ConversationId>,
+        max: usize,
+    ) -> Result<Vec<ConversationSummary>, StoreError> {
+        let max = max.max(1);
+        let start = after.map(|id| {
+            HashMap::from([
+                ("pk".to_string(), AttributeValue::S(user_id.to_string())),
+                (
+                    "sk".to_string(),
+                    AttributeValue::S(conversation_sort_key(id)),
+                ),
+            ])
+        });
+        let query = self.conversations_query(user_id).limit(max as i32);
+        let items = query_all(query, start, Some(max)).await?;
+        items.iter().take(max).map(summary_from_row).collect()
     }
 
     async fn get(
@@ -377,8 +442,15 @@ impl ConversationSummaryStore for DynamoConversationsTable {
             .transpose()
     }
 
-    async fn put(&self, user_id: &UserId, summary: ConversationSummary) -> Result<(), StoreError> {
-        self.client
+    async fn put(
+        &self,
+        user_id: &UserId,
+        mut summary: ConversationSummary,
+    ) -> Result<ConversationSummary, StoreError> {
+        let read_version = summary.version;
+        summary.version += 1;
+        let mut request = self
+            .client
             .put_item()
             .table_name(&self.table_name)
             .item("pk", AttributeValue::S(user_id.to_string()))
@@ -386,22 +458,37 @@ impl ConversationSummaryStore for DynamoConversationsTable {
                 "sk",
                 AttributeValue::S(conversation_sort_key(summary.conversation_id)),
             )
-            .item("name", AttributeValue::S(summary.name.0))
+            .item("name", AttributeValue::S(summary.name.0.clone()))
+            .item("version", AttributeValue::N(summary.version.to_string()))
             .item("source", json_attribute(&summary.source))
             .item("additions", json_attribute(&summary.additions))
             .item(
                 "message_count",
                 AttributeValue::N(summary.message_count.to_string()),
             )
+            .item("untimed", AttributeValue::N(summary.untimed.to_string()))
             .item("message_span", json_attribute(&summary.message_span))
             .item("participants", json_attribute(&summary.participants))
             .item("medium", json_attribute(&summary.medium))
             .item("details_origin", json_attribute(&summary.details_origin))
             .item("span", json_attribute(&summary.span))
             .item("span_origin", json_attribute(&summary.span_origin))
+            .item("branch_of", json_attribute(&summary.branch_of))
+            .item("branches", json_attribute(&summary.branches));
+        request = if read_version == 0 {
+            request.condition_expression("attribute_not_exists(sk)")
+        } else {
+            request
+                .condition_expression("version = :read")
+                .expression_attribute_values(":read", AttributeValue::N(read_version.to_string()))
+        };
+        request
             .send()
             .await
-            .map_err(backend_error("DynamoDB.PutItem"))?;
-        Ok(())
+            .map_err(|e| match e.as_service_error() {
+                Some(PutItemError::ConditionalCheckFailedException(_)) => StoreError::Conflict,
+                _ => backend_error("DynamoDB.PutItem")(e),
+            })?;
+        Ok(summary)
     }
 }
