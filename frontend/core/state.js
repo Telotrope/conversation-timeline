@@ -2,33 +2,35 @@
 // reads and writes the shared data here rather than keeping its own copy. It
 // is one object because a module cannot reassign a variable another module
 // exports, but it can change the fields of an exported object.
+//
+// The page holds no messages beyond the page of Review on screen (plan
+// docs/plans/2026-10-06-load-only-what-the-page-shows.md §5): only the
+// conversations' records and their sessions, with each session's flag
+// counts.
 
 export const state = {
-  // Each conversation: { name, total_messages, id, untimed }. `id` joins it
-  // to its record in `records`; `untimed` counts its messages with no time.
+  // Each conversation: { name, total_messages, id, untimed }, in the order
+  // GET /conversations gives them. `id` joins it to its record in
+  // `records`; `untimed` counts its messages with no time (§4e).
   conversations: [],
   // Each conversation's record from GET /conversations (its metadata), by
   // id; and the user's files from GET /uploads, newest first (plan
   // docs/plans/2026-10-05-screen-flow.md §8c).
   records: new Map(),
   uploads: [],
-  rawData: null, // the parsed conversations.json array, kept as-is so we can re-export it annotated
-  messages: [],
-  humanMessages: [],
-  humanById: new Map(),
+  // Every session, as core/blocks.js's toBlock makes them, in the order
+  // GET /sessions gives them (by conversation, then time).
   blocks: [],
+  // The user's data version the records and sessions were read at; raised
+  // by the server on every upload, flag save and scan (§5c). The analyses
+  // computed in the page keep their partial results under it.
+  dataVersion: null,
 
-  // Your manual corrections to the auto-detected flags.
-  // Stored as { [messageId]: { critical: true/false, angry: true/false, caps: true/false } }
-  // Only keys you've actually touched appear here; anything absent falls back
-  // to the auto-detected default.
+  // Your corrections to the automatic flags, for the messages on Review's
+  // page on screen only: { [messageId]: { critical, angry, caps } }, each a
+  // boolean when you stated it. Anything absent falls back to the automatic
+  // flag (core/flags.js).
   overrides: {},
-
-  // One handle per message of yours, from the server's GET /export reply:
-  // { [serverMessageId]: handle }. A flag save must send the message's
-  // handle back, which proves to the server the message is real. Replaced
-  // whenever an export is loaded; null before the first one.
-  flagHandles: null,
 
   // Global visibility switches (session-only UI state, not saved to file).
   // These affect the *effective* value of every flag everywhere: Calendar,

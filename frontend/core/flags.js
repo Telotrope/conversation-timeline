@@ -1,6 +1,9 @@
-// Decides whether a message counts as flagged, combining the backend's
-// automatic flags, your corrections and the show switches, and attaches the
-// same answer to each session block so every view shows the same counts.
+// Decides whether one of the messages on Review's page counts as flagged,
+// combining the server's automatic flags, your corrections and the show
+// switches. Sessions come from the server already counted under every view
+// (core/session-counts.js); the same rules are the server's `FlagView`
+// (plan docs/plans/2026-10-06-load-only-what-the-page-shows.md §5b), so
+// "flagged" means the same on the page and in the counts.
 
 import { state } from './state.js';
 
@@ -29,54 +32,11 @@ export function isOverridden(msg, type){
   return hasUserValue(msg, type);
 }
 
-// Attach flags to whichever block each flagged human message falls within
-// (same conversation, timestamp inside [start, end]; if it lands in a gap
-// that got split out as idle time, attach to the nearest block instead).
-export function attachFlags(){
-  state.blocks.forEach(b=>{
-    b.criticalItems = [];
-    b.angryItems = [];
-    b.capsItems = [];
-    b.allHuman = [];
-  });
-  state.humanMessages.forEach(msg=>{
-    const t = new Date(msg.ts).getTime();
-    const convBlocks = state.blocks.filter(b => b.conv === msg.conv);
-    if(convBlocks.length === 0) return;
-    let best = null, bestDist = Infinity;
-    convBlocks.forEach(b=>{
-      const s = new Date(b.start).getTime(), e = new Date(b.end).getTime();
-      const dist = t < s ? s - t : (t > e ? t - e : 0);
-      if(dist < bestDist){ bestDist = dist; best = b; }
-    });
-    // Currently unreachable: the early return above leaves at least one
-    // session, and any session is nearer than Infinity. Kept as a backstop
-    // if the search above changes.
-    if(!best) return;
-    best.allHuman.push(msg);
-    if(effectiveFlag(msg, 'critical')) best.criticalItems.push(msg);
-    if(effectiveFlag(msg, 'angry')) best.angryItems.push(msg);
-    if(effectiveFlag(msg, 'caps')) best.capsItems.push(msg);
-  });
-  state.blocks.forEach(b => b.allHuman.sort((a,c)=> new Date(a.ts) - new Date(c.ts)));
-}
-
 // Whether you have reviewed this message's row. Reviewing is per row: a
 // checkbox or Approve records all three flags at once.
 export function isReviewed(msg){
   const o = state.overrides[msg.id];
   return !!o && ['caps', 'angry', 'critical'].some((t) => typeof o[t] === 'boolean');
-}
-
-// Whether this message has flag values under the current show switches, and
-// so belongs in a rate's denominator. With automatic tags shown, every
-// message has a value; with only yours shown, only reviewed rows do; with
-// neither, none do. Counting the rest as "not flagged" would report
-// unreviewed messages as clean.
-export function countsTowardRates(msg){
-  if(state.showAuto) return true;
-  if(state.showUser) return isReviewed(msg);
-  return false;
 }
 
 // Whether any of the three flags is in effect for this message.

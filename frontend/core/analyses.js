@@ -1,11 +1,22 @@
-// Computes the numbers behind the five analyses on the Analytics tab. It
-// draws nothing: each analysis receives a runChunked(items, fn) that maps fn
-// over items (the Analytics view passes one that yields to the browser
-// between chunks) and returns the data its renderer takes.
+// Computes the three analyses on the Analytics tab that need only the
+// sessions' stored counts (plan
+// docs/plans/2026-10-06-load-only-what-the-page-shows.md §5c): friction
+// ranking, session length against flag rate, and idle time before a
+// session. Flag rate over time and time of day need each message's own
+// time, so the server computes those. Nothing here draws.
+//
+// Each analysis is a generator that counts one session per step and yields
+// how far it has got, so the Analytics view can run it in 50 ms turns
+// (core/turns.js) with the bar moving. A run stopped part-way is kept, under
+// its analysis, options, view and data version, and carries on from where it
+// stopped when asked for again (§8c); see createAnalysisRuns.
+//
+// `data` is { conversations, blocks, view }: state.conversations, the
+// sessions as core/blocks.js's toBlock makes them, and the view's name
+// (core/session-counts.js).
 
-import { countsTowardRates, isFlagged } from './flags.js';
 import { formatDayHeading } from './format.js';
-import { state } from './state.js';
+import { sessionRate } from './session-counts.js';
 
 export function pearsonR(xs, ys){
   const n = xs.length;
@@ -29,157 +40,129 @@ function ratePct(flagged, total){
   return flagged / total * 100;
 }
 
-// Your counted messages in a session, and how many of them are flagged.
-// b.count is not used: it includes Claude's messages, which are never flagged.
-function sessionRate(b){
-  const counted = b.allHuman.filter(countsTowardRates);
-  return { total: counted.length, flagged: counted.filter(isFlagged).length };
+function sessionLabel(data, b){
+  return `${data.conversations[b.conv].name} — ${formatDayHeading(b.date)}`;
+}
+
+function sessionPoint(data, b, rate){
+  return {
+    label: sessionLabel(data, b),
+    conv: b.conv,
+    rangeStart: new Date(b.start).getTime(),
+    rangeEnd: new Date(b.end).getTime(),
+    pct: ratePct(rate.flagged, rate.total),
+  };
 }
 
 // --- Friction ranking ---
-export async function computeFrictionAnalysis(opts, runChunked){
+// By conversation, a conversation's rate adds up its sessions' counts:
+// exact, since each of your messages belongs to exactly one session.
+function* frictionSteps(opts, data){
   const granularity = opts.granularity || 'conversation';
-  let rows;
-
-  if(granularity === 'conversation'){
-    const perConv = state.conversations.map(() => ({ total: 0, flagged: 0 }));
-    await runChunked(state.humanMessages, m => {
-      if(!countsTowardRates(m)) return;
-      perConv[m.conv].total++;
-      if(isFlagged(m)) perConv[m.conv].flagged++;
-    });
-    rows = state.conversations
-      .map((c, idx) => ({ c, idx }))
-      .filter(({ idx }) => perConv[idx].total > 0)
-      .map(({ c, idx }) => ({
-        label: c.name,
-        total: perConv[idx].total,
-        flagged: perConv[idx].flagged,
-        pct: ratePct(perConv[idx].flagged, perConv[idx].total),
-        conv: idx,
-        rangeStart: null, rangeEnd: null,
-      }));
-  } else {
-    const counted = state.blocks.filter(b => sessionRate(b).total > 0);
-    rows = await runChunked(counted, b => {
-      const { total, flagged } = sessionRate(b);
-      return {
-        label: `${state.conversations[b.conv].name} — ${formatDayHeading(b.date)}`,
-        total,
-        flagged,
-        pct: ratePct(flagged, total),
-        conv: b.conv,
-        rangeStart: new Date(b.start).getTime(),
-        rangeEnd: new Date(b.end).getTime(),
-      };
-    });
+  const total = data.blocks.length;
+  const perConv = new Map();
+  const sessionRows = [];
+  for(const [i, b] of data.blocks.entries()){
+    const rate = sessionRate(b.counts, data.view);
+    if(rate.total > 0){
+      if(granularity === 'conversation'){
+        const sum = perConv.get(b.conv) || { total: 0, flagged: 0 };
+        sum.total += rate.total;
+        sum.flagged += rate.flagged;
+        perConv.set(b.conv, sum);
+      } else {
+        sessionRows.push({ ...sessionPoint(data, b, rate), total: rate.total, flagged: rate.flagged });
+      }
+    }
+    yield { done: i + 1, total };
   }
-
+  const rows = granularity === 'conversation'
+    ? [...perConv].sort(([a], [b]) => a - b).map(([conv, sum]) => ({
+      label: data.conversations[conv].name,
+      total: sum.total,
+      flagged: sum.flagged,
+      pct: ratePct(sum.flagged, sum.total),
+      conv,
+      rangeStart: null, rangeEnd: null,
+    }))
+    : sessionRows;
   rows.sort((a,b)=> b.pct - a.pct);
   return { rows, granularity };
 }
 
-// --- Flag rate over time ---
-export async function computeTrendAnalysis(opts, runChunked){
-  const granularity = opts.granularity || 'week';
-  function bucketKey(d){
-    if(granularity === 'month'){
-      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-    }
-    // ISO-ish week bucket: year + week number (Sunday-start, matching the rest of this page)
-    const first = new Date(d.getFullYear(), 0, 1);
-    const dayOfYear = Math.floor((d - first) / 86400000);
-    const week = Math.floor((dayOfYear + first.getDay()) / 7);
-    return `${d.getFullYear()}-W${String(week).padStart(2,'0')}`;
-  }
-
-  const buckets = new Map();
-  await runChunked(state.humanMessages, m => {
-    if(!countsTowardRates(m)) return;
-    const key = bucketKey(new Date(m.ts));
-    if(!buckets.has(key)) buckets.set(key, {total:0, flagged:0});
-    const b = buckets.get(key);
-    b.total++;
-    if(isFlagged(m)) b.flagged++;
-  });
-
-  const keys = Array.from(buckets.keys()).sort();
-  const points = keys.map(k => ({
-    x: k,
-    y: ratePct(buckets.get(k).flagged, buckets.get(k).total),
-    total: buckets.get(k).total,
-    flagged: buckets.get(k).flagged,
-  }));
-  return { points, granularity };
-}
-
 // --- Session length vs. flag rate ---
-export async function computeLengthAnalysis(opts, runChunked){
-  const counted = state.blocks.filter(b => sessionRate(b).total > 0);
-  const points = await runChunked(counted, b => {
-    const { total, flagged } = sessionRate(b);
-    return {
-      x: b.duration_sec / 60, // minutes
-      y: ratePct(flagged, total),
-      label: `${state.conversations[b.conv].name} — ${formatDayHeading(b.date)}`,
-      conv: b.conv,
-      rangeStart: new Date(b.start).getTime(),
-      rangeEnd: new Date(b.end).getTime(),
-    };
-  });
+function* lengthSteps(opts, data){
+  const total = data.blocks.length;
+  const points = [];
+  for(const [i, b] of data.blocks.entries()){
+    const rate = sessionRate(b.counts, data.view);
+    if(rate.total > 0){
+      const { pct, ...rest } = sessionPoint(data, b, rate);
+      points.push({ x: b.duration_sec / 60, y: pct, ...rest });
+    }
+    yield { done: i + 1, total };
+  }
   return { points };
 }
 
-// --- Time of day & day of week ---
-export async function computeTimeOfDayAnalysis(opts, runChunked){
-  const byHour = Array.from({length:24}, () => ({total:0, flagged:0}));
-  const byDow = Array.from({length:7}, () => ({total:0, flagged:0}));
-  await runChunked(state.humanMessages, m => {
-    if(!countsTowardRates(m)) return;
-    const d = new Date(m.ts);
-    const h = d.getHours(), dow = d.getDay();
-    byHour[h].total++; byDow[dow].total++;
-    if(isFlagged(m)){ byHour[h].flagged++; byDow[dow].flagged++; }
-  });
-  return { byHour, byDow };
-}
-
 // --- Idle time before a session ---
-export async function computeIdleGapAnalysis(opts, runChunked){
-  // For each session (block) after the first one in its conversation, the
-  // gap since the previous session in that same conversation ended.
-  const byConv = new Map();
-  state.blocks.forEach(b => {
-    if(!byConv.has(b.conv)) byConv.set(b.conv, []);
-    byConv.get(b.conv).push(b);
-  });
-  byConv.forEach(list => list.sort((a,b)=> new Date(a.start) - new Date(b.start)));
-
-  // The gap is measured from the previous session whether or not you
-  // reviewed it; only the later session needs counted messages for a rate.
-  const pairs = [];
+// For each session after the first in its conversation, the gap since the
+// previous session in that conversation ended. The server gives a
+// conversation's sessions in time order, so the previous one seen is the
+// one before. The gap is measured from the previous session whether or not
+// you reviewed it; only the later session needs counted messages for a rate.
+function* idleGapSteps(opts, data){
+  const total = data.blocks.length;
+  const previous = new Map();
+  const points = [];
   let uncountedCount = 0;
-  byConv.forEach(list => {
-    for(let i=1;i<list.length;i++){
-      if(sessionRate(list[i]).total > 0) pairs.push({ prev: list[i-1], cur: list[i] });
-      else uncountedCount++;
+  for(const [i, b] of data.blocks.entries()){
+    const prev = previous.get(b.conv);
+    previous.set(b.conv, b);
+    if(prev){
+      const rate = sessionRate(b.counts, data.view);
+      if(rate.total > 0){
+        const gapHours = (new Date(b.start) - new Date(prev.end)) / 3600000;
+        const { pct, ...rest } = sessionPoint(data, b, rate);
+        points.push({ x: Math.max(gapHours, 0.01), y: pct, ...rest }); // the floor avoids log(0)
+      } else {
+        uncountedCount++;
+      }
     }
-  });
-
-  const points = await runChunked(pairs, ({prev, cur}) => {
-    const gapHours = (new Date(cur.start) - new Date(prev.end)) / 3600000;
-    const { total, flagged } = sessionRate(cur);
-    return {
-      x: Math.max(gapHours, 0.01), // avoid log(0)
-      y: ratePct(flagged, total),
-      label: `${state.conversations[cur.conv].name} — ${formatDayHeading(cur.date)}`,
-      conv: cur.conv,
-      rangeStart: new Date(cur.start).getTime(),
-      rangeEnd: new Date(cur.end).getTime(),
-    };
-  });
-
+    yield { done: i + 1, total };
+  }
   // excludedCount: each conversation's first session, which has no prior gap.
   // uncountedCount: later sessions with no counted messages to rate.
-  return { points, excludedCount: byConv.size, uncountedCount };
+  return { points, excludedCount: previous.size, uncountedCount };
+}
+
+const ANALYSES = Object.freeze({ friction: frictionSteps, length: lengthSteps, idlegap: idleGapSteps });
+
+// The analyses computed here, by the names the Analytics menu uses.
+export const PAGE_ANALYSES = Object.freeze(Object.keys(ANALYSES));
+
+// The steps of one analysis, from the start.
+export function analysisSteps(name, opts, data){
+  return ANALYSES[name](opts, data);
+}
+
+// The runs kept so far, each { steps, finished, result }: get() returns the
+// run for an analysis, its options, the view and the data version, made
+// fresh the first time and the same one afterwards, so a run stopped
+// part-way carries on. Runs over other sessions (a timeline loaded again)
+// are forgotten.
+export function createAnalysisRuns(){
+  const runs = new Map();
+  let blocks = null;
+  return {
+    get(name, opts, data, dataVersion){
+      if(data.blocks !== blocks){
+        runs.clear();
+        blocks = data.blocks;
+      }
+      const key = JSON.stringify([name, opts, data.view, dataVersion]);
+      if(!runs.has(key)) runs.set(key, { steps: analysisSteps(name, opts, data), finished: false, result: null });
+      return runs.get(key);
+    },
+  };
 }

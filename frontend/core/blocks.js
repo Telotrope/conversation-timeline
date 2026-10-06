@@ -1,11 +1,11 @@
-// Groups messages into sessions: a run of messages in one conversation with
-// no pause of 15 minutes or more. Midnight does not end a session, so sessions
-// are the same whatever timezone they are viewed from; only the calendar,
-// which draws each day as its own row, splits a session's drawing at midnight.
-
-import { state } from './state.js';
-
-const GAP_THRESHOLD_SEC = 15 * 60; // a pause this long or longer ends a session
+// The timeline's sessions as the page draws them, and the viewer's local
+// days. The server cuts sessions (a run of messages in one conversation with
+// no pause of 15 minutes or more, or a conversation whose messages have no
+// times placed by its start and end) and counts their flags (plan
+// docs/plans/2026-10-06-load-only-what-the-page-shows.md §3, §6). Which
+// local day a session falls on stays here, since only the browser knows the
+// viewer's time zone. Midnight does not end a session; only the calendar,
+// which draws each day as its own row, splits a session's drawing there.
 
 // The viewer's local calendar date, as 'YYYY-MM-DD'.
 export function localDateKey(d){
@@ -34,67 +34,33 @@ export function localDaysTouched(block){
   return pieces;
 }
 
-// A conversation whose messages have no times, or only some of them, is one
-// session from its start to its end as its record gives them (plan
-// docs/plans/2026-10-05-screen-flow.md §7f): where the user put it, or the
-// upload's guess. One with no messages at all, or no record, isn't drawn.
-function placedBySpan(conv, idx){
-  if(conv.total_messages === 0 || conv.untimed === 0) return null;
-  const record = state.records.get(conv.id);
-  if(!record) return null;
-  const start = new Date(record.span.start);
-  const end = new Date(record.span.end);
+// A local day ('YYYY-MM-DD') as the instants it starts and ends, in ISO
+// form, for asking the server for a Calendar day's messages (the server
+// doesn't know the viewer's time zone). The end is the last millisecond
+// before the next midnight: the server's span includes both its ends, and a
+// message sent exactly at midnight belongs to the next day only.
+export function localDayBounds(dateKey){
+  const [y, m, d] = dateKey.split('-').map(Number);
+  const start = new Date(y, m - 1, d);
+  const next = new Date(y, m - 1, d + 1);
+  return { from: start.toISOString(), to: new Date(next.getTime() - 1).toISOString() };
+}
+
+// One session from GET /sessions as the views draw it. `conv` is its
+// conversation's index in state.conversations; `date` the local day it
+// starts on; `count` every message in it, yours and Claude's; `counts` the
+// server's flag counts (core/session-counts.js).
+export function toBlock(session, conv){
+  const start = new Date(session.start), end = new Date(session.end);
   return {
-    conv: idx,
+    conv,
+    number: session.number,
     date: localDateKey(start),
-    start: start.toISOString(),
-    end: end.toISOString(),
+    start: session.start,
+    end: session.end,
     duration_sec: Math.round((end - start) / 1000),
-    count: conv.total_messages,
+    count: session.message_count,
+    placement: session.placement,
+    counts: session.counts,
   };
-}
-
-// A session's `date` is the local day it started on.
-export function buildBlocks(){
-  const byConv = new Map();
-  state.messages.forEach(m=>{
-    if(!byConv.has(m.conv)) byConv.set(m.conv, []);
-    byConv.get(m.conv).push(new Date(m.ts));
-  });
-
-  const blocks = [];
-  const bySpan = new Set();
-  state.conversations.forEach((c, idx) => {
-    const block = placedBySpan(c, idx);
-    if(block){ blocks.push(block); bySpan.add(idx); }
-  });
-  byConv.forEach((dates, conv) => {
-    if(!bySpan.has(conv)) blocks.push(...sessionsOf(dates, conv));
-  });
-  return blocks;
-}
-
-// One conversation's message times as sessions: a pause of
-// GAP_THRESHOLD_SEC or more starts a new one.
-function sessionsOf(dates, conv){
-  dates.sort((a,b)=>a-b);
-  const sessions = [];
-  let runStart = 0;
-  for(let i=1; i<=dates.length; i++){
-    const gapSec = i < dates.length ? (dates[i]-dates[i-1])/1000 : Infinity;
-    if(gapSec >= GAP_THRESHOLD_SEC){
-      const start = dates[runStart];
-      const end = dates[i-1];
-      sessions.push({
-        conv,
-        date: localDateKey(start),
-        start: start.toISOString(),
-        end: end.toISOString(),
-        duration_sec: Math.round((end-start)/1000),
-        count: i - runStart,
-      });
-      runStart = i;
-    }
-  }
-  return sessions;
 }

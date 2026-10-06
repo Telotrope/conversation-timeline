@@ -224,11 +224,14 @@ export function routeTemplate(path){
 // top folder, never the key or the signature in the link's query string.
 export const S3_UPLOAD_ROUTE = 's3 PUT raw/…';
 export const S3_EXPORT_ROUTE = 's3 GET export/…';
+// A stored file opened from Review (plan
+// docs/plans/2026-10-06-load-only-what-the-page-shows.md §4).
+export const S3_FILE_ROUTE = 's3 GET files/…';
 
 // One request the page made. status is null when no answer came back, and
 // errorKind (one of core/page-error.js's ERROR_KINDS) then says what kind
 // of failure it was; never the error's message. facts: route-specific
-// extras ({offset, limit} for /detect, {scan} for /uploads).
+// extras ({part} for /detect, {scan} for /uploads).
 export function requestEvent({ t, method, route, status, ms, bytes, requestId, errorKind, facts }){
   const event = {
     kind: 'request',

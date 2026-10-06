@@ -11,7 +11,7 @@
 // and gives up after ten minutes. Everything that touches the network or
 // the clock is passed in, so tests can run it without either.
 
-import { formatDuration } from './format.js';
+import { formatBytes, formatDuration } from './format.js';
 import { PageError } from './page-error.js';
 
 export const FAST_INTERVAL_MS = 1000;
@@ -85,4 +85,21 @@ export function waitMessageId(answer){
   if(error) return 'wait.error';
   if(attempt) return 'wait.processing';
   return 'wait.waiting';
+}
+
+// How far the server has got with an upload, from the `progress` a
+// "processing" answer may carry (plan
+// docs/plans/2026-10-06-load-only-what-the-page-shows.md §8b): first the
+// bytes of the file it has read, then the conversations it has written.
+// { text, done, total } for the bar, or null when the answer carries none or
+// its totals aren't known yet.
+export function processingProgress(progress){
+  if(!progress) return null;
+  const { bytes_read: read, bytes_total: size, conversations_written: written, conversations_total: count } = progress;
+  if(written > 0 || (size > 0 && read >= size)){
+    if(!(count > 0)) return null;
+    return { text: `storing your conversations: ${written} of ${count}`, done: written, total: count };
+  }
+  if(!(size > 0)) return null;
+  return { text: `reading your file: ${formatBytes(read)} of ${formatBytes(size)}`, done: read, total: size };
 }

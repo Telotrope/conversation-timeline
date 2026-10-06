@@ -1,11 +1,12 @@
 // Everything that talks to the timeline backend: working out its address,
-// getting a development login token, uploading and downloading with
-// progress, saving your flag corrections, and turning failed responses into
-// readable messages.
+// getting a development login token, uploading with progress, reading the
+// answers the server gives in parts (plan
+// docs/plans/2026-10-06-load-only-what-the-page-shows.md §8c), saving your
+// flag corrections, and turning failed responses into readable messages.
 
-import { state } from '../core/state.js';
+import { joinParts, readAllParts } from '../core/parts.js';
 import { resolveUrl } from '../core/server-url.js';
-import { S3_EXPORT_ROUTE, S3_UPLOAD_ROUTE, requestEvent, routeTemplate } from '../core/activity-event.js';
+import { S3_FILE_ROUTE, S3_UPLOAD_ROUTE, requestEvent, routeTemplate } from '../core/activity-event.js';
 import { noteRequestFinished, noteRequestStarted, recordActivity } from '../core/activity-sink.js';
 import { PageError, errorKindOf } from '../core/page-error.js';
 
@@ -78,7 +79,7 @@ function contentLength(res){
 // given) and the session id, tells the activity recorder a request is in
 // flight, and records the request (route with ids replaced by {id}, status,
 // time, and API Gateway's request id, which joins it to the server's log
-// lines). facts: extra fields for this route's record ({offset, limit} for
+// lines). facts: extra fields for this route's record ({part} for
 // /detect, {scan} for /uploads). Resolves to fetch's Response; a request
 // that gets no answer is recorded with its error and the error is thrown on.
 export async function apiFetch(path, { method = 'GET', token = null, headers = {}, body, facts } = {}){
@@ -97,38 +98,6 @@ export async function apiFetch(path, { method = 'GET', token = null, headers = {
   } catch(e){
     recordActivity(requestEvent({
       t: started, method, route, status: null, ms: Date.now() - started, requestId: null, errorKind: errorKindOf(e), facts,
-    }));
-    throw e;
-  } finally {
-    noteRequestFinished();
-  }
-}
-
-// Downloads the processed export from the signed link GET /export handed
-// back, reporting progress (see readBodyWithProgress). Not through apiFetch:
-// a signed S3 link gets no session header or token. Recorded as
-// "s3 GET export/…", the whole download counted as one request, body
-// included. Resolves to { res, text }, text null when the answer wasn't OK
-// (the body is then left unread, for describeFailure).
-export async function downloadSignedExport(url, onProgress){
-  const started = Date.now();
-  noteRequestStarted();
-  let res = null;
-  let received;
-  try{
-    res = await fetch(url);
-    const text = res.ok
-      ? await readBodyWithProgress(res, (loaded, total) => { received = loaded; onProgress(loaded, total); })
-      : null;
-    recordActivity(requestEvent({
-      t: started, method: 'GET', route: S3_EXPORT_ROUTE, status: res.status, ms: Date.now() - started,
-      bytes: received, requestId: null,
-    }));
-    return { res, text };
-  } catch(e){
-    recordActivity(requestEvent({
-      t: started, method: 'GET', route: S3_EXPORT_ROUTE, status: res ? res.status : null,
-      ms: Date.now() - started, requestId: null, errorKind: errorKindOf(e),
     }));
     throw e;
   } finally {
@@ -291,26 +260,6 @@ export function putWithProgress(url, body, onProgress, registerAbort = () => {})
   });
 }
 
-// Reads a response body chunk by chunk so a large download reports real
-// progress. Content-Length is absent often enough (chunked encoding, proxies)
-// that the no-total case shows transferred bytes instead of a made-up
-// percentage.
-export async function readBodyWithProgress(res, onProgress){
-  const total = Number(res.headers.get('Content-Length')) || 0;
-  if(!res.body || !res.body.getReader) return res.text();
-  const reader = res.body.getReader();
-  const chunks = [];
-  let loaded = 0;
-  for(;;){
-    const { done, value } = await reader.read();
-    if(done) break;
-    chunks.push(value);
-    loaded += value.length;
-    onProgress(loaded, total);
-  }
-  return new TextDecoder().decode(await new Blob(chunks).arrayBuffer());
-}
-
 // What happened when your confirmed flags were sent to the backend. The
 // wording shown for each is the interface's choice, in ui/flag-edits.js.
 export const SaveOutcome = Object.freeze({
@@ -321,35 +270,33 @@ export const SaveOutcome = Object.freeze({
   STALE_PAGE: 'stale-page',       // the server refused the message's handle: reload the page's data
 });
 
-// Persists your confirmed flags to the real backend, resolving to
-// { outcome: SaveOutcome, detail?, status?, errorKind? }. setRowOverrides already updates
-// state.overrides and re-renders optimistically before calling this; a failed
-// PATCH is reported in the outcome, not silently swallowed, but doesn't roll
-// back the optimistic local update. See the migration plan's
-// V2a: this only persists for as long as the in-memory local-dev backend
-// stays running -- there is no database behind it yet.
+// Persists your confirmed flags to the backend, resolving to
+// { outcome: SaveOutcome, reply?, detail?, status?, errorKind? }. `msg` is a
+// message of Review's page on screen (core/review-rows.js): its
+// conversation, its id and the handle GET /messages issued for it, which
+// proves to the server the message is real (migration plan §V2c).
+// setRowOverrides already updates state.overrides and re-renders
+// optimistically before calling this; a failed PATCH is reported in the
+// outcome, not silently swallowed, but doesn't roll back the optimistic
+// local update. A saved one's `reply` is the server's answer: the
+// message's flags, its session counted again, and the raised data version.
 export async function patchFlagsToBackend(msg, values){
   if(!AUTH_TOKEN){
     return { outcome: SaveOutcome.NOT_LOGGED_IN };
   }
-  const conv = state.rawData && state.rawData[msg.conv];
-  const rawMsg = conv && conv.chat_messages && conv.chat_messages[msg.rawIndex];
-  // Every save carries the handle GET /export issued for this message,
-  // proving to the server the message is real (migration plan §V2c).
-  const handle = rawMsg && state.flagHandles && state.flagHandles[rawMsg.uuid];
-  if(!conv || !rawMsg || !handle){
+  if(!msg.conversationId || !msg.messageId || !msg.handle){
     return { outcome: SaveOutcome.NO_SERVER_ID };
   }
   try{
-    const res = await apiFetch(`/conversations/${conv.uuid}/messages/${rawMsg.uuid}/flags`, {
+    const res = await apiFetch(`/conversations/${encodeURIComponent(msg.conversationId)}/messages/${encodeURIComponent(msg.messageId)}/flags`, {
       method: 'PATCH',
       token: AUTH_TOKEN,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...values, handle }),
+      body: JSON.stringify({ ...values, handle: msg.handle }),
     });
     if(res.status === 403) return { outcome: SaveOutcome.STALE_PAGE, status: 403 };
     if(!res.ok) throw new PageError(`server returned ${res.status}`, 'server_error', res.status);
-    return { outcome: SaveOutcome.SAVED };
+    return { outcome: SaveOutcome.SAVED, reply: await res.json() };
   } catch(e){
     return {
       outcome: SaveOutcome.SERVER_ERROR, detail: e.message,
@@ -358,24 +305,126 @@ export async function patchFlagsToBackend(msg, values){
   }
 }
 
-// --- Conversation metadata (plan docs/plans/2026-10-05-screen-flow.md §8c) ---
+// --- Reading (plan docs/plans/2026-10-06-load-only-what-the-page-shows.md §5, §8c) ---
 
 async function jsonOrFailure(what, res){
   if(!res.ok) throw await requestFailure(what, res);
   return res.json();
 }
 
-// GET /conversations: every conversation's record, metadata included.
-// Empty when the user has uploaded nothing, which is how the page decides
-// between the Upload page and the timeline.
-export async function fetchConversationRecords(token){
-  return jsonOrFailure('reading your conversations', await apiFetch('/conversations', { token }));
+// `path` with `params` as its query string; null and undefined values are
+// left out.
+export function withQuery(path, params){
+  const query = new URLSearchParams();
+  for(const [key, value] of Object.entries(params)){
+    if(value !== null && value !== undefined) query.set(key, String(value));
+  }
+  const text = query.toString();
+  return text ? `${path}?${text}` : path;
 }
 
-// GET /uploads: the user's files, newest first, for the Files tab and the
-// Describe page.
-export async function fetchUploads(token){
-  return jsonOrFailure('reading your files', await apiFetch('/uploads', { token }));
+async function getJson(what, token, path){
+  return jsonOrFailure(what, await apiFetch(path, { token }));
+}
+
+// One part of GET /conversations: { conversations, total, cursor,
+// data_version }.
+export function fetchConversationsPart(token, cursor = null){
+  return getJson('reading your conversations', token, withQuery('/conversations', { cursor }));
+}
+
+// One part of GET /sessions: { sessions, total, cursor, data_version }.
+export function fetchSessionsPart(token, cursor = null){
+  return getJson('reading your sessions', token, withQuery('/sessions', { cursor }));
+}
+
+// GET /conversations, every part: every conversation's record, metadata
+// included. Empty when the user has uploaded nothing, which is how the page
+// decides between the Upload page and the timeline. `on`: readAllParts's
+// onPart and onRestart (core/parts.js).
+export async function fetchConversationRecords(token, on = {}){
+  const { parts } = await readAllParts((cursor) => fetchConversationsPart(token, cursor), on);
+  return joinParts(parts, 'conversations');
+}
+
+// GET /uploads, every part: the user's files, for the Files tab and the
+// Describe page. Each part is sorted newest first; the whole list is sorted
+// again here.
+export async function fetchUploads(token, on = {}){
+  const { parts } = await readAllParts(
+    (cursor) => getJson('reading your files', token, withQuery('/uploads', { cursor })), on);
+  return joinParts(parts, 'uploads').sort((a, b) => Date.parse(b.uploaded_at) - Date.parse(a.uploaded_at));
+}
+
+// One part of GET /messages, Review's rows; `params` are its query
+// (core/review-query.js).
+export function fetchMessagesPart(token, params){
+  return getJson('reading your messages', token, withQuery('/messages', params));
+}
+
+// One part of GET /conversations/{id}/files: the files presented in one
+// conversation.
+export function fetchConversationFilesPart(token, conversationId, cursor = null){
+  return getJson('reading the conversation\'s files', token,
+    withQuery(`/conversations/${encodeURIComponent(conversationId)}/files`, { cursor }));
+}
+
+// GET /files/{conversation}/{message}/{number}: a short-lived address for a
+// stored file, with its name and kind.
+export function fetchFileAddress(token, conversationId, messageId, number){
+  const path = `/files/${encodeURIComponent(conversationId)}/${encodeURIComponent(messageId)}/${encodeURIComponent(number)}`;
+  return getJson('opening the file', token, path);
+}
+
+// A stored file's text, from the address fetchFileAddress gave. Not
+// through apiFetch: on AWS the address is a signed S3 link, which gets no
+// session header or token. Recorded as "s3 GET files/…", never the address.
+export async function downloadFileText(url){
+  const started = Date.now();
+  noteRequestStarted();
+  let res = null;
+  try{
+    res = await fetch(serverUrl(url));
+    const text = res.ok ? await res.text() : null;
+    recordActivity(requestEvent({
+      t: started, method: 'GET', route: S3_FILE_ROUTE, status: res.status, ms: Date.now() - started, requestId: null,
+    }));
+    if(text === null) throw await requestFailure('downloading the file', res);
+    return text;
+  } catch(e){
+    if(e instanceof PageError) throw e;
+    recordActivity(requestEvent({
+      t: started, method: 'GET', route: S3_FILE_ROUTE, status: res ? res.status : null,
+      ms: Date.now() - started, requestId: null, errorKind: errorKindOf(e),
+    }));
+    throw e;
+  } finally {
+    noteRequestFinished();
+  }
+}
+
+// GET /analyses/{name}: one of the two analyses the server computes
+// ('trend' or 'time-of-day'), done or still working.
+export function fetchAnalysis(token, name, params){
+  return getJson('computing the analysis', token, withQuery(`/analyses/${name}`, params));
+}
+
+// POST /detect: one part of the scan, from `cursor` (null to start).
+// `part` counts the requests of this scan, for the activity log.
+export async function postDetect(token, cursor, part){
+  const res = await apiFetch('/detect', {
+    method: 'POST',
+    token,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cursor === null ? {} : { cursor }),
+    facts: { part },
+  });
+  return jsonOrFailure('scanning your messages', res);
+}
+
+// One part of GET /export, the annotated download.
+export function fetchExportPart(token, cursor = null){
+  return getJson('building your annotated download', token, withQuery('/export', { cursor }));
 }
 
 function putJson(path, token, body){
@@ -388,10 +437,22 @@ function putJson(path, token, body){
 }
 
 // PUT /uploads/{id}/metadata: an edit for every conversation that first
-// came in that file. Resolves to the changed records.
-export async function saveFileMetadata(token, uploadId, edit){
-  return jsonOrFailure('saving the file\'s details',
-    await putJson(`/uploads/${encodeURIComponent(uploadId)}/metadata`, token, edit));
+// came in that file, sent again with each part's cursor until the server
+// has rewritten them all (§8c). Not started over when the data version
+// changes: the edit itself changes the records, and repeating it is
+// harmless. onPart({ done, total }) after each part. Resolves to the
+// changed records.
+export async function saveFileMetadata(token, uploadId, edit, onPart = () => {}){
+  const records = [];
+  let cursor = null;
+  do{
+    const part = await jsonOrFailure('saving the file\'s details',
+      await putJson(`/uploads/${encodeURIComponent(uploadId)}/metadata`, token, cursor === null ? edit : { ...edit, cursor }));
+    records.push(...part.conversations);
+    onPart(part);
+    cursor = part.cursor ?? null;
+  } while(cursor !== null);
+  return records;
 }
 
 // PUT /conversations/{id}/metadata: an edit for one conversation. Resolves
