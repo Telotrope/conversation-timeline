@@ -12,7 +12,9 @@
 //! - **A storage failure**, or a key that can't be traced to an upload, is
 //!   returned as an error naming the key, after every other record has been
 //!   attempted. Lambda then retries the whole event. That's safe because
-//!   every write `process_upload` makes replaces rather than adds (plan C29).
+//!   every row `process_upload` writes is keyed by what it holds, so a
+//!   repeat replaces rather than adds (plan C29), and a conversation already
+//!   holding this upload's messages is skipped.
 //!   Each attempt is counted first, and a failed attempt's error recorded,
 //!   so the page can show the retry (plan
 //!   `2026-10-02-upload-processing-failures.md` §3). After the last retry,
@@ -38,21 +40,27 @@ use aws_lambda_events::event::s3::S3Event;
 use percent_encoding::percent_decode_str;
 use serde_json::{json, Value};
 use timeline_core::ports::conversations::ConversationSummaryStore;
-use timeline_core::ports::message_flags::UserFlagWriter;
+use timeline_core::ports::messages::{MessageReader, MessageRowWriter};
 use timeline_core::ports::object_store::ObjectStore;
+use timeline_core::ports::sessions::SessionStore;
 use timeline_core::ports::uploads::{parse_raw_object_key, UploadOutcomeStore};
+use timeline_core::ports::user_record::UserRecordStore;
 
 use crate::aws_settings::{DeliberateFailure, EventLogging};
 use crate::processing::{process_upload, ProcessingError};
 use crate::request_record::{self, note, note_user, RequestRecord};
 
-/// The stores processing writes through.
+/// The stores processing reads and writes through. Only processing holds a
+/// `MessageRowWriter`, which writes whole message rows.
 #[derive(Clone)]
 pub struct ProcessingStores {
     pub object_store: Arc<dyn ObjectStore>,
     pub upload_outcome_store: Arc<dyn UploadOutcomeStore>,
     pub conversation_summary_store: Arc<dyn ConversationSummaryStore>,
-    pub user_flag_writer: Arc<dyn UserFlagWriter>,
+    pub message_reader: Arc<dyn MessageReader>,
+    pub message_writer: Arc<dyn MessageRowWriter>,
+    pub session_store: Arc<dyn SessionStore>,
+    pub user_records: Arc<dyn UserRecordStore>,
 }
 
 /// How many times AWS runs the processing function for one upload: the
@@ -141,24 +149,11 @@ async fn handle_record(
     let result = if failure == DeliberateFailure::On {
         Err(ProcessingError::FailingOnPurpose)
     } else {
-        process_upload(
-            stores.object_store.as_ref(),
-            stores.upload_outcome_store.as_ref(),
-            stores.conversation_summary_store.as_ref(),
-            stores.user_flag_writer.as_ref(),
-            &user_id,
-            upload_id,
-        )
-        .await
+        process_upload(stores, &user_id, upload_id).await
     };
     match result {
         Ok(()) => Ok(()),
-        Err(
-            e @ (ProcessingError::NoUploadRecord
-            | ProcessingError::RawObjectNotUtf8(_)
-            | ProcessingError::Format(_)
-            | ProcessingError::ReviewField { .. }),
-        ) => {
+        Err(e) if e.is_unusable_file() => {
             // Already recorded as `Failed` for the page; see module doc.
             eprintln!("upload {key:?} is not a usable export (recorded as failed): {e}");
             note("unusable", e.to_string());

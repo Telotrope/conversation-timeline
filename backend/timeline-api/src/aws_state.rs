@@ -11,8 +11,11 @@ use std::sync::Arc;
 
 use jsonwebtoken::jwk::JwkSet;
 use timeline_auth::cognito::CognitoVerifier;
+use timeline_core::work_budget::{BudgetSetting, REQUEST_WORK_LIMIT};
 use timeline_storage::dynamo::conversations_table::DynamoConversationsTable;
-use timeline_storage::dynamo::message_flags_table::DynamoMessageFlagsStore;
+use timeline_storage::dynamo::message_rows::DynamoMessageStore;
+use timeline_storage::dynamo::sessions_table::DynamoSessionStore;
+use timeline_storage::dynamo::user_record_rows::DynamoUserRecordStore;
 use timeline_storage::s3::S3ObjectStore;
 
 use crate::aws_settings::{AwsSettings, StorageSettings};
@@ -34,45 +37,44 @@ pub fn build_aws_state(
     jwks: JwkSet,
     flag_handle_key: FlagHandleKey,
 ) -> AppState {
-    let flags = Arc::new(DynamoMessageFlagsStore::new(
-        clients.dynamodb.clone(),
-        settings.message_flags_table.as_str(),
-    ));
-    // Upload outcomes and conversation summaries share the conversations
-    // table (see `timeline_core::ports::uploads`).
-    let conversations = Arc::new(DynamoConversationsTable::new(
-        clients.dynamodb,
-        settings.conversations_table.as_str(),
-    ));
+    let dynamodb = clients.dynamodb.clone();
+    let table = settings.conversations_table.as_str();
+    let stores = build_processing_stores(&settings.storage(), clients);
+    let messages = Arc::new(DynamoMessageStore::new(dynamodb.clone(), table));
     AppState {
-        object_store: Arc::new(S3ObjectStore::new(
-            clients.s3,
-            settings.uploads_bucket.as_str(),
-        )),
-        conversation_summary_store: conversations.clone(),
-        flags_reader: flags.clone(),
-        user_flag_writer: flags.clone(),
-        auto_flag_writer: flags,
-        upload_outcome_store: conversations,
+        object_store: stores.object_store,
+        conversation_summary_store: stores.conversation_summary_store,
+        message_reader: messages.clone(),
+        user_flag_writer: messages.clone(),
+        auto_flag_writer: messages,
+        session_store: stores.session_store,
+        user_records: stores.user_records,
+        analysis_store: Arc::new(DynamoUserRecordStore::new(dynamodb, table)),
+        upload_outcome_store: stores.upload_outcome_store,
         verifier: Arc::new(CognitoVerifier::new(
             jwks,
             settings.issuer(),
             settings.client_id.as_str(),
         )),
         flag_handle_key: Arc::new(flag_handle_key),
+        budget: BudgetSetting::Clock(REQUEST_WORK_LIMIT),
     }
 }
 
 /// The upload-processing Lambda's stores: the same S3 and DynamoDB adapters
 /// as the API Lambda, without any login checks (migration plan §V2e, E2).
+/// Everything lives in the conversations table (plan
+/// `docs/plans/2026-10-06-load-only-what-the-page-shows.md` §3).
 pub fn build_processing_stores(
     settings: &StorageSettings,
     clients: AwsClients,
 ) -> ProcessingStores {
+    let table = settings.conversations_table.as_str();
     let conversations = Arc::new(DynamoConversationsTable::new(
         clients.dynamodb.clone(),
-        settings.conversations_table.as_str(),
+        table,
     ));
+    let messages = Arc::new(DynamoMessageStore::new(clients.dynamodb.clone(), table));
     ProcessingStores {
         object_store: Arc::new(S3ObjectStore::new(
             clients.s3,
@@ -80,10 +82,10 @@ pub fn build_processing_stores(
         )),
         upload_outcome_store: conversations.clone(),
         conversation_summary_store: conversations,
-        user_flag_writer: Arc::new(DynamoMessageFlagsStore::new(
-            clients.dynamodb,
-            settings.message_flags_table.as_str(),
-        )),
+        message_reader: messages.clone(),
+        message_writer: messages,
+        session_store: Arc::new(DynamoSessionStore::new(clients.dynamodb.clone(), table)),
+        user_records: Arc::new(DynamoUserRecordStore::new(clients.dynamodb, table)),
     }
 }
 

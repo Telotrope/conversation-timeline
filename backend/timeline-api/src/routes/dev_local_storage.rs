@@ -11,23 +11,19 @@ use std::sync::Arc;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use timeline_core::ports::conversations::ConversationSummaryStore;
-use timeline_core::ports::message_flags::UserFlagWriter;
 use timeline_core::ports::object_store::ObjectStore;
-use timeline_core::ports::uploads::{parse_raw_object_key, UploadOutcomeStore};
+use timeline_core::ports::uploads::parse_raw_object_key;
 
 use crate::error::ApiError;
 use crate::processing::process_upload;
+use crate::s3_trigger::ProcessingStores;
 
 pub async fn put_object(
     Path(key): Path<String>,
-    State(object_store): State<Arc<dyn ObjectStore>>,
-    State(upload_outcome_store): State<Arc<dyn UploadOutcomeStore>>,
-    State(conversation_summary_store): State<Arc<dyn ConversationSummaryStore>>,
-    State(user_flag_writer): State<Arc<dyn UserFlagWriter>>,
+    State(stores): State<ProcessingStores>,
     body: Bytes,
 ) -> Result<StatusCode, ApiError> {
-    object_store.put(&key, body.to_vec()).await?;
+    stores.object_store.put(&key, body.to_vec()).await?;
 
     // Only a raw upload's key triggers processing, matching production,
     // where only keys under `raw/` fire the S3 event. Anything else (an
@@ -39,16 +35,7 @@ pub async fn put_object(
         // see); this does the same rather than turning a processing bug
         // into a 500 on what is, from the client's point of view, just the
         // file upload succeeding.
-        if let Err(e) = process_upload(
-            object_store.as_ref(),
-            upload_outcome_store.as_ref(),
-            conversation_summary_store.as_ref(),
-            user_flag_writer.as_ref(),
-            &user_id,
-            upload_id,
-        )
-        .await
-        {
+        if let Err(e) = process_upload(&stores, &user_id, upload_id).await {
             eprintln!("local-dev upload processing failed for {user_id}/{upload_id}: {e}");
         }
     }

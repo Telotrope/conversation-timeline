@@ -55,7 +55,6 @@ name_type!(
 
 pub const UPLOADS_BUCKET_VAR: &str = "TIMELINE_UPLOADS_BUCKET";
 pub const CONVERSATIONS_TABLE_VAR: &str = "TIMELINE_CONVERSATIONS_TABLE";
-pub const MESSAGE_FLAGS_TABLE_VAR: &str = "TIMELINE_MESSAGE_FLAGS_TABLE";
 pub const USER_POOL_ID_VAR: &str = "TIMELINE_COGNITO_USER_POOL_ID";
 pub const CLIENT_ID_VAR: &str = "TIMELINE_COGNITO_CLIENT_ID";
 pub const REGION_VAR: &str = "AWS_REGION";
@@ -154,21 +153,19 @@ impl DeliberateFailure {
     }
 }
 
-/// The three storage names, which are all the upload-processing Lambda
+/// The two storage names, which are all the upload-processing Lambda
 /// needs. The API Lambda reads these plus the Cognito settings
 /// ([`AwsSettings`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StorageSettings {
     pub uploads_bucket: BucketName,
     pub conversations_table: TableName,
-    pub message_flags_table: TableName,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AwsSettings {
     pub uploads_bucket: BucketName,
     pub conversations_table: TableName,
-    pub message_flags_table: TableName,
     pub user_pool_id: UserPoolId,
     pub client_id: ClientId,
     pub region: Region,
@@ -228,7 +225,6 @@ impl<F: Fn(&str) -> Option<String>> Reader<F> {
         StorageSettings {
             uploads_bucket: BucketName(self.read(UPLOADS_BUCKET_VAR)),
             conversations_table: TableName(self.read(CONVERSATIONS_TABLE_VAR)),
-            message_flags_table: TableName(self.read(MESSAGE_FLAGS_TABLE_VAR)),
         }
     }
 
@@ -270,7 +266,6 @@ impl AwsSettings {
         let settings = AwsSettings {
             uploads_bucket: storage.uploads_bucket,
             conversations_table: storage.conversations_table,
-            message_flags_table: storage.message_flags_table,
             user_pool_id: login.user_pool_id,
             client_id: login.client_id,
             region: login.region,
@@ -283,7 +278,6 @@ impl AwsSettings {
         StorageSettings {
             uploads_bucket: self.uploads_bucket.clone(),
             conversations_table: self.conversations_table.clone(),
-            message_flags_table: self.message_flags_table.clone(),
         }
     }
 

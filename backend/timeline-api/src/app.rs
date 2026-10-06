@@ -10,8 +10,8 @@ use axum::Router;
 use crate::dev_state::DevState;
 use crate::routes::activity::{self, ActivityState};
 use crate::routes::{
-    conversations, detect, dev_local_storage, dev_login, dev_reset, export, flags, metadata,
-    uploads,
+    analyses, conversations, detect, dev_local_storage, dev_login, dev_reset, export, files, flags,
+    messages, metadata, sessions, uploads,
 };
 use crate::state::AppState;
 
@@ -29,6 +29,17 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/conversations/{conversation_id}/metadata",
             put(metadata::edit_conversation),
+        )
+        .route(
+            "/conversations/{conversation_id}/files",
+            get(conversations::list_files),
+        )
+        .route("/sessions", get(sessions::list_sessions))
+        .route("/messages", get(messages::list_messages))
+        .route("/analyses/{name}", get(analyses::analysis))
+        .route(
+            "/files/{conversation_id}/{message_id}/{number}",
+            get(files::file_address),
         )
         .route(
             "/conversations/{conversation_id}/messages/{message_id}/flags",

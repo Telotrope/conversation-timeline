@@ -27,7 +27,9 @@ use timeline_core::conversation_metadata::UploadFacts;
 use timeline_core::labels::{FileName, PersonName};
 use timeline_core::ports::ids::UploadId;
 use timeline_core::ports::object_store::ObjectStore;
-use timeline_core::ports::uploads::{raw_object_key, UploadOutcome, UploadOutcomeStore};
+use timeline_core::ports::uploads::{
+    raw_object_key, ProcessingProgress, UploadOutcome, UploadOutcomeStore,
+};
 
 use crate::auth_extractor::AuthenticatedUser;
 use crate::error::ApiError;
@@ -114,6 +116,10 @@ pub enum UploadStatusResponse {
         max_attempts: Option<usize>,
         #[serde(skip_serializing_if = "Option::is_none")]
         last_error: Option<String>,
+        /// How far the running attempt has got, written every second (plan
+        /// 2026-10-06-load-only-what-the-page-shows.md §8b).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        progress: Option<ProcessingProgress>,
     },
     Ready,
     Failed {
@@ -142,7 +148,8 @@ pub async fn upload_status(
             UploadStatusResponse::Processing {
                 attempt,
                 max_attempts: attempt.map(|_| MAX_PROCESSING_ATTEMPTS),
-                last_error: progress.and_then(|p| p.last_error),
+                last_error: progress.as_ref().and_then(|p| p.last_error.clone()),
+                progress: progress.and_then(|p| p.processing),
             }
         }
         Some(UploadOutcome::Ready { .. }) => UploadStatusResponse::Ready,

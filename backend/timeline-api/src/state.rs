@@ -5,6 +5,12 @@
 //! section 4.1 real at the wiring level, not just at the trait-definition
 //! level.
 //!
+//! Flags live on the message rows (plan
+//! `docs/plans/2026-10-06-load-only-what-the-page-shows.md` §3); routes read
+//! them through `MessageReader` and write them through the two narrow
+//! writers below. Only processing holds a `MessageRowWriter`, and it is not
+//! in this state.
+//!
 //! **`AutoFlagWriter` is now part of this state, and that is a deliberate
 //! change from the earlier design.** It used to be excluded on the grounds
 //! that no user-facing handler should ever be able to write automatic flags,
@@ -30,10 +36,14 @@ use std::sync::Arc;
 
 use axum::extract::FromRef;
 use timeline_auth::cognito::CognitoVerifier;
+use timeline_core::ports::analyses::AnalysisStore;
 use timeline_core::ports::conversations::ConversationSummaryStore;
-use timeline_core::ports::message_flags::{AutoFlagWriter, MessageFlagsReader, UserFlagWriter};
+use timeline_core::ports::messages::{AutoFlagWriter, MessageReader, UserFlagWriter};
 use timeline_core::ports::object_store::ObjectStore;
+use timeline_core::ports::sessions::SessionStore;
 use timeline_core::ports::uploads::UploadOutcomeStore;
+use timeline_core::ports::user_record::UserRecordStore;
+use timeline_core::work_budget::BudgetSetting;
 
 use crate::flag_handles::FlagHandleKey;
 
@@ -41,59 +51,45 @@ use crate::flag_handles::FlagHandleKey;
 pub struct AppState {
     pub object_store: Arc<dyn ObjectStore>,
     pub conversation_summary_store: Arc<dyn ConversationSummaryStore>,
-    pub flags_reader: Arc<dyn MessageFlagsReader>,
+    pub message_reader: Arc<dyn MessageReader>,
     pub user_flag_writer: Arc<dyn UserFlagWriter>,
     pub auto_flag_writer: Arc<dyn AutoFlagWriter>,
+    pub session_store: Arc<dyn SessionStore>,
+    pub user_records: Arc<dyn UserRecordStore>,
+    pub analysis_store: Arc<dyn AnalysisStore>,
     pub upload_outcome_store: Arc<dyn UploadOutcomeStore>,
     pub verifier: Arc<CognitoVerifier>,
     /// Signs and checks flag handles; see `crate::flag_handles`.
     pub flag_handle_key: Arc<FlagHandleKey>,
+    /// How much work one request may do before it answers (plan §8c): the
+    /// clock in production, counted steps for the local test server.
+    pub budget: BudgetSetting,
 }
 
-impl FromRef<AppState> for Arc<dyn ObjectStore> {
-    fn from_ref(state: &AppState) -> Self {
-        state.object_store.clone()
-    }
+macro_rules! from_state {
+    ($field:ident: $ty:ty) => {
+        impl FromRef<AppState> for $ty {
+            fn from_ref(state: &AppState) -> Self {
+                state.$field.clone()
+            }
+        }
+    };
 }
 
-impl FromRef<AppState> for Arc<dyn ConversationSummaryStore> {
-    fn from_ref(state: &AppState) -> Self {
-        state.conversation_summary_store.clone()
-    }
-}
+from_state!(object_store: Arc<dyn ObjectStore>);
+from_state!(conversation_summary_store: Arc<dyn ConversationSummaryStore>);
+from_state!(message_reader: Arc<dyn MessageReader>);
+from_state!(user_flag_writer: Arc<dyn UserFlagWriter>);
+from_state!(auto_flag_writer: Arc<dyn AutoFlagWriter>);
+from_state!(session_store: Arc<dyn SessionStore>);
+from_state!(user_records: Arc<dyn UserRecordStore>);
+from_state!(analysis_store: Arc<dyn AnalysisStore>);
+from_state!(upload_outcome_store: Arc<dyn UploadOutcomeStore>);
+from_state!(verifier: Arc<CognitoVerifier>);
+from_state!(flag_handle_key: Arc<FlagHandleKey>);
 
-impl FromRef<AppState> for Arc<dyn MessageFlagsReader> {
+impl FromRef<AppState> for BudgetSetting {
     fn from_ref(state: &AppState) -> Self {
-        state.flags_reader.clone()
-    }
-}
-
-impl FromRef<AppState> for Arc<dyn UserFlagWriter> {
-    fn from_ref(state: &AppState) -> Self {
-        state.user_flag_writer.clone()
-    }
-}
-
-impl FromRef<AppState> for Arc<dyn AutoFlagWriter> {
-    fn from_ref(state: &AppState) -> Self {
-        state.auto_flag_writer.clone()
-    }
-}
-
-impl FromRef<AppState> for Arc<dyn UploadOutcomeStore> {
-    fn from_ref(state: &AppState) -> Self {
-        state.upload_outcome_store.clone()
-    }
-}
-
-impl FromRef<AppState> for Arc<CognitoVerifier> {
-    fn from_ref(state: &AppState) -> Self {
-        state.verifier.clone()
-    }
-}
-
-impl FromRef<AppState> for Arc<FlagHandleKey> {
-    fn from_ref(state: &AppState) -> Self {
-        state.flag_handle_key.clone()
+        state.budget
     }
 }

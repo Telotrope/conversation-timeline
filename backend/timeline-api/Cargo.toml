@@ -8,7 +8,7 @@ timeline-core = { path = "../timeline-core" }
 timeline-storage = { path = "../timeline-storage" }
 timeline-auth = { path = "../timeline-auth" }
 axum = "0.8"
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 lambda_http = "0.15"
 lambda_runtime = "0.14"
 aws_lambda_events = { version = "0.16", default-features = false, features = ["s3"] }
@@ -32,6 +32,14 @@ aws-sdk-dynamodb = "1"
 # (docs/plans/2026-10-02-activity-instrumentation.md §3). Both MIT.
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
+# Decompressing gzip uploads (plan 2026-10-06-load-only-what-the-page-shows.md §7b).
+# MIT OR Apache-2.0; its zlib-rs backend is under the Zlib licence.
+flate2 = "1"
+# Writing several conversations at once during processing. MIT OR Apache-2.0.
+futures = "0.3"
+# The message walk's visitor (src/message_query.rs). MIT OR Apache-2.0.
+async-trait = "0.1"
+chrono-tz = "0.10"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "process", "time"] }
