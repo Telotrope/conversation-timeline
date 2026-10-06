@@ -25,6 +25,21 @@ timeline-core --summary-only` to verify).
 | [`dedup`](src/dedup.rs) | `dedup_chat_messages`/`dedup_conversations` — removes retried duplicate human messages. |
 | [`sessions`](src/sessions.rs) | `build_blocks` — gap-based session splitting (UTC in, UTC out; day-bucketing stays client-side, see the module doc). |
 | [`flags`](src/flags.rs) | Three independent detectors — `caps::has_emphasis_caps` (dictionary-checked ALL-CAPS), `criticism::detect_critical` (keyword regex), `anger::detect_angry` (VADER + phrase list + exclamation bursts) — plus `matrix::effective_flag`, the four-state auto/user visibility logic. |
+| [`flag_values`](src/flag_values.rs) | One message's flag values: the automatic ones and yours, kept apart so the scan can never overwrite yours. |
+| [`flag_view`](src/flag_view.rs) | The page's two show switches as one value, and what a message counts as under them. |
+| [`labels`](src/labels.rs) | Short typed labels (participant, AI, transcription service, file name), each its own newtype. |
+| [`conversation_metadata`](src/conversation_metadata.rs) | What a conversation's messages don't say: who took part, how it was held, its span, its source file. |
+| [`message_time`](src/message_time.rs) | A message's time, which may be unknown (stored as the 1970-01-01 sentinel). |
+| [`branches`](src/branches.rs) | Prunes the branches a later message replaced; a conversation with any unknown time is left whole. |
+| [`keep`](src/keep.rs) | What is kept of one parsed conversation: its kept path as rows, notes for replaced branches, branches important enough to be conversations of their own. |
+| [`kept_files`](src/kept_files.rs) | The files a conversation's export holds (presented files, widgets, attachments). |
+| [`merge`](src/merge.rs) | What a later file adds to a conversation already stored, including a revived branch. |
+| [`stored_message`](src/stored_message.rs) | A message or note row as stored. |
+| [`stored_session`](src/stored_session.rs) | A session as stored, with its placement and fourteen counts. |
+| [`message_filter`](src/message_filter.rs) | Review's filters as one value, shared by every route that reads messages. |
+| [`server_analyses`](src/server_analyses.rs) | The flag rate over time and by hour and weekday, computed from each message's own time. |
+| [`walk_cursor`](src/walk_cursor.rs) | Where a walk over the user's messages stopped, so the next part resumes there. |
+| [`work_budget`](src/work_budget.rs) | How much work one request may do before it answers (a clock in production, a step count in tests). |
 | [`vader`](src/vader.rs) | A faithful Rust port of the VADER sentiment algorithm (`polarity_scores`), replacing the original's AFINN lexicon for license reasons (ODbL vs. this project's permissive-only policy — see the migration plan's C2). |
 | [`ports`](src/ports.rs) | Trait definitions every infrastructure crate implements against — see below. |
 
@@ -99,6 +114,7 @@ classDiagram
         +presign_get(key, expires_in) String
         +get(key) Vec~u8~
         +put(key, data)
+        +delete(key)
     }
     class UploadOutcomeStore {
         <<trait>>
@@ -108,6 +124,7 @@ classDiagram
     class ConversationSummaryStore {
         <<trait>>
         +list_for_user(user_id) Vec~ConversationSummary~
+        +list_page(user_id, after, limit) Vec~ConversationSummary~
         +get(user_id, conversation_id) ConversationSummary?
         +put(user_id, summary) ConversationSummary
     }
@@ -116,6 +133,11 @@ classDiagram
         +read_entries(user_id, range) Vec~Entry~
         +find_entry(user_id, conversation_id, message_id) Entry?
         +entry_after(user_id, key) Entry?
+    }
+    class MessageRowWriter {
+        <<trait>>
+        +put_entries(user_id, entries)
+        +delete_entries(user_id, keys)
     }
     class AutoFlagWriter {
         <<trait>>
