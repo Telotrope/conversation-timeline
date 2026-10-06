@@ -59,26 +59,29 @@ test('a flag save for a message the server issued no handle for is not sent', as
   await api.ensureAuthToken('alice');
   let sent = false;
   globalThis.fetch = async () => { sent = true; return answer(200); };
-  assert.deepEqual(await api.patchFlagsToBackend({ conv: 0, rawIndex: 0 }, { caps: true }),
+  // A row of GET /messages always carries its handle; one without can't be saved.
+  assert.deepEqual(await api.patchFlagsToBackend({ conversationId: 'c', messageId: 'm', handle: '' }, { caps: true }),
     { outcome: api.SaveOutcome.NO_SERVER_ID });
   assert.equal(sent, false);
 });
 
-test('a timeline download answered with an error is returned unread and recorded with its status', async () => {
+test('a part of the annotated download answered with an error is thrown with its status and recorded', async () => {
   globalThis.fetch = async () => answer(500, { body: 'oops' });
-  const { result, events } = await recorded(() => api.downloadSignedExport('https://s3.example/export/x.json', () => {}));
-  assert.equal(result.res.status, 500);
-  assert.equal(result.text, null);
+  const events = [];
+  connectActivitySink({ record: (e) => events.push(e), requestStarted(){}, requestFinished(){} });
+  await assert.rejects(api.fetchExportPart('tok', 'c1'), (err) => err.status === 500 && err.kind === 'server_error'
+    && err.message === 'building your annotated download failed (500): oops');
+  connectActivitySink(null);
   assert.equal(events.length, 1);
-  assert.equal(events[0].route, 's3 GET export/…');
+  assert.equal(events[0].route, '/export');
   assert.equal(events[0].status, 500);
 });
 
-test('a timeline download that gets no answer is recorded by its kind and thrown on', async () => {
+test('a part of the annotated download that gets no answer is recorded by its kind and thrown on', async () => {
   globalThis.fetch = async () => { throw new TypeError('Failed to fetch'); };
   const events = [];
   connectActivitySink({ record: (e) => events.push(e), requestStarted(){}, requestFinished(){} });
-  await assert.rejects(api.downloadSignedExport('https://s3.example/export/x.json', () => {}), /Failed to fetch/);
+  await assert.rejects(api.fetchExportPart('tok'), /Failed to fetch/);
   connectActivitySink(null);
   assert.equal(events.length, 1);
   assert.equal(events[0].status, null);

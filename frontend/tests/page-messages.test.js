@@ -36,7 +36,11 @@ test('the wording each message shows', () => {
   const expected = {
     'load.choose_file': [{}, 'Choose a conversations.json file first.'],
     'load.failed': [{ detail: 'x failed (500)', hint: '' }, 'Could not load that file through the backend — x failed (500)'],
-    'flags.loaded': [{ count: 1 }, 'Loaded 1 of your confirmed flag from the server.'],
+    'load.preparing': [{}, 'Preparing the file…'],
+    'progress.preparing_file': [{ read: 1024, size: 2048, conversations: 1, compressed: 512 },
+      'Preparing the file — 1 KB of 2 KB read, 1 conversation slimmed, 512 B compressed'],
+    'progress.scanning': [{ done: 41, total: 117 }, 'Scanning your messages — 41 of 117 sessions (35%)'],
+    'progress.data_changed': [{}, 'Your data changed; starting again.'],
     'save.saved': [{}, 'Saved.'],
     'save.server_error': [{ detail: 'server returned 500' }, 'Could not save to the server: server returned 500'],
     'signIn.signed_in': [{ who: 'a@b.c' }, 'Signed in as a@b.c.'],
@@ -45,7 +49,6 @@ test('the wording each message shows', () => {
     'wait.retrying': [{ answer, elapsedMs: 1000 }, 'The server hit an error (boom) and is trying again automatically: attempt 2 of 3. AWS waits 1–2 minutes between attempts. — 1s'],
   };
   for(const [id, [values, text]] of Object.entries(expected)) assert.equal(pageMessage(id).text(values), text, id);
-  assert.equal(pageMessage('flags.loaded').text({ count: 3 }), 'Loaded 3 of your confirmed flags from the server.');
   assert.equal(pageMessage('progress.failed').text, null);
   // Every other message has fixed wording.
   for(const [id, entry] of Object.entries(PAGE_MESSAGES)){

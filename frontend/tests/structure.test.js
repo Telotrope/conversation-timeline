@@ -38,8 +38,15 @@ function importsOf(file) {
 
 const graph = new Map(files.map((f) => [f, importsOf(f)]));
 
+// Files under the repository's vendor/ folder (libraries kept as they were
+// published) are outside the page's own modules: imports of them are
+// checked to exist on disk, and their own imports are not read.
+const VENDOR = '../vendor/';
+const isVendor = (file) => file.startsWith(VENDOR);
+
 // Which folder a file belongs to, for the layer rules.
 function layer(file) {
+  if (isVendor(file)) return 'vendor';
   if (file === 'main.js') return 'main';
   const parts = file.split('/');
   if (parts[0] === 'ui') return parts.length === 2 ? 'ui' : `ui/${parts[1]}`;
@@ -51,6 +58,10 @@ function layer(file) {
 const MAY_IMPORT = {
   core: [],
   infra: ['core'],
+  // The Web Worker that prepares an upload (plan
+  // docs/plans/2026-10-06-load-only-what-the-page-shows.md §7b): page-free
+  // logic and the vendored parser only.
+  workers: ['core', 'vendor'],
   'ui/render': ['core'],
   'ui/widgets': ['core'],
   'ui/navigation': ['core'],
@@ -71,11 +82,17 @@ const SAME_LAYER = {
     'ui/flag-edits.js -> ui/refresh-views.js',
     'ui/load-flow.js -> ui/router.js',
   ]),
+  workers: new Set([
+    'workers/prepare-upload.js -> workers/slim-stream.js',
+  ]),
 };
 
 test('the modules import only existing files', () => {
   for (const [file, deps] of graph) {
-    for (const dep of deps) assert.ok(graph.has(dep), `${file} imports missing ${dep}`);
+    for (const dep of deps) {
+      const exists = isVendor(dep) ? fs.existsSync(path.join(ROOT, dep)) : graph.has(dep);
+      assert.ok(exists, `${file} imports missing ${dep}`);
+    }
   }
 });
 
