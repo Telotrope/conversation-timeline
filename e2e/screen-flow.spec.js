@@ -512,3 +512,43 @@ test('during the scan only Stop shows, Back is refused, and Stop moves on to Des
   await page.click('#stopBtn');
   await expect(page.locator('#describePage')).toBeVisible({ timeout: 30_000 });
 });
+
+test('participants on Describe have no Remove button', async ({ page }) => {
+  await page.goto(TIMELINE_HTML);
+  await signInToUpload(page, uniqueSub());
+  await uploadFiles(page, [file('one.json', [chat('One', '2026-01-01')])]);
+  await expect(page.locator('#describeBody .participant-row')).toHaveCount(2, { timeout: 30_000 });
+  await expect(page.locator('#describeBody .participant-row button')).toHaveCount(0);
+  await expect(page.locator('#describeBody button:has-text("Add participant")')).toBeVisible();
+});
+
+test('leaving the Upload page returns to the tab it was opened from', async ({ page }) => {
+  await page.goto(TIMELINE_HTML);
+  await signInToUpload(page, uniqueSub());
+  await uploadAndFinish(page, [file('one.json', [chat('One', '2026-01-01')])]);
+
+  // By the browser's Back.
+  await page.click('button[data-tab="review"]');
+  await page.click('#addConversationsBtn');
+  await expect(page.locator('#uploadPage')).toBeVisible();
+  await page.goBack();
+  await expect(page.locator('#mainContent')).toBeVisible();
+  await expect(page.locator('#view-review')).toHaveClass(/active/);
+  expect(new URL(page.url()).hash).toBe('#review');
+
+  // By the page's own button.
+  await page.click('button[data-tab="analytics"]');
+  await page.click('#addConversationsBtn');
+  await page.click('#uploadBackBtn');
+  await expect(page.locator('#view-analytics')).toHaveClass(/active/);
+  expect(new URL(page.url()).hash).toBe('#analytics');
+});
+
+test('the open conversation\'s table of sessions is titled', async ({ page }) => {
+  await page.goto(TIMELINE_HTML);
+  await signInToUpload(page, uniqueSub());
+  await uploadAndFinish(page, [file('one.json', [chat('One', '2026-01-01')])]);
+  await page.click('button[data-tab="conversations"]');
+  await page.locator('.conv-item').first().click();
+  await expect(page.locator('#convDetail .table-title')).toHaveText('Sessions');
+});
