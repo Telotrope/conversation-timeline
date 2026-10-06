@@ -78,14 +78,21 @@ export function sendsUnslimmed(){
 // wait for it. Resolves to its upload id. `on` holds the callbacks:
 // prepared({ read, size, conversations, compressed }), ready(bytesToSend),
 // sent(loaded, total), sendingDone(), answer(processingAnswer),
-// registerAbort(fn), and sleep(ms).
+// registerAbort(fn), and sleep(ms); and, for a batch, turn() (resolves when
+// this file may start its upload) and sending() (called as it starts
+// sending), so files are sent in their order however long each took to
+// prepare.
 export async function uploadOneFile(token, file, scan, humanName, on){
+  const { turn = async () => {}, sending = () => {} } = on;
   const prepared = sendsUnslimmed()
     ? { body: file.slice(0, file.size) }
     : await prepareUpload(file, on.prepared, on.registerAbort);
   on.ready(prepared.body.size);
+  await turn();
   const { upload_id: uploadId, upload_url: uploadUrl } = await startUpload(token, file, scan, humanName);
-  await sendFile(uploadUrl, prepared.body, on.sent, on.registerAbort);
+  const sent = sendFile(uploadUrl, prepared.body, on.sent, on.registerAbort);
+  sending();
+  await sent;
   on.sendingDone();
   await waitUntilProcessed(token, uploadId, on.answer, on.sleep);
   return uploadId;
@@ -273,15 +280,28 @@ async function sendBatch(token, files, scan){
   // prepared files are smaller, so the bar is drawn from the tally instead.
   // startBatch starts the files in order, so the n-th call is file n.
   let started = 0;
-  BATCH = startBatch(files, (file, ctx) => {
+  // Each file starts sending once the one before it has (or has failed or
+  // stopped), as the files were sent before preparing came first.
+  const begun = files.map(() => {
+    let begin;
+    const promise = new Promise((resolve) => { begin = resolve; });
+    return { promise, begin };
+  });
+  BATCH = startBatch(files, async (file, ctx) => {
     const i = started++;
-    return uploadOneFile(token, file, scan, human, {
-      prepared: (p) => tally.prepared(i, p),
-      ready: (size) => tally.ready(i, size),
-      sent: (loaded) => tally.sent(i, loaded),
-      sendingDone: () => { tally.finished(i); ctx.sendingDone(); wait.oneSent(); },
-      answer: wait.answer, registerAbort: ctx.registerAbort, sleep: ctx.sleep,
-    });
+    try{
+      return await uploadOneFile(token, file, scan, human, {
+        prepared: (p) => tally.prepared(i, p),
+        ready: (size) => tally.ready(i, size),
+        turn: () => (i === 0 ? Promise.resolve() : begun[i - 1].promise),
+        sending: begun[i].begin,
+        sent: (loaded) => tally.sent(i, loaded),
+        sendingDone: () => { tally.finished(i); ctx.sendingDone(); wait.oneSent(); },
+        answer: wait.answer, registerAbort: ctx.registerAbort, sleep: ctx.sleep,
+      });
+    } finally {
+      begun[i].begin();
+    }
   }, {
     progress: () => {},
     failed: (index, error) => { tally.finished(index); wait.oneSent(); addFileLine('load.file_failed', failureLine(files[index], error)); },
