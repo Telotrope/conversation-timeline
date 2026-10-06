@@ -168,3 +168,14 @@ and the file it came from. Each was put off by the user's decision unless noted.
     about the conversation without changing which messages are whose. Needs its own plan, together
     with item 7 (other export formats), since those files are where several named speakers come
     from.
+
+13. **Conversations that are partly spoken.** The Describe page records one medium per conversation:
+    typed, voice in an online meeting, or voice in a shared room (`ConversationMedium` in
+    [conversation_metadata.rs](../../backend/timeline-core/src/conversation_metadata.rs#L114)). A
+    chat with Claude can mix typed messages with messages dictated through speech-to-text: in
+    `real-flags.json`, "C-Corporation banking setup for payroll" has dictated messages ("uh", "the
+    the", "a a lump sum") among typed ones, which the user confirmed (2026-10-06). Such a
+    conversation must today be labelled wholly typed or wholly spoken, and either label is untrue
+    for part of it. The export does not say which messages were dictated, so a fix needs either a
+    medium per message (set by the user, or guessed from the text's speech marks, compare item 6) or
+    a "mixed" medium for the conversation. Added 2026-10-06 at the user's request.
