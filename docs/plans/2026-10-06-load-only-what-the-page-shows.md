@@ -73,8 +73,21 @@ The page can only keep what the export contains:
   and Review shows it as "not included in the export".
 
 In Review, a message that made or presented files lists them under its text, each a link
-(`GET /files/{conversation}/{message}/{name}` answers with a short-lived download address). How the
-browser should open a file that is a web page or SVG is Q3.
+(`GET /files/{conversation}/{message}/{name}` answers with a short-lived download address).
+Opening one shows it on the page, **never running any code it contains** (the user, Q3), with a
+download link beside it:
+
+| Kind of file | Shown as | How |
+|---|---|---|
+| SVG | the drawing | an `<img>` element: browsers don't run scripts inside an SVG shown this way |
+| Web page (HTML), interactive widget | the page as laid out, scripts off; "Show source" switches to its text | a sandboxed `<iframe>` (the `sandbox` attribute with no permissions: the browser runs no scripts, opens no pop-ups, submits no forms). Built into browsers; no library. A widget that draws itself with scripts shows only its static parts |
+| Markdown | formatted text | the page's own `renderMarkdownLite` ([markup.js](../../frontend/ui/render/markup.js)), already used for messages |
+| Code (Python, JavaScript, Apps Script…) | text with syntax colouring | **highlight.js** (BSD-3-Clause, to be confirmed from its licence file when vendored): it only colours text and runs nothing from the file. Vendored under `vendor/` like `oidc-client-ts` |
+| Your attachments | their text | as text |
+
+Considered and not chosen: converting web pages to Markdown with **Turndown** (MIT) and showing that.
+It reads well for text-heavy pages but drops layout, tables' styling and drawings, which the
+sandboxed frame keeps; it stays an option if the frame turns out awkward.
 
 ## 5. What the page loads
 
@@ -139,31 +152,37 @@ keeps each request well inside the deployment's 30-second limit
 
 ## 9. Expected times
 
-**Measured** on this machine on 2026-10-06, optimized build, in-memory stores, `real-flags.json`:
-upload and processing 1.1 s; rebuilding the timeline download 1.0 s; downloading it on the same
-machine 0.13 s; parsing it (in Node) 0.30 s; each of the 24 scan requests 0.6–0.7 s; the conversation
-list 2 ms.
+**What is measured.** On AWS, from the deployment checks of 2026-10-02 and the activity run of
+2026-10-05 ([analysis](../analysis/2026-10-05-activity-recording-aws-run.md#L40)), with the user's
+63.5 MB export and the user's own connection: sending the file to storage 26.0 s; processing on the
+server 5.7–6.4 s; the scan 24 requests of about 3.2 s, about 80 s in all; rebuilding the timeline
+download 12.3 s; downloading it 25.1 s. The rebuild and download ran while an upload was also
+being sent, so on their own they may be faster. Locally, on 2026-10-06 with an optimized build:
+processing 1.1 s; rebuilding the download 1.0 s; each scan request 0.6–0.7 s; parsing the download
+(in Node) 0.3 s.
 
-**Every other figure is an estimate.** Assumptions: the browser reaches the server at 100 Mbit/s
-(the real speed through VS Code's forwarding isn't known); AWS runs these functions with 512 MB of
-memory, which Lambda pairs with roughly 0.3 of a processor (from AWS's documentation as I remember
-it, not checked), so work taking 1 s here takes about 3.5 s there; DynamoDB and S3 calls take
-10–30 ms each.
+**Assumptions for the estimates.** The user's connection to AWS moves about 2.5 MB/s each way (from
+the 25.1 s and 26.0 s above). Locally, through VS Code's forwarding, its speed is not known, so the
+local column assumes the same. Server work on AWS takes about 5 times as long as on this machine
+(the measured ratio: scan requests 3.2 s against 0.65 s, processing 6 s against 1.1 s). DynamoDB and
+S3 calls take 10–30 ms each.
 
-| | Today, local | Today, AWS | After, local | After, AWS |
+| What you wait for | Today, local | Today, AWS | After, local | After, AWS |
 |---|---|---|---|---|
-| **Opening the timeline** | 6.4 s | 9 s | 0.1 s | 0.5 s |
-| **…and your messages, in the background** | (included above) | (included above) | 0.2 s | 1 s |
-| **The scan** | 15 s (measured) | 50 s | under 1 s | 3 s |
-| **Processing an upload** | 1.1 s (measured) | 5 s | 1.5 s | 10 s |
-| **Showing Claude's replies** | already loaded | already loaded | 0.5 s once | 1.5 s once |
-| **The annotated download** | 6.4 s | 9 s | 0.6 s | 2 s |
-| **Saving one flag** | under 0.1 s | 0.2 s | under 0.1 s | 0.3 s |
+| **Sending the file** (63.5 MB) | 26 s | 26 s (measured) | 26 s | 26 s |
+| **Processing** (from the file arriving to Describe) | 1 s (measured) | 6 s (measured) | 2 s | 12 s |
+| **Scanning, if ticked** | 15 s (measured) | 80 s (measured) | 1 s | 5 s |
+| **Opening the timeline** | 27 s | 37 s (measured, during an upload) | 0.1 s | 1 s |
+| …your messages, in the background | (included above) | (included above) | 0.5 s | 2 s |
+| **Showing Claude's replies** (5.8 MB) | already loaded | already loaded | 3 s | 4 s |
+| **The annotated download** | 27 s | 37 s | 3 s | 5 s |
 
-"Today, local" opening and download times are the measured parts plus 5.1 s to send 63.6 MB at the
-assumed speed. Processing on AWS gets slower: it writes about 4,500 message rows and 300 session
-rows (25 per DynamoDB batch) and about 50 files, and may be slower still if DynamoDB limits the rate
-of writes to one user's rows (C8).
+So the wait from pressing Upload to Describe, with the scan ticked, goes from about 112 s on AWS
+today to about 43 s, of which 26 s is sending the file, which this plan doesn't change.
+
+Processing gets slower: it still parses the file once, then writes about 4,800 rows (25 per
+DynamoDB batch) and about 50 files, and may be slower still if DynamoDB limits the rate of writes to
+one user's rows (C8).
 
 **Cost per upload of this export** (AWS's published us-east-1 prices, from memory, not checked):
 DynamoDB writes of about 8,000 write units, roughly $0.005–0.01; about 50 S3 writes, negligible.
@@ -193,21 +212,16 @@ coding.
 ## 11. Questions for the user
 
 **Answered on 2026-10-06:** Q1 (withdrawn: flags move onto the message rows, §3); Q2 (the upload is
-deleted once processed, §7). The session files of the previous draft are dropped (the user).
+deleted once processed, §7); Q3 (SVGs drawn; web pages and code shown without running anything, with
+a download link, §4). The session files of the previous draft are dropped (the user).
 
-**Still open:**
-
-- **Q3 — Opening a web page or SVG that Claude made.** Show it as text (safe, but a web page shows
-  as code), or let the browser draw it? Drawn, it runs whatever the file contains. It would be
-  served from the file store's own address, not the app's, so it couldn't reach your sign-in. But
-  it is still running code from a conversation in your browser. Proposed: draw SVGs, show web pages
-  and code as text, with a "download" link for both.
+**Still open:** none.
 
 ## Self-critique log
 
 ### C1 [OPEN]: Two files of a batch processed at once can lose each other's messages
 Present in the code built on 2026-10-05 as well. **Mitigation in plan:** versioned conditional
-writes with a retry ([§7 (line 112)](2026-10-06-load-only-what-the-page-shows.md#L112)). **Open:** until
+writes with a retry ([§7 (line 125)](2026-10-06-load-only-what-the-page-shows.md#L125)). **Open:** until
 this plan is built, a batch whose files share conversations can lose added messages on AWS. Trigger:
 this plan's step 2.
 
@@ -219,7 +233,7 @@ this plan's step 2.
 measures them.
 
 ### C4 [RESOLVED]: The first estimates table mixed kinds of numbers
-**Resolution:** one table, the same four columns, absolute times ([§9 (line 140)](2026-10-06-load-only-what-the-page-shows.md#L140)).
+**Resolution:** one table, the same four columns, absolute times ([§9 (line 153)](2026-10-06-load-only-what-the-page-shows.md#L153)).
 
 ### C5 [RESOLVED]: Files and rows both holding messages
 **Resolution:** rows hold every message's text; the session files are dropped, and tool calls,
@@ -228,7 +242,7 @@ tool results and thinking are not kept (the user, 2026-10-06). Only files of §4
 
 ### C6 [RESOLVED]: The Calendar needed messages only to split a session's flags by day
 **Resolution:** a session's flags show on every day it touches; the counts are stored with the
-session ([§6 (line 102)](2026-10-06-load-only-what-the-page-shows.md#L102)).
+session ([§6 (line 115)](2026-10-06-load-only-what-the-page-shows.md#L115)).
 
 ### C7 [OPEN]: Deleting the upload loses what isn't kept, for good
 Tool calls, tool results and thinking are gone once the upload is deleted, and the annotated
@@ -247,3 +261,10 @@ per conversation to load them). Trigger: step 7's AWS measurement.
 ### C9 [OPEN]: A file Claude changed by running a command is kept at its last replayable version
 **Mitigation in plan:** such files are marked "may have been changed later" (§4). **Open:** if the
 user finds marked files wrong often, drop the replay and keep only the first version, or none.
+
+### C10 [RESOLVED]: The first AWS estimates ignored measurements that existed
+They put opening the timeline on AWS at 9 s and processing at 5 s, from a guessed slow-down. The
+activity run of 2026-10-05 had measured 37 s and 6 s, and sending the file, 26 s, was missing
+altogether. **Resolution:** §9 now starts from those measurements, lists what you wait for step by
+step, and derives the slow-down from them ([§9 (line 153)](2026-10-06-load-only-what-the-page-shows.md#L153)).
+
