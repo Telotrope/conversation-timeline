@@ -448,11 +448,46 @@ than Node; C11.
 
 ## 8. The scan
 
-`POST /detect` reads your message rows instead of the file, and works for up to **10 seconds**
+`POST /detect` reads your message rows instead of the file, and works for up to **5 seconds**
 before answering with how many conversations it has done of how many in total (the user's
-suggestion). The page asks again until all are done, so its bar shows a real percentage. Ten seconds
-keeps each request well inside the deployment's 30-second limit
-([template.yaml:148](../../infra/template.yaml#L148)).
+suggestion, at first 10 seconds). The page asks again until all are done, so its bar shows a real
+percentage. The budget is checked before starting each conversation, so a request can run past it
+by one conversation's work (the largest here, 366 messages, took about 4 s on AWS inside a 3.2 s
+median page, measured 2026-10-05); 5 seconds keeps the percentage moving well inside the 10-second
+rule of §8b, and each request well inside the deployment's 30-second limit
+([template.yaml:148](../../infra/template.yaml#L148)). Tests start the server with a shorter
+budget, so a small scan still takes several requests.
+
+## 8b. The display changes at least every 10 seconds while you wait
+
+The user's rule (2026-10-06): while the user waits, what the page shows changes at least every ten
+seconds. The published guidance agrees on the threshold and says nothing finer: ten seconds is
+about how long attention stays on a task, and past it users want a percent-done indicator, or they
+assume the system has stopped (Nielsen's response-time limits); a bar that moves steadily is
+preferred to one that stalls, and a stall with an explanation is better than a silent one
+(Harrison and others' progress-bar studies). No source found gives a required update interval
+below that. Since ten seconds is the limit itself, not a margin, every wait here changes its
+display far more often:
+
+| Wait | What changes | How often |
+|---|---|---|
+| Preparing the file (§7b) | "Preparing your file — reading" / "slimming" / "compressing", each with a clock | every second |
+| Sending | bytes and percentage (exists) | as bytes go, at least every second |
+| Processing | which attempt, and a clock (exists, `showWaitProgress`) | every second |
+| The scan | conversations done of total, and the percentage | each request, about every 5 s; a clock every second between them |
+| Opening the timeline | the conversation records and sessions: what has arrived of each, a percentage when the size is stated, and a clock | every second |
+| A page of Review, an analysis from the server | "Loading…" with a clock, after the first second | every second |
+
+**What happens today** (read in the code, 2026-10-06): opening the timeline shows
+"Preparing…" with an animated bar and fixed text for the whole `GET /export` (12.3 s measured on
+AWS) before any bytes arrive, so its text doesn't change for over ten seconds; the records request
+runs beside it with no display of its own. The scan updates after each page of 5 conversations,
+about every 3 s on AWS. The processing wait already ticks every second.
+
+**The clock** is one shared piece of the status line (`status-indicators.js`): any wait that has
+shown no new numbers for a second shows "— N s" after its label, rewritten every second, as the
+processing wait already does. The activity record notes the label once, not each tick (as now,
+`setLoadProgressLabel`).
 
 ## 9. Expected times
 
