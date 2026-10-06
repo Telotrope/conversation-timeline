@@ -468,18 +468,60 @@ system has stopped (Nielsen's response-time limits); a bar that moves steadily i
 that stalls, and a stall with an explanation is better than a silent one (Harrison and others'
 progress-bar studies). Waits that always end within ten seconds meet the rule without a bar.
 
-So every wait that can last longer is split into steps that can be measured, each expected to take
-well under ten seconds:
+**Estimates are not enough** (the user, 2026-10-06): a wait expected to take two seconds can take
+thirty on a slow computer, on a slow connection, or with ten times the data. So the rule is met by
+construction, not by estimate: **no wait contains a step whose length grows with the data, the
+computer or the connection.** Every wait is a loop over small units of fixed size, and reports
+after each unit, or once a second, whichever is later:
 
-| Wait | What the bar measures | Longest expected gap between moves |
+| Kind of work | The unit | How progress is known |
 |---|---|---|
-| Preparing the file (§7b) | bytes of the file read (`File.stream`), then bytes parsed, then conversations slimmed of the total, then bytes compressed. Parsing is done with **@streamparser/json** (MIT; to be confirmed from its licence file when vendored), which reads the file as a stream and reports how far it has got; a plain `JSON.parse` is one step that can't report anything, and could take several seconds on a slow computer (C11). All in a Web Worker | well under a second |
-| Sending | bytes sent (exists) | under a second |
-| Processing | the server records its steps in the upload's progress row, which the page already reads every second (`GET /uploads/{id}`): file read, parsed, conversations written of the total | parsing, about 2.5 s on AWS (estimated, §9) |
-| The scan | conversations done of the total, after each request | one request: the 5-second budget plus one conversation's work |
-| Opening the timeline | bytes of the conversation records, then of the sessions (both answers state their size) | under a second: about 160 KB in all |
-| The annotated download | conversations written of the total while the server builds it (reported like the scan: the page asks in parts), then bytes received | one part |
-| A page of Review, a server analysis | nothing: expected 0.3–2 s on AWS (§9). A search reading every message is the one that could grow past ten seconds (C17) | |
+| A transfer (sending, receiving) | the browser's own progress events | bytes of the stated size; every answer this server sends states its size |
+| Work in the browser (preparing the file, drawing the timeline) | a 64 KB piece of the file; one conversation; 200 sessions drawn | in a Web Worker for the file (§7b), or between animation frames for drawing; bytes or items of the total |
+| Work on the server for a request (the scan, Review's messages, a search, the two server analyses, the annotated download, the timeline's sessions) | one session's entries, and within a long session one 1 MB DynamoDB page | each request works for at most **2 seconds**, then answers with what it has and a **cursor** (where to carry on: a session and an entry key); the page asks again. Progress is sessions done of the total |
+| Processing an upload | one conversation, read from the file as a stream | the processing function records bytes of the file read, and conversations written, in the upload's progress row at least once a second; the page reads it every second (exists) |
+
+**Totals known in advance.** A bar needs a total. The user's record (which already holds the data
+version, §5c) also holds the counts of conversations, sessions, your messages and all messages,
+kept current by processing. A request that walks sessions reports "done of total" against them.
+
+**What this changes, wait by wait:**
+
+- **Opening the timeline.** `GET /conversations` and `GET /sessions` answer in parts (one DynamoDB
+  page each, about 1 MB), each with the total and a cursor; the bar is conversations, then
+  sessions, received of their totals, and between parts bytes of the part. Drawing the Calendar and
+  the Conversations tab then goes 200 sessions per animation frame, with the bar showing sessions
+  drawn.
+- **Review, any filter, including search** (closes C17's stall; its cost stays). The shared
+  `find_messages` (§5b) gains the 2-second budget and the cursor: it reads the admitted sessions in
+  key order, stops at the budget, and returns what it found with "sessions searched of sessions to
+  search". The page shows the first page of 50 as soon as it has 50 (or the search ends), with the
+  bar still moving below it until the search finishes; the page count is final only then, and says
+  "at least N pages" until it is.
+- **The two server analyses.** Computed in the same steps: each request adds the next sessions'
+  messages to a partial result kept in the analysis row (§5c) with its cursor, and answers with
+  sessions done of the total. Once finished, the row is the saved result, as before.
+- **The scan.** Its unit is one session, not one conversation, so one very long conversation can't
+  make a request run long; the budget becomes 2 seconds, like every other request.
+- **The annotated download.** Built in parts the same way into the file store, then received with
+  its size stated.
+- **Processing.** The file is parsed one conversation at a time (serde's streaming sequence access
+  over the decompressing reader), not in one call, so a large file is never one long step; the
+  progress row is written at least once a second with bytes read of the file's size and
+  conversations written.
+- **Preparing the file in the browser.** As before: a Web Worker, the file read as a stream and
+  parsed with **@streamparser/json** (MIT; to be confirmed from its licence file when vendored),
+  reporting bytes.
+
+**What it costs.** More requests: a search over 300 sessions that takes 6 seconds of server work is
+three requests instead of one, each with its own sign-in check and round trip (about 50–100 ms on
+AWS, from memory, not checked). Analysis rows hold partial results while being computed. The page's
+code for Review gains a loop it didn't have.
+
+**The one step left that can't be split:** a single entry. The largest message here is 18 KB, and
+DynamoDB refuses rows over 400 KB, so a row can't grow past that; reading or scanning one takes
+milliseconds. A single message too large to store is refused at processing with a message naming
+it.
 
 **What happens today** (read in the code, 2026-10-06):
 
