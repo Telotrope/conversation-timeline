@@ -142,6 +142,39 @@ by conversation and position, so a redo overwrites rather than duplicates.
 The added-messages pieces built on 2026-10-05 (`additions/…`) and `conversation_rebuild.rs` are
 replaced.
 
+## 7b. Slimming the file in the browser before sending it
+
+Today the page sends the user's file unchanged, as soon as Upload is pressed: 63.5 MB, 26 s on the
+user's connection (measured). Most of it is never kept (§2). So the page keeps only what the plan
+uses and sends that, compressed (the user's suggestion, 2026-10-06):
+
+- **Kept:** each conversation's id, name and times; each message's id, sender, time, attachments,
+  file references and review (`_claude_timeline_user`, so a re-uploaded annotated file keeps your
+  flags); its text pieces (type and text only); and the tool calls that write files
+  (`create_file`, `str_replace`, `visualize:show_widget`, `present_files`; their input only).
+- **Dropped:** tool results, every other tool call, thinking, citations, each piece's own
+  timestamps, the parent-message links, and the message-level `text` field. Claude's export holds
+  every message's text twice, there and in the text pieces; nothing in this project reads the
+  first copy (the server and page both take text from the pieces).
+- **The "may have been changed later" mark** (§4, C9) needs the shell commands, which are dropped.
+  So the page looks for later commands naming each created file while it still has the whole file,
+  and adds the mark to that file's `create_file` call before sending.
+- **Compressed** with the browser's built-in gzip compression (`CompressionStream`); the server
+  decompresses during processing with **flate2** (MIT or Apache-2.0; to be confirmed from its
+  licence file when added).
+
+Measured on 2026-10-06 in Node on this machine, with `real-flags.json`:
+
+| | Size | Time |
+|---|---|---|
+| The file as it is | 63.5 MB | |
+| Slimmed | 8.5 MB | parse 0.3–0.7 s, slim 0.1 s |
+| Slimmed and compressed (what is sent) | 2.6 MB | compress 0.4 s |
+
+At the user's measured 2.5 MB/s, sending 2.6 MB takes about 1 s instead of 26 s. The server then
+parses 8.5 MB instead of 63.5 MB, so processing gets faster too. Browsers may parse more slowly
+than Node; C11.
+
 ## 8. The scan
 
 `POST /detect` reads your message rows instead of the file, and works for up to **10 seconds**
@@ -169,8 +202,9 @@ S3 calls take 10–30 ms each.
 
 | What you wait for | Today, local | Today, AWS | After, local | After, AWS |
 |---|---|---|---|---|
-| **Sending the file** (63.5 MB) | 26 s | 26 s (measured) | 26 s | 26 s |
-| **Processing** (from the file arriving to Describe) | 1 s (measured) | 6 s (measured) | 2 s | 12 s |
+| **Preparing the file in the browser** (§7b) | none | none | 1.5 s | 1.5 s |
+| **Sending the file** | 26 s (63.5 MB) | 26 s (measured) | 1 s (2.6 MB) | 1 s |
+| **Processing** (from the file arriving to Describe) | 1 s (measured) | 6 s (measured) | 0.5 s | 6 s |
 | **Scanning, if ticked** | 15 s (measured) | 80 s (measured) | 1 s | 5 s |
 | **Opening the timeline** | 27 s | 37 s (measured, during an upload) | 0.1 s | 1 s |
 | …your messages, in the background | (included above) | (included above) | 0.5 s | 2 s |
@@ -178,11 +212,10 @@ S3 calls take 10–30 ms each.
 | **The annotated download** | 27 s | 37 s | 3 s | 5 s |
 
 So the wait from pressing Upload to Describe, with the scan ticked, goes from about 112 s on AWS
-today to about 43 s, of which 26 s is sending the file, which this plan doesn't change.
+today to about 14 s.
 
-Processing gets slower: it still parses the file once, then writes about 4,800 rows (25 per
-DynamoDB batch) and about 50 files, and may be slower still if DynamoDB limits the rate of writes to
-one user's rows (C8).
+Processing parses an eighth as much as today, then writes about 4,800 rows (25 per DynamoDB batch)
+and about 50 files; it may be slower if DynamoDB limits the rate of writes to one user's rows (C8).
 
 **Cost per upload of this export** (AWS's published us-east-1 prices, from memory, not checked):
 DynamoDB writes of about 8,000 write units, roughly $0.005–0.01; about 50 S3 writes, negligible.
@@ -200,6 +233,7 @@ DynamoDB writes of about 8,000 write units, roughly $0.005–0.01; about 50 S3 w
 4. **Routes.** `GET /sessions`, `GET /messages`, `GET /files/…`; the annotated download rebuilt
    from rows.
 5. **The scan.** Rows instead of the file; the 10-second budget.
+5b. **Slimming the upload** (§7b): in the page, and the server's decompression.
 6. **The page.** The timeline from conversations and sessions; your messages in the background;
    Claude's replies and file links on demand; the same session flags on each day a session touches.
 7. **Tests and measurements.** Every step tested as in the screen-flow plan; then §9 measured
@@ -233,7 +267,7 @@ this plan's step 2.
 measures them.
 
 ### C4 [RESOLVED]: The first estimates table mixed kinds of numbers
-**Resolution:** one table, the same four columns, absolute times ([§9 (line 153)](2026-10-06-load-only-what-the-page-shows.md#L153)).
+**Resolution:** one table, the same four columns, absolute times ([§9 (line 186)](2026-10-06-load-only-what-the-page-shows.md#L186)).
 
 ### C5 [RESOLVED]: Files and rows both holding messages
 **Resolution:** rows hold every message's text; the session files are dropped, and tool calls,
@@ -266,5 +300,11 @@ user finds marked files wrong often, drop the replay and keep only the first ver
 They put opening the timeline on AWS at 9 s and processing at 5 s, from a guessed slow-down. The
 activity run of 2026-10-05 had measured 37 s and 6 s, and sending the file, 26 s, was missing
 altogether. **Resolution:** §9 now starts from those measurements, lists what you wait for step by
-step, and derives the slow-down from them ([§9 (line 153)](2026-10-06-load-only-what-the-page-shows.md#L153)).
+step, and derives the slow-down from them ([§9 (line 186)](2026-10-06-load-only-what-the-page-shows.md#L186)).
+
+### C11 [OPEN]: Slimming is measured in Node, not in a browser
+Parsing the 63.5 MB file took 0.3–0.7 s in Node on this machine; a browser on a slower computer may
+take several seconds, and holds the whole file in memory meanwhile, as it already does today.
+**Open:** step 7 measures it in the user's browser. Trigger: if preparing takes over 10 s, slim on
+the server instead (sending the full file again).
 
