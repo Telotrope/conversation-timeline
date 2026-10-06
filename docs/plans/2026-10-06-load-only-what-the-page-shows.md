@@ -25,6 +25,8 @@ Measured on `real-flags.json` (61.8 MB):
 | Tool results (web searches 32.4 MB, fetched pages, command output) | 39.9 MB | no (the user, 2026-10-06) |
 | Tool calls (searches, commands, file edits) | 5.4 MB | no, except the files they made (§4) |
 | Claude's thinking | 0.7 MB | no |
+| Citations (2,446: a span of a reply's text and the web address it came from) | 0.52 MB | **yes**, shown in Review (§4c) |
+| Each message's link to the message it answers (`parent_message_uuid`) | 0.17 MB | **yes**: the only reliable way to tell which reply answers which message once a conversation branches (an edited or retried message keeps both versions; 11 times here) |
 | Your attachments (8, with their text extracted, up to 32 KB) | < 0.1 MB | **yes, as files** (§4) |
 | Files Claude wrote whose text is in the export (24 created files, 16 widgets) | ~1.5 MB | **yes, as files** (§4) |
 | Your uploaded files (90 references) and files Claude made by running scripts (118: Word, PNG, PowerPoint…) | names only; their contents are not in the export | names only |
@@ -35,7 +37,7 @@ Measured on `real-flags.json` (61.8 MB):
 |---|---|---|
 | Conversation records | DynamoDB `Conversations`, `CONV#…` (exists) | unchanged, plus a version number (§7) |
 | **Sessions** | `Conversations`, new `SESS#{conversation}#{n}` rows | conversation, start, end, message counts, flag counts (§6) |
-| **Messages** | `Conversations`, new `MSG#{conversation}#{message}` rows | conversation, session, sender, time, text, the names of files it mentions (§4), and, for yours, **its flags**: the automatic ones and your own as separate attributes |
+| **Messages** | `Conversations`, new `MSG#{conversation}#{message}` rows | conversation, session, sender, time, the message it answers, and its content in order: text pieces with their citations, and markers for the files it presented, where it presented them (§4). For yours, **its flags**: the automatic ones and your own as separate attributes |
 | **Files** | S3, new `files/{user}/{conversation}/{message}/{name}` | the files of §4 |
 | The `MessageFlags` table | **removed**: flags move onto the message rows | (its data was cleared on 2026-10-06) |
 | The uploaded file | S3 `raw/…` | **deleted once processed** (the user) |
@@ -72,9 +74,19 @@ The page can only keep what the export contains:
   Claude made by running scripts): the export holds only the name. The message row keeps the name,
   and Review shows it as "not included in the export".
 
-In Review, a message that made or presented files lists them under its text, each a link
-(`GET /files/{conversation}/{message}/{name}` answers with a short-lived download address).
-Opening one shows it on the page, **never running any code it contains** (the user, Q3), with a
+**Where the files appear.** Claude's export doesn't link a file to words in the reply (the reply
+text names the file in only 8 of the 142 files presented here). What it does record is where in the
+reply each file was presented: the presenting step sits between two paragraphs of the reply, with
+the file's name and type. So the files appear where Claude put them:
+
+- **In Review, inline in Claude's reply,** between the paragraphs where it presented them, as a card
+  with the file's name; a file whose contents aren't in the export says so on its card. Review shows
+  Claude's replies only with "Show Claude's replies" on.
+- **In the Conversations tab,** the open conversation lists every file Claude presented in it, each
+  linking to the reply that presented it in Review. So files can be found without reading replies.
+
+Opening a card (`GET /files/{conversation}/{message}/{name}` answers with a short-lived download
+address) shows the file on the page, **never running any code it contains** (the user, Q3), with a
 download link beside it:
 
 | Kind of file | Shown as | How |
@@ -88,6 +100,14 @@ download link beside it:
 Considered and not chosen: converting web pages to Markdown with **Turndown** (MIT) and showing that.
 It reads well for text-heavy pages but drops layout, tables' styling and drawings, which the
 sandboxed frame keeps; it stays an option if the frame turns out awkward.
+
+## 4c. Citations
+
+A citation marks a span of a reply's text (its start and end positions) and the web address it came
+from. Review shows each cited span with a small numbered link after it to the address; the address
+opens in a new tab. The positions refer to the raw text, before Markdown formatting, so the markers
+are placed before the text is formatted. Citations are kept in the message rows with their text
+pieces, and are part of the annotated download.
 
 ## 5. What the page loads
 
@@ -148,14 +168,16 @@ Today the page sends the user's file unchanged, as soon as Upload is pressed: 63
 user's connection (measured). Most of it is never kept (§2). So the page keeps only what the plan
 uses and sends that, compressed (the user's suggestion, 2026-10-06):
 
-- **Kept:** each conversation's id, name and times; each message's id, sender, time, attachments,
-  file references and review (`_claude_timeline_user`, so a re-uploaded annotated file keeps your
-  flags); its text pieces (type and text only); and the tool calls that write files
-  (`create_file`, `str_replace`, `visualize:show_widget`, `present_files`; their input only).
-- **Dropped:** tool results, every other tool call, thinking, citations, each piece's own
-  timestamps, the parent-message links, and the message-level `text` field. Claude's export holds
-  every message's text twice, there and in the text pieces; nothing in this project reads the
-  first copy (the server and page both take text from the pieces).
+- **Kept:** each conversation's id, name and times; each message's id, the message it answers,
+  sender, time, attachments, file references and review (`_claude_timeline_user`, so a re-uploaded
+  annotated file keeps your flags); its text pieces with their citations; and the tool calls that
+  write or present files (`create_file`, `str_replace`, `visualize:show_widget`, `present_files`;
+  their input only), in their place among the text pieces.
+- **Dropped:** tool results, every other tool call, thinking, each piece's own timestamps, and the
+  message-level `text` field. That field is not a summary: it is the message's text pieces joined
+  together, with the placeholder "This block is not supported on your current device yet." wherever
+  a tool call or file sat, which is why it is longer than the pieces. Nothing in this project reads
+  it (the server and page both take text from the pieces).
 - **The "may have been changed later" mark** (§4, C9) needs the shell commands, which are dropped.
   So the page looks for later commands naming each created file while it still has the whole file,
   and adds the mark to that file's `create_file` call before sending.
@@ -168,11 +190,11 @@ Measured on 2026-10-06 in Node on this machine, with `real-flags.json`:
 | | Size | Time |
 |---|---|---|
 | The file as it is | 63.5 MB | |
-| Slimmed | 8.5 MB | parse 0.3–0.7 s, slim 0.1 s |
-| Slimmed and compressed (what is sent) | 2.6 MB | compress 0.4 s |
+| Slimmed | 9.3 MB | parse 0.3–0.7 s, slim 0.1 s |
+| Slimmed and compressed (what is sent) | 2.8 MB | compress 0.3 s |
 
-At the user's measured 2.5 MB/s, sending 2.6 MB takes about 1 s instead of 26 s. The server then
-parses 8.5 MB instead of 63.5 MB, so processing gets faster too. Browsers may parse more slowly
+At the user's measured 2.5 MB/s, sending 2.8 MB takes about 1 s instead of 26 s. The server then
+parses 9.3 MB instead of 63.5 MB, so processing gets faster too. Browsers may parse more slowly
 than Node; C11.
 
 ## 8. The scan
@@ -203,7 +225,7 @@ S3 calls take 10–30 ms each.
 | What you wait for | Today, local | Today, AWS | After, local | After, AWS |
 |---|---|---|---|---|
 | **Preparing the file in the browser** (§7b) | none | none | 1.5 s | 1.5 s |
-| **Sending the file** | 26 s (63.5 MB) | 26 s (measured) | 1 s (2.6 MB) | 1 s |
+| **Sending the file** | 26 s (63.5 MB) | 26 s (measured) | 1 s (2.8 MB) | 1 s |
 | **Processing** (from the file arriving to Describe) | 1 s (measured) | 6 s (measured) | 0.5 s | 6 s |
 | **Scanning, if ticked** | 15 s (measured) | 80 s (measured) | 1 s | 5 s |
 | **Opening the timeline** | 27 s | 37 s (measured, during an upload) | 0.1 s | 1 s |
@@ -234,6 +256,8 @@ DynamoDB writes of about 8,000 write units, roughly $0.005–0.01; about 50 S3 w
    from rows.
 5. **The scan.** Rows instead of the file; the 10-second budget.
 5b. **Slimming the upload** (§7b): in the page, and the server's decompression.
+5c. **Files and citations in Review** (§4, §4c): file cards in place in Claude's replies, the
+   Conversations tab's list of a conversation's files, numbered citation links.
 6. **The page.** The timeline from conversations and sessions; your messages in the background;
    Claude's replies and file links on demand; the same session flags on each day a session touches.
 7. **Tests and measurements.** Every step tested as in the screen-flow plan; then §9 measured
@@ -255,28 +279,28 @@ a download link, §4). The session files of the previous draft are dropped (the 
 
 ### C1 [OPEN]: Two files of a batch processed at once can lose each other's messages
 Present in the code built on 2026-10-05 as well. **Mitigation in plan:** versioned conditional
-writes with a retry ([§7 (line 125)](2026-10-06-load-only-what-the-page-shows.md#L125)). **Open:** until
+writes with a retry ([§7 (line 145)](2026-10-06-load-only-what-the-page-shows.md#L145)). **Open:** until
 this plan is built, a batch whose files share conversations can lose added messages on AWS. Trigger:
 this plan's step 2.
 
 ### C2 [RESOLVED]: Your messages in one file would race too
-**Resolution:** one database row per message ([§3 (line 32)](2026-10-06-load-only-what-the-page-shows.md#L32)).
+**Resolution:** one database row per message ([§3 (line 34)](2026-10-06-load-only-what-the-page-shows.md#L34)).
 
 ### C3 [OPEN]: The estimates are not measurements
 §9's figures, other than those marked measured, are estimates on stated assumptions. **Open:** step 7
 measures them.
 
 ### C4 [RESOLVED]: The first estimates table mixed kinds of numbers
-**Resolution:** one table, the same four columns, absolute times ([§9 (line 186)](2026-10-06-load-only-what-the-page-shows.md#L186)).
+**Resolution:** one table, the same four columns, absolute times ([§9 (line 208)](2026-10-06-load-only-what-the-page-shows.md#L208)).
 
 ### C5 [RESOLVED]: Files and rows both holding messages
 **Resolution:** rows hold every message's text; the session files are dropped, and tool calls,
 tool results and thinking are not kept (the user, 2026-10-06). Only files of §4 are stored
-([§4 (line 59)](2026-10-06-load-only-what-the-page-shows.md#L59)).
+([§4 (line 61)](2026-10-06-load-only-what-the-page-shows.md#L61)).
 
 ### C6 [RESOLVED]: The Calendar needed messages only to split a session's flags by day
 **Resolution:** a session's flags show on every day it touches; the counts are stored with the
-session ([§6 (line 115)](2026-10-06-load-only-what-the-page-shows.md#L115)).
+session ([§6 (line 135)](2026-10-06-load-only-what-the-page-shows.md#L135)).
 
 ### C7 [OPEN]: Deleting the upload loses what isn't kept, for good
 Tool calls, tool results and thinking are gone once the upload is deleted, and the annotated
@@ -300,7 +324,7 @@ user finds marked files wrong often, drop the replay and keep only the first ver
 They put opening the timeline on AWS at 9 s and processing at 5 s, from a guessed slow-down. The
 activity run of 2026-10-05 had measured 37 s and 6 s, and sending the file, 26 s, was missing
 altogether. **Resolution:** §9 now starts from those measurements, lists what you wait for step by
-step, and derives the slow-down from them ([§9 (line 186)](2026-10-06-load-only-what-the-page-shows.md#L186)).
+step, and derives the slow-down from them ([§9 (line 208)](2026-10-06-load-only-what-the-page-shows.md#L208)).
 
 ### C11 [OPEN]: Slimming is measured in Node, not in a browser
 Parsing the 63.5 MB file took 0.3–0.7 s in Node on this machine; a browser on a slower computer may
