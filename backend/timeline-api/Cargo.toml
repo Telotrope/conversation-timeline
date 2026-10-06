@@ -50,3 +50,4 @@ s3s = "0.17"
 s3s-fs = "0.17"
 tempfile = "3.27.0"
 hyper-util = { version = "0.1.21", features = ["server-auto", "tokio", "http1"] }
+flate2 = "1"

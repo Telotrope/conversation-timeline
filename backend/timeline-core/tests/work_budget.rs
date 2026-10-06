@@ -38,3 +38,10 @@ fn a_clock_budget_allows_steps_until_its_time_is_up() {
 fn the_server_starts_no_step_after_9_seconds() {
     assert_eq!(REQUEST_WORK_LIMIT, Duration::from_secs(9));
 }
+
+/// A flag save's recount is never split (§8c): its budget doesn't run out.
+#[test]
+fn an_unlimited_budget_allows_every_step() {
+    let mut budget = timeline_core::work_budget::WorkBudget::unlimited();
+    assert!((0..100_000).all(|_| budget.take_step()));
+}

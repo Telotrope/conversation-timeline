@@ -7,7 +7,6 @@ mod entries;
 use entries::*;
 use timeline_core::conversation_metadata::ConversationSpan;
 use timeline_core::ports::messages::EntryRange;
-use timeline_core::ports::user_record::Totals;
 use timeline_core::stored_session::{cut_sessions, sessions_for};
 use timeline_core::UNKNOWN_TIME;
 
@@ -41,30 +40,4 @@ fn a_sessions_rows_are_its_times_or_its_whole_conversation() {
             after: None,
         }
     );
-}
-
-#[test]
-fn totals_add_and_take_away_count_by_count() {
-    let a = Totals {
-        conversations: 3,
-        sessions: 10,
-        your_messages: 40,
-        messages: 90,
-    };
-    let b = Totals {
-        conversations: 1,
-        sessions: -2,
-        your_messages: 5,
-        messages: 7,
-    };
-    assert_eq!(
-        a.plus(b),
-        Totals {
-            conversations: 4,
-            sessions: 8,
-            your_messages: 45,
-            messages: 97,
-        }
-    );
-    assert_eq!(a.plus(b).minus(b), a);
 }

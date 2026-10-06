@@ -203,3 +203,19 @@ fn a_loop_in_the_links_ends_the_path() {
     let pruned = prune_replaced_branches(&c);
     assert_eq!(ids(&pruned.kept), vec![id(1), id(2)]);
 }
+
+/// With a message of unknown time the most recent message can't be found,
+/// and the unknown one would look like the oldest: the conversation is left
+/// whole rather than pruned (plan §4e).
+#[test]
+fn a_conversation_with_a_message_of_unknown_time_is_left_whole() {
+    let mut c = conversation(&[
+        (1, 0, "human", 0, "a"),
+        (2, 1, "assistant", 1, "b"),
+        (3, 0, "human", 2, "resent"),
+    ]);
+    c.chat_messages[1].created_at = timeline_core::UNKNOWN_TIME;
+    let pruned = prune_replaced_branches(&c);
+    assert_eq!(ids(&pruned.kept), vec![id(1), id(2), id(3)]);
+    assert!(pruned.branches.is_empty());
+}
