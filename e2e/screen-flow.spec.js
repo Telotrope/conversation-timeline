@@ -485,3 +485,30 @@ test('with the browser\'s storage blocked, the page still asks you to sign in, a
   await page.click('#accountSignOutBtn');
   await expect(page.locator('#signInPage')).toBeVisible();
 });
+
+test('during the scan only Stop shows, Back is refused, and Stop moves on to Describe', async ({ page }) => {
+  await page.goto(TIMELINE_HTML);
+  await signInToUpload(page, uniqueSub());
+  // From the timeline, so Back has a page of this app to go back to (on a
+  // first visit the Upload page is the only entry, and Back leaves the app).
+  await uploadAndFinish(page, [file('first.json', [chat('First', '2026-01-01')])]);
+  await page.click('#addConversationsBtn');
+  // Each scan request held for a moment, so the scan can be watched.
+  await page.route(`${API_BASE}/detect`, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    await route.continue();
+  });
+  await page.check('#autoDetectCheckbox');
+  await uploadFiles(page, [file('many.json', Array.from({ length: 12 }, (_, i) => chat(`Chat ${i}`, '2026-01-01')))]);
+  await expect(page.locator('#loadStatus')).toHaveText('Scanning your messages for flags…', { timeout: 30_000 });
+  await expect(page.locator('#stopBtn')).toBeVisible();
+  await expect(page.locator('#loadBtn')).toBeHidden();
+  await expect(page.locator('#uploadBackBtn')).toBeHidden();
+
+  await page.goBack();
+  await expect(page.locator('#loadStatus')).toHaveText('Your files are still being sent; press Stop to stop.');
+  await expect(page.locator('#uploadPage')).toBeVisible();
+
+  await page.click('#stopBtn');
+  await expect(page.locator('#describePage')).toBeVisible({ timeout: 30_000 });
+});
