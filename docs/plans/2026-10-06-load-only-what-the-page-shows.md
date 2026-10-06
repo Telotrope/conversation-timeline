@@ -190,7 +190,7 @@ load only as a view shows them. Each view asks the server for what it draws:
 | Opening the timeline | `GET /conversations` (exists) | conversation records | 73 KB |
 | | `GET /sessions` (new) | every session, with its flag counts | ~90 KB |
 | Opening Review, or changing its filters, search or page | `GET /messages?…` (new, §5b) | one page of 50 of your messages with their flags, the number of pages, and, with "Show Claude's replies" on, the reply that follows each of the 50 | ~15 KB; with replies ~150 KB |
-| Opening Analytics, or changing an analysis's options | `GET /analyses/{name}?…` (new, §5c) | that analysis's numbers | < 50 KB |
+| Opening "Flag rate over time" or "Time of day", or changing their options | `GET /analyses/{name}?…` (new, §5c) | that analysis's numbers | < 10 KB |
 | Opening a conversation in the Conversations tab | `GET /conversations/{id}/files` (new) | the files Claude presented in it (§4) | small |
 | A file's link in Review | `GET /files/…` (new) | a download address for it | |
 | "Download annotated…" | `GET /export` (exists, rebuilt) | conversations from the rows: text, flags and file names | ~6.5 MB |
@@ -204,9 +204,9 @@ analysis).
 **What changes for the page.** It no longer holds `state.humanMessages` or any message text beyond
 the page of Review on screen. A flag checkbox saves as now, then asks for the same page again (and
 the sessions, whose counts changed). The Review code that filters, sorts and pages
-([review.js:44](../../frontend/ui/views/review.js#L44), `getFilteredHumanMessages`) and the
-analyses' arithmetic ([analyses.js](../../frontend/core/analyses.js)) move to the server; drawing
-the table and the charts (SVG) stays in the page.
+([review.js:44](../../frontend/ui/views/review.js#L44), `getFilteredHumanMessages`) and two of the
+five analyses move to the server; the other three analyses are computed in the page from the
+sessions (§5c), and drawing the table and the charts (SVG) stays in the page.
 
 **The annotated download changes.** It no longer reproduces the export, since tool calls, tool
 results and thinking are not kept. It holds every conversation's messages as text, with your flags
@@ -270,60 +270,66 @@ DynamoDB calls, about 128 read units per search, so about 3 cents per thousand s
 on-demand prices ($0.25 per million read units, from memory, not checked). One conversation, one day, or one flag reads only the
 sessions that can match. It grows with how much you have written; C17 says when to add an index.
 
-## 5c. Analytics on the server, saved
+## 5c. Analytics: three in the page from sessions, two on the server, saved
 
-The five analyses ([analyses.js](../../frontend/core/analyses.js)) are computed by the server and
-saved (the user, 2026-10-06); the page draws their charts. Every flag rate is "messages with any of
-the three flags" over the counted messages (`isFlagged` and `countsTowardRates`,
-[flags.js:76-85](../../frontend/core/flags.js#L76-L85)); the session counts don't store "any of the
-three" (§6), so every analysis reads messages the first time it is computed after a change, and the
-saved result serves the rest. What each needs, as read in that file:
+Every flag rate is "messages with any of the three flags" over the counted messages (`isFlagged`
+and `countsTowardRates`, [flags.js:76-85](../../frontend/core/flags.js#L76-L85)). The session rows
+store both numbers for each view (§6), so the three analyses built from sessions run in the page
+from the sessions it loads when the timeline opens, with no request (the user, 2026-10-06). The two
+built from each message's own time are computed by the server and saved (the user, 2026-10-06);
+the page draws every chart. As read in [analyses.js](../../frontend/core/analyses.js):
 
-| Analysis | Needs | From |
+| Analysis | Needs | Where |
 |---|---|---|
-| Friction ranking, by conversation or by session | flagged (any of the three) and counted messages per conversation or session | `find_messages`, view only, counted per session |
-| Session length vs. flag rate | each session's length and rate | sessions, and `find_messages` for the rates |
-| Idle time before a session | gaps between a conversation's sessions, and rates | sessions, and `find_messages` for the rates |
-| Flag rate over time (week or month) | each message's local date and flags | `find_messages`, view only |
-| Time of day and day of week | each message's local hour and weekday and flags | `find_messages`, view only |
+| Friction ranking, by session | each session's "any of the three" over its counted messages | **the page**, from the session counts |
+| Friction ranking, by conversation | the same, added up over a conversation's sessions: exact, since each of your messages belongs to exactly one session ([flags.js:35-60](../../frontend/core/flags.js#L35-L60)) | **the page**, from the session counts |
+| Session length vs. flag rate | each session's length and rate | **the page**, from the sessions |
+| Idle time before a session | gaps between a conversation's sessions, and each session's rate | **the page**, from the sessions |
+| Flag rate over time (week or month) | each message's local date and flags; a session can cross the end of a week or month | **the server**: `find_messages`, view only |
+| Time of day and day of week | each message's local hour and weekday and flags | **the server**: `find_messages`, view only |
+
+The three in the page keep their code in [analyses.js](../../frontend/core/analyses.js), reading a
+session's stored counts instead of its messages (`sessionRate`, line 34, and the by-conversation
+loop, line 46, change; nothing else does). With only your flags shown, a session's counted messages
+are its reviewed messages, as today.
 
 **The time zone.** Weeks, months, hours and weekdays are local to the viewer, so the page sends its
 time zone's name (`Intl.DateTimeFormat().resolvedOptions().timeZone`, for example
 `America/New_York`), and the server converts with **chrono-tz** (MIT or Apache-2.0; to be confirmed
 from its licence file when added; `chrono` itself is already used). The week rule (weeks starting
-Sunday, numbered from 1 January) is ported exactly.
+Sunday, numbered from 1 January) is ported exactly. (The three analyses in the page use the
+page's own time zone, as now.)
 
-**Saving.** A result is saved in an `ANALYSIS#…` row (§3) keyed by the analysis, its options, the
+**Saving the two server analyses.** A result is saved in an `ANALYSIS#…` row (§3) keyed by the analysis, its options, the
 view and the time zone, together with the user's data version at the time. The data version is
 raised by every upload, flag save and scan. A request whose saved row has the current version gets
-it back at once; otherwise the server computes it, saves it and returns it. So the first Analytics
-visit after a change computes, and later ones don't.
+it back at once; otherwise the server computes it, saves it and returns it. So the first visit to
+either after a change computes, and later ones don't.
 
-**What the page gets.** Numbers and identifiers (conversation ids, session start and end), not
+**What the page gets from the server.** Numbers and identifiers (conversation ids, session start and end), not
 text: labels such as "Conversation — Tuesday 4 August" are formatted in the page as now, since day
 headings depend on the viewer's language settings. The page keeps `pearsonR`, the chart drawing
 ([charts.js](../../frontend/ui/render/charts.js)) and the click-through to Review.
 
 ## 6. Session flag counts
 
-Each session row stores eleven numbers, so that the Calendar, the Conversations tab and the flag
-filter (§5b) never read messages:
+Each session row stores fourteen numbers, so that the Calendar, the Conversations tab, the flag
+filter (§5b) and three of the analyses (§5c) never read messages:
 
 - **your messages** in the session;
 - **your reviewed messages** (with a value of yours for any flag; the same set as "overridden",
-  §5b), which is also a rate's denominator when only your flags are shown;
+  §5b), which is a rate's denominator when only your flags are shown;
 - for each view that shows anything (automatic only, yours only, both with yours winning), the
-  messages with **critical**, **angry** and **ALL-CAPS**: nine numbers.
+  messages with **critical**, **angry**, **ALL-CAPS**, and **any of the three**: twelve numbers.
 
 With neither switch on, every count is zero and there is no rate, as today.
 
-"Any of the three" is not stored (the user, 2026-10-06). The page never shows it as a count: the
-Calendar and the Conversations tab show each flag's count separately
-([conversations.js:81-89](../../frontend/ui/views/conversations.js#L81-L89),
-[calendar.js:50](../../frontend/ui/views/calendar.js#L50)). It is used in two places only: the
-"Flagged" filter, which can still rule out a session whose three flag counts are all zero (§5b);
-and every analysis's flag rate, which the server computes from messages and saves (§5c). It can't
-be added up from the three counts, since one message can carry two flags.
+"Any of the three" is never shown as a count (the Calendar and the Conversations tab show each
+flag's count separately: [conversations.js:81-89](../../frontend/ui/views/conversations.js#L81-L89),
+[calendar.js:50](../../frontend/ui/views/calendar.js#L50)). It is stored because it is the top of
+every flag rate, and it can't be added up from the three counts, since one message can carry two
+flags. Storing it lets three analyses run in the page (§5c); the user briefly chose eleven numbers
+without it, then restored it on 2026-10-06 once this was shown.
 
 They change whenever a flag does:
 
@@ -450,7 +456,8 @@ and the function's start. It is a guess until step 7 times each step; more memor
 | **A page of Review** (filters, search or page changed) | already loaded | already loaded | 0.1 s | 0.3–1 s |
 | …a search with no other filter (reads every message) | already loaded | already loaded | 0.2 s | 1–2 s |
 | …with Claude's replies on | already loaded | already loaded | 0.2 s | 0.5–1 s |
-| **An analysis**, first time after a change | under 1 s, in the page | under 1 s, in the page | 0.3 s | 1–2 s |
+| **Friction, session length, idle time** (in the page, from sessions) | under 1 s, in the page | under 1 s, in the page | instant | instant |
+| **Rate over time, time of day**, first time after a change | under 1 s, in the page | under 1 s, in the page | 0.3 s | 1–2 s |
 | …saved | | | 0.05 s | 0.2 s |
 | **The annotated download** | 27 s | 37 s | 3 s | 5 s |
 
@@ -472,19 +479,20 @@ DynamoDB writes of about 8,000 write units, roughly $0.005–0.01; about 50 S3 w
    up to 16 batches at a time; step durations in its log line; the files of §4 extracted; the upload
    deleted when done; the additions and `conversation_rebuild.rs` replaced.
 3. **Flags and their counts.** `FlagView`'s rules on the server; flag saves and the scan writing
-   message rows; the eleven session counts kept current; the data version raised.
+   message rows; the fourteen session counts kept current; the data version raised.
 4. **Finding messages** (§5b). `MessageFilter` and `find_messages`, then the routes on them:
    `GET /messages`, `GET /sessions`, `GET /conversations/{id}/files`, `GET /files/…`; the annotated
    download rebuilt from rows.
-4b. **Analytics** (§5c). The five analyses on the server, the time zone, saved results.
+4b. **Analytics** (§5c). Rate over time and time of day on the server, with the time zone and saved
+   results; the other three analyses in the page reading the session counts.
 5. **The scan.** Rows instead of the file; the 10-second budget.
 5b. **Slimming the upload** (§7b): in the page, and the server's decompression.
 5d. **Replaced branches** (§4d): pruning and notes in processing; notes in sessions and Review.
 5c. **Files and citations in Review** (§4, §4c): file cards in place in Claude's replies, the
    Conversations tab's list of a conversation's files, numbered citation links.
 6. **The page.** The timeline from conversations and sessions; Review a page at a time from
-   `GET /messages`; Analytics from `GET /analyses`; the same session flags on each day a session
-   touches; `state.humanMessages` and the page's filtering and analysis arithmetic removed.
+   `GET /messages`; two analyses from `GET /analyses`, three from the sessions; the same session flags on each day a session
+   touches; `state.humanMessages`, the page's filtering and the two moved analyses removed.
 7. **Tests and measurements.** Every step tested as in the screen-flow plan; then §9 measured
    locally and, after a deployment, on AWS, with processing at 512 MB and 1,769 MB, and written up
    as an analysis.
@@ -503,7 +511,8 @@ a download link, §4). The session files of the previous draft are dropped (the 
 
 **Also decided on 2026-10-06:** messages load only as a view shows them (§5); Review's filters
 and search run on the server, narrowed by sessions first, through code shared by every route that
-reads messages (§5b); analyses are computed on the server and saved, charts drawn in the page (§5c).
+reads messages (§5b); the two analyses that need each message's time are computed on the server and
+saved, the other three in the page from the session counts, and every chart drawn in the page (§5c).
 
 **Still open:** none.
 
@@ -511,7 +520,7 @@ reads messages (§5b); analyses are computed on the server and saved, charts dra
 
 ### C1 [OPEN]: Two files of a batch processed at once can lose each other's messages
 Present in the code built on 2026-10-05 as well. **Mitigation in plan:** versioned conditional
-writes with a retry ([§7 (line 335)](2026-10-06-load-only-what-the-page-shows.md#L335)). **Open:** until
+writes with a retry ([§7 (line 341)](2026-10-06-load-only-what-the-page-shows.md#L341)). **Open:** until
 this plan is built, a batch whose files share conversations can lose added messages on AWS. Trigger:
 this plan's step 2.
 
@@ -523,7 +532,7 @@ this plan's step 2.
 measures them.
 
 ### C4 [RESOLVED]: The first estimates table mixed kinds of numbers
-**Resolution:** one table, the same four columns, absolute times ([§9 (line 419)](2026-10-06-load-only-what-the-page-shows.md#L419)).
+**Resolution:** one table, the same four columns, absolute times ([§9 (line 425)](2026-10-06-load-only-what-the-page-shows.md#L425)).
 
 ### C5 [RESOLVED]: Files and rows both holding messages
 **Resolution:** rows hold every message's text; the session files are dropped, and tool calls,
@@ -532,7 +541,7 @@ tool results and thinking are not kept (the user, 2026-10-06). Only files of §4
 
 ### C6 [RESOLVED]: The Calendar needed messages only to split a session's flags by day
 **Resolution:** a session's flags show on every day it touches; the counts are stored with the
-session ([§6 (line 307)](2026-10-06-load-only-what-the-page-shows.md#L307)).
+session ([§6 (line 314)](2026-10-06-load-only-what-the-page-shows.md#L314)).
 
 ### C7 [OPEN]: Deleting the upload loses what isn't kept, for good
 Tool calls, tool results and thinking are gone once the upload is deleted, and the annotated
@@ -556,7 +565,7 @@ user finds marked files wrong often, drop the replay and keep only the first ver
 They put opening the timeline on AWS at 9 s and processing at 5 s, from a guessed slow-down. The
 activity run of 2026-10-05 had measured 37 s and 6 s, and sending the file, 26 s, was missing
 altogether. **Resolution:** §9 now starts from those measurements, lists what you wait for step by
-step, and derives the slow-down from them ([§9 (line 419)](2026-10-06-load-only-what-the-page-shows.md#L419)).
+step, and derives the slow-down from them ([§9 (line 425)](2026-10-06-load-only-what-the-page-shows.md#L425)).
 
 ### C11 [OPEN]: Slimming is measured in Node, not in a browser
 Parsing the 63.5 MB file took 0.3–0.7 s in Node on this machine; a browser on a slower computer may
@@ -576,20 +585,20 @@ It loaded all your messages in the background and all of Claude's replies at onc
 per conversation had been discussed, and it said neither that it departed from that nor why. Holding
 everything costs memory without limit as history grows, start-up time and data, stale copies, and
 exposure of every message to whatever else runs in the tab. **Resolution:** views ask for what they
-draw; Review a page at a time, Analytics as saved numbers
+draw; Review a page at a time, two analyses as saved numbers, three from the sessions
 ([§5 (line 182)](2026-10-06-load-only-what-the-page-shows.md#L182)).
 
 ### C14 [RESOLVED]: Nine session counts could not serve the "Flagged" filter or a rate
 "Flagged" is any of three flags, which can't be added up from per-flag counts, and a rate with only
 your flags shown is over your reviewed messages, which weren't counted. **Resolution:** the
-messages and your reviewed messages are counted; "any of the three" is not stored (the user,
-2026-10-06), since it is never shown as a count, the "Flagged" filter can use the three flag
-counts, and the analyses compute rates from messages and save them: eleven numbers ([§6 (line 307)](2026-10-06-load-only-what-the-page-shows.md#L307)).
+messages, your reviewed messages and "any of the three" are counted per view: fourteen numbers.
+The user briefly dropped "any of the three" (2026-10-06), as it is never shown as a count, and
+restored it once it was shown to let three analyses run in the page without a request ([§6 (line 314)](2026-10-06-load-only-what-the-page-shows.md#L314)).
 
 ### C15 [RESOLVED]: Processing on AWS was put at 6 s after the change without a reason
 **Resolution:** the estimate is derived (parsing at the measured AWS ratio, parallel writes), the
 log line gains step durations, and step 7 tries more memory
-([§7 (line 335)](2026-10-06-load-only-what-the-page-shows.md#L335)).
+([§7 (line 341)](2026-10-06-load-only-what-the-page-shows.md#L341)).
 
 ### C16 [RESOLVED]: Analyses on the server don't know the viewer's day, week or hour
 **Resolution:** the page sends its time zone; results are saved per time zone
