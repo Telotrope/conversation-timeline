@@ -594,7 +594,13 @@ flag was saved elsewhere), so the page starts that request over from the beginni
 | `GET /messages` (Review: any filter, search) | the same filters and the cursor | only what the page needs to show and to page: the rows of the page on screen, how many matches so far, and **for each page of 50 its starting cursor**, so "page 7" asks the server to carry on from page 7's cursor and collect 50, without the page ever holding every match. Until the search finishes, the page count reads "at least N pages" |
 | `POST /detect` (the scan) | the cursor | nothing: flags are written as the scan goes; only the bar's numbers |
 | `GET /analyses/{name}` (the two server analyses) | the same options; no cursor | nothing. **This one keeps state on the server**: the partial result and its cursor are kept in the analysis's own row (§5c), keyed by the analysis, its options, the view and the time zone, so any request with the same options carries on from it; a finished row is the saved result |
+| `GET /uploads` (the Files tab) | the cursor | the files received so far (it keeps these anyway) |
+| `PUT /uploads/{id}/metadata` (editing a file's details, which rewrites every conversation from that file) | the same edit and the cursor | nothing; the bar is conversations updated of the file's total. Between parts, some of the file's conversations have the new details and some the old; Describe stays busy until the last part, and a stopped edit is finished by pressing Done again (the edit is the same, so repeating it is harmless) |
 | `GET /export` (the annotated download) | the cursor | the parts received so far, joined into the file as a `Blob` in the page and saved when the last part arrives. Each part is also capped at 4 MB, under Lambda's 6 MB limit on an answer |
+
+**Not split: a flag save.** It recounts its whole session, which grows with the session's length
+(the largest here has 112 messages). Splitting it would leave the session's counts half-updated
+between parts, so it stays one request (the user, 2026-10-06); step 12 measures the longest one.
 
 **Stop and leaving the page.** The page stops asking; nothing on the server is left running (each
 request has already answered). A half-computed analysis row is carried on by the next request
