@@ -31,6 +31,11 @@ use crate::request_record::note;
 /// Records read from storage at a time.
 const PAGE: usize = 100;
 
+/// The most records one part holds, about 1 MB: the time limit alone
+/// wouldn't keep a part under Lambda's 6 MB limit on an answer for a user
+/// with very many conversations.
+pub const MAX_PER_PART: usize = 1_000;
+
 #[derive(Deserialize)]
 pub struct PartQuery {
     pub cursor: Option<String>,
@@ -64,7 +69,7 @@ pub async fn list_conversations(
         let page = store.list_page(&user_id, after, PAGE).await?;
         let full = page.len() == PAGE;
         for summary in page {
-            if !budget.take_step() {
+            if conversations.len() >= MAX_PER_PART || !budget.take_step() {
                 break 'reading false;
             }
             after = Some(summary.conversation_id);

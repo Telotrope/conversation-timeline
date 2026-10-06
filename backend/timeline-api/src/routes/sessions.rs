@@ -22,6 +22,11 @@ use crate::routes::conversations::PartQuery;
 /// Sessions read from storage at a time.
 const PAGE: usize = 200;
 
+/// The most sessions one part holds, about 1 MB: the time limit alone
+/// wouldn't keep a part under Lambda's 6 MB limit on an answer for a user
+/// with very many sessions.
+pub const MAX_PER_PART: usize = 2_000;
+
 #[derive(Serialize)]
 pub struct SessionsPart {
     pub sessions: Vec<StoredSession>,
@@ -49,7 +54,7 @@ pub async fn list_sessions(
         let page = store.sessions_page(&user_id, after, PAGE).await?;
         let full = page.len() == PAGE;
         for session in page {
-            if !budget.take_step() {
+            if sessions.len() >= MAX_PER_PART || !budget.take_step() {
                 break 'reading false;
             }
             after = Some(session.key());

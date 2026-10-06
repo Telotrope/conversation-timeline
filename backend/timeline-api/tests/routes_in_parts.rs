@@ -334,3 +334,37 @@ async fn review_stops_with_its_rows_full_inside_a_session() {
     assert_eq!(second["rows"][0]["message_id"], msg(1, 51));
     assert_eq!(second["cursor"], Value::Null);
 }
+
+/// A part holds at most 2,000 sessions or 1,000 records, whatever time is
+/// left, so it stays far under Lambda's 6 MB limit on an answer.
+#[tokio::test]
+async fn a_part_holds_at_most_its_share_of_records_and_sessions() {
+    use timeline_api::routes::conversations::MAX_PER_PART as RECORDS;
+    use timeline_api::routes::sessions::MAX_PER_PART as SESSIONS;
+    let router = local_app::router();
+    // 1,050 conversations of two sessions each: 2,100 sessions.
+    let texts: Vec<(String, String)> = (0..1050)
+        .map(|i| (format!("a{i}"), format!("b{i}")))
+        .collect();
+    let conversations: Vec<Value> = texts
+        .iter()
+        .enumerate()
+        .map(|(i, (a, b))| conversation(i as u32 + 1, "c", &[you(0, a), you(60, b)]))
+        .collect();
+    let token = local_app::signed_in_with(&router, "alice", &export(conversations)).await;
+    let records = local_app::all_parts(&router, &token, "/conversations").await;
+    assert_eq!(
+        records[0]["conversations"].as_array().unwrap().len(),
+        RECORDS
+    );
+    assert_eq!(records.len(), 2);
+    let sessions = local_app::all_parts(&router, &token, "/sessions").await;
+    assert_eq!(sessions[0]["sessions"].as_array().unwrap().len(), SESSIONS);
+    assert_eq!(
+        sessions
+            .iter()
+            .map(|p| p["sessions"].as_array().unwrap().len())
+            .sum::<usize>(),
+        2100
+    );
+}
