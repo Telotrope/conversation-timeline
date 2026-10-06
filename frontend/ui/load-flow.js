@@ -1,69 +1,20 @@
-// Getting data onto the screen (plan docs/plans/2026-10-05-screen-flow.md §6,
-// §6b): the Upload page, which sends one or more files, waits for the server
-// to process them and optionally runs the scan; the step functions it and
-// the loading modal are built from; and drawing the downloaded timeline.
+// Getting data onto the server (plan docs/plans/2026-10-05-screen-flow.md
+// §6, §6b): the Upload page, which prepares one or more files in the
+// browser, sends them, waits for the server to process them and optionally
+// runs the scan; and the step functions it is built from.
 //
 // Which page shows next is ui/page-flow.js's decision. The Upload page
 // reports to it through the `flow` main.js connects (connectUploadPage);
 // nothing here imports it, since modules at this level don't import each
 // other (frontend/tests/structure.test.js).
 
-import { buildBlocks } from '../core/blocks.js';
-import { parseUploadedConversations } from '../core/export-format.js';
-import { attachFlags } from '../core/flags.js';
 import { formatBytes } from '../core/format.js';
-import { state } from '../core/state.js';
 import { errorKindOf, errorStatusOf, PageError } from '../core/page-error.js';
 import { startBatch } from '../core/upload-batch.js';
-import { API_BASE, apiFetch, downloadSignedExport, ensureAuthToken, fetchConversationRecords, fetchUploadStatus, putWithProgress, requestFailure, serverUrl, signedInLabel, usesRealLogin } from '../infra/api-client.js';
+import { API_BASE, apiFetch, ensureAuthToken, fetchConversationsPart, fetchUploadStatus, postDetect, putWithProgress, requestFailure, serverUrl, signedInLabel, usesRealLogin } from '../infra/api-client.js';
+import { prepareUpload } from '../infra/upload-preparer.js';
 import { waitForProcessing } from '../core/upload-wait.js';
-import { renderCalendar } from './views/calendar.js';
-import { renderConvList } from './views/conversations.js';
-import { renderFiles } from './views/files.js';
-import { renderSubtitle } from './views/header.js';
-import { renderReviewTable } from './views/review.js';
-import { addFileLine, clearFileLines, failLoadProgress, hideLoadProgress, makeRateEstimator, setLoadProgressIndeterminate, setLoadProgressMeasured, setLoadStatus, setSaveStatus, showDownloadProgress, showLoadProgress, showScanProgress, showSendProgress, showWaitProgress } from './widgets/status-indicators.js';
-
-// Draws an already-downloaded export, with the flag handles from the same
-// GET /export reply and the conversations' records: parses it, replaces the
-// page's state and draws every view. Returns false if the export held no
-// conversations, leaving the caller to report that however suits it. Which
-// page is shown is the caller's business.
-export function applyExportText(text, flagHandles, records, uploads){
-  const parsed = parseUploadedConversations(text);
-  if(parsed.conversations.length === 0) return false;
-  state.records = new Map(records.map((r) => [r.conversation_id, r]));
-  state.uploads = uploads;
-  state.conversations = parsed.conversations.map((c, i) => ({
-    ...c, id: parsed.conversationIds[i], untimed: parsed.untimedCounts[i],
-  }));
-  state.messages = parsed.messages;
-  state.humanMessages = parsed.humanMessages;
-  state.humanById = new Map(state.humanMessages.map(m => [m.id, m]));
-  state.rawData = parsed.rawData;
-  state.flagHandles = flagHandles;
-  // Your confirmed flags come from whatever the server's export embedded
-  // (overrides you PATCHed to the backend earlier -- see
-  // patchFlagsToBackend). There's no other recovery mechanism; see the
-  // migration plan's V2a.
-  state.overrides = { ...parsed.embeddedOverrides };
-  const embeddedCount = Object.keys(parsed.embeddedOverrides).length;
-  redrawTimeline();
-  if(embeddedCount > 0) setSaveStatus('flags.loaded', { count: embeddedCount });
-  return true;
-}
-
-// Rebuilds the sessions (a changed start or end moves a conversation whose
-// messages have no times) and draws every view.
-export function redrawTimeline(){
-  state.blocks = buildBlocks();
-  attachFlags();
-  renderSubtitle();
-  renderCalendar();
-  renderConvList(document.getElementById('convSearch').value);
-  renderReviewTable();
-  renderFiles();
-}
+import { addFileLine, clearFileLines, failLoadProgress, hideLoadProgress, makeRateEstimator, setLoadProgressIndeterminate, setLoadStatus, showLoadProgress, showPrepareProgress, showScanProgress, showSendProgress, showWaitProgress } from './widgets/status-indicators.js';
 
 // --- One function per step of getting a file onto the screen ---
 // None of these touches the page: each returns its result or throws, and
@@ -90,10 +41,11 @@ export async function startUpload(token, file, scan, humanName){
   return res.json();
 }
 
-// Sends the file's text to the signed address. onProgress(loaded, total);
-// registerAbort(fn) receives a function that cancels the send.
-export async function sendFile(uploadUrl, text, onProgress, registerAbort){
-  const res = await putWithProgress(serverUrl(uploadUrl), text, onProgress, registerAbort);
+// Sends the prepared file (a Blob) to the signed address.
+// onProgress(loaded, total); registerAbort(fn) receives a function that
+// cancels the send.
+export async function sendFile(uploadUrl, body, onProgress, registerAbort){
+  const res = await putWithProgress(serverUrl(uploadUrl), body, onProgress, registerAbort);
   if(!res.ok){
     throw new PageError(`uploading the file failed (${res.status})${res.text ? ': ' + res.text : ''}`, 'server_error', res.status);
   }
@@ -115,59 +67,50 @@ export function waitUntilProcessed(token, uploadId, onAnswer, sleep){
   });
 }
 
-// One file, start to processed: start the upload, send it, wait for it.
-// Resolves to its upload id. `on` holds the callbacks: sent(loaded, total),
-// sendingDone(), answer(processingAnswer), registerAbort(fn), and sleep(ms).
+// Whether files are sent as they are, without slimming (plan §7b): only
+// when the page's address asks, with ?upload=unslimmed. A browser test of
+// the server's size limit needs a large file to reach the server large.
+export function sendsUnslimmed(){
+  return new URLSearchParams(window.location.search).get('upload') === 'unslimmed';
+}
+
+// One file, start to processed: prepare it, start the upload, send it,
+// wait for it. Resolves to its upload id. `on` holds the callbacks:
+// prepared({ read, size, conversations, compressed }), ready(bytesToSend),
+// sent(loaded, total), sendingDone(), answer(processingAnswer),
+// registerAbort(fn), and sleep(ms).
 export async function uploadOneFile(token, file, scan, humanName, on){
-  const text = await file.text();
+  const prepared = sendsUnslimmed()
+    ? { body: file.slice(0, file.size) }
+    : await prepareUpload(file, on.prepared, on.registerAbort);
+  on.ready(prepared.body.size);
   const { upload_id: uploadId, upload_url: uploadUrl } = await startUpload(token, file, scan, humanName);
-  await sendFile(uploadUrl, text, on.sent, on.registerAbort);
+  await sendFile(uploadUrl, prepared.body, on.sent, on.registerAbort);
   on.sendingDone();
   await waitUntilProcessed(token, uploadId, on.answer, on.sleep);
   return uploadId;
 }
 
-// Runs the backend's non-generative detection pass, one page of
-// conversations at a time. The server could do the whole thing in one
-// request, but then there would be nothing to report: paging is what makes
-// the progress bar show real, earned progress rather than a spinner.
-// onProgress(covered, total) after each page; resolves to how many
-// messages were scanned. stopped(), checked before each page, ends the pass
-// early (the Upload page's Stop).
+// Runs the backend's non-generative detection pass. The server works within
+// its time limit and answers with how many sessions it has done of the
+// total and where to carry on (plan
+// docs/plans/2026-10-06-load-only-what-the-page-shows.md §8); the page asks
+// again with that cursor until it is done, so the bar shows real progress.
+// The scan writes flags, so its data version changes as it goes; that is
+// not a reason to start again. onProgress(done, total) after each answer;
+// resolves to how many messages were scanned. stopped(), checked before
+// each request, ends the pass early (the Upload page's Stop).
 export async function runDetectionPass(token, onProgress, stopped = () => false){
-  let offset = 0;
+  let cursor = null;
   let detected = 0;
-  const limit = 5;
-  for(;;){
+  for(let part = 0; ; part += 1){
     if(stopped()) return detected;
-    const res = await apiFetch('/detect', {
-      method: 'POST',
-      token,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ offset, limit }),
-      facts: { offset, limit },
-    });
-    if(!res.ok) throw await requestFailure('scanning your messages', res);
-    const body = await res.json();
+    const body = await postDetect(token, cursor, part);
     detected += body.messages_detected;
-    const done = body.next_offset === null || body.next_offset === undefined;
-    onProgress(done ? body.total_conversations : body.next_offset, body.total_conversations);
-    if(done) return detected;
-    offset = body.next_offset;
+    onProgress(body.sessions_done, body.sessions_total);
+    cursor = body.cursor ?? null;
+    if(cursor === null) return detected;
   }
-}
-
-// Downloads the user's whole processed timeline: GET /export, then the
-// signed link it hands back. onProgress(loaded, total) as bytes arrive
-// (total undefined when the answer doesn't say). Resolves to { text,
-// flagHandles }.
-export async function downloadTimeline(token, onProgress){
-  const exportRes = await apiFetch('/export', { token });
-  if(!exportRes.ok) throw await requestFailure('reading back the processed export', exportRes);
-  const { export_url, flag_handles } = await exportRes.json();
-  const { res, text } = await downloadSignedExport(serverUrl(export_url), onProgress);
-  if(!res.ok) throw await requestFailure('downloading the processed export', res);
-  return { text, flagHandles: flag_handles };
 }
 
 // A failure as the status line's message id and values. A TypeError (not
@@ -188,16 +131,6 @@ export function describeLoadFailure(err){
 export async function humanName(){
   if(usesRealLogin()) return (await signedInLabel()) || 'You';
   return document.getElementById('devLoginSub').value.trim() || 'You';
-}
-
-// The download, with its bar: measured once bytes start arriving.
-export function downloadWithBar(token){
-  const eta = makeRateEstimator(3000);
-  let measuring = false;
-  return downloadTimeline(token, (loaded, total) => {
-    if(!measuring){ measuring = true; setLoadProgressMeasured(); }
-    showDownloadProgress(loaded, total, total ? eta(loaded, total) : '');
-  });
 }
 
 // --- The Upload page ---
@@ -326,20 +259,32 @@ function failUpload(err){
   return null;
 }
 
-// Sends and waits for every file at once; one bar for the bytes sent across
-// all of them, then the wait for the server. Resolves to the batch's result.
+// Prepares, sends and waits for every file at once; one bar across all of
+// them, first for preparing (bytes read of the files' size), then for
+// sending (bytes sent of what is sent), then the wait for the server.
+// Resolves to the batch's result.
 async function sendBatch(token, files, scan){
-  setLoadStatus('load.sending');
+  setLoadStatus(sendsUnslimmed() ? 'load.sending' : 'load.preparing');
   setLoadProgressIndeterminate('progress.reading_file');
   const human = await humanName();
-  const eta = makeRateEstimator(3000);
   const wait = waitingDisplay(files.length);
-  BATCH = startBatch(files, (file, ctx) => uploadOneFile(token, file, scan, human, {
-    sent: ctx.sent, sendingDone: () => { ctx.sendingDone(); wait.oneSent(); },
-    answer: wait.answer, registerAbort: ctx.registerAbort, sleep: ctx.sleep,
-  }), {
-    progress: (loaded, total) => { setLoadProgressMeasured(); showSendProgress(loaded, total, eta(loaded, total)); },
-    failed: (index, error) => { wait.oneSent(); addFileLine('load.file_failed', failureLine(files[index], error)); },
+  const tally = batchTally(files);
+  // startBatch's own byte count assumes each file is sent at its size;
+  // prepared files are smaller, so the bar is drawn from the tally instead.
+  // startBatch starts the files in order, so the n-th call is file n.
+  let started = 0;
+  BATCH = startBatch(files, (file, ctx) => {
+    const i = started++;
+    return uploadOneFile(token, file, scan, human, {
+      prepared: (p) => tally.prepared(i, p),
+      ready: (size) => tally.ready(i, size),
+      sent: (loaded) => tally.sent(i, loaded),
+      sendingDone: () => { tally.finished(i); ctx.sendingDone(); wait.oneSent(); },
+      answer: wait.answer, registerAbort: ctx.registerAbort, sleep: ctx.sleep,
+    });
+  }, {
+    progress: () => {},
+    failed: (index, error) => { tally.finished(index); wait.oneSent(); addFileLine('load.file_failed', failureLine(files[index], error)); },
   });
   try{
     const result = await BATCH.done;
@@ -349,6 +294,35 @@ async function sendBatch(token, files, scan){
     BATCH = null;
     wait.stop();
   }
+}
+
+// Each file's progress through preparing and sending, drawn as one bar:
+// preparing while any file still is, then sending.
+function batchTally(files){
+  const each = files.map((f) => ({ preparing: true, read: 0, size: f.size, conversations: 0, compressed: 0, sent: 0, body: 0 }));
+  const eta = makeRateEstimator(3000);
+  const sum = (key) => each.reduce((n, t) => n + t[key], 0);
+  let sending = false;
+  const show = () => {
+    if(each.some((t) => t.preparing)){
+      return showPrepareProgress({ read: sum('read'), size: sum('size'), conversations: sum('conversations'), compressed: sum('compressed') });
+    }
+    if(!sending){
+      sending = true;
+      setLoadStatus('load.sending');
+    }
+    const loaded = sum('sent');
+    const total = sum('body');
+    showSendProgress(loaded, total, eta(loaded, total));
+  };
+  const done = (t) => Object.assign(t, { preparing: false, read: t.size });
+  return {
+    prepared: (i, p) => { Object.assign(each[i], { read: p.read, conversations: p.conversations, compressed: p.compressed }); show(); },
+    ready: (i, size) => { Object.assign(done(each[i]), { body: size }); show(); },
+    sent: (i, loaded) => { each[i].sent = loaded; show(); },
+    // Sent, failed or stopped: nothing more to wait for from this file.
+    finished: (i) => { const t = done(each[i]); t.sent = t.body; },
+  };
 }
 
 // The wait for the server, once every file's bytes are sent: a moving bar
@@ -394,9 +368,10 @@ async function finishBatch(token, scan){
   try{
     if(scan){
       setLoadStatus('load.scanning');
+      setLoadProgressIndeterminate('progress.scan_starting');
       await runDetectionPass(token, showScanProgress, () => SCAN_STOPPED);
     }
-    if((await fetchConversationRecords(token)).length === 0){
+    if((await fetchConversationsPart(token)).total === 0){
       setLoadStatus('load.no_conversations');
       failLoadProgress();
       return false;

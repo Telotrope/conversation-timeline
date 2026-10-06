@@ -1,11 +1,11 @@
-// The page's progress and status lines: the progress bar with its
-// time-remaining estimate and the status line above it (on the Upload page,
-// or borrowed by the loading modal), the per-file lines below the bar, the
-// Sign-in and Describe pages' own lines, and the "Saved." / "Could not
-// save" line.
+// The page's progress and status lines: the progress bars, each with its
+// clock (createProgressBar), the load screen's bar with its time-remaining
+// estimate and the status line above it (on the Upload page, or borrowed by
+// the loading modal), the per-file lines below the bar, the Sign-in and
+// Describe pages' own lines, and the "Saved." / "Could not save" line.
 
-import { formatBytes, formatEta } from '../../core/format.js';
-import { waitMessageId } from '../../core/upload-wait.js';
+import { formatEta } from '../../core/format.js';
+import { processingProgress, waitMessageId } from '../../core/upload-wait.js';
 import { shownEvent } from '../../core/activity-event.js';
 import { recordActivity } from '../../core/activity-sink.js';
 import { pageMessage, recordedValues } from './page-messages.js';
@@ -87,118 +87,199 @@ export function showDescribeReminder(items){
   recordShown('describeReminder', 'describe.reminder', entry, { count: items.length });
 }
 
+// --- Progress bars ---
+// Every wait shows a bar that moves only on real progress (plan
+// docs/plans/2026-10-06-load-only-what-the-page-shows.md §8b): bytes sent
+// or received, sessions done of the total, conversations written. Where
+// nothing can be measured (inside one request, or before the first answer)
+// the bar is striped at full width, which measures nothing and says so. In
+// both, a clock the page keeps itself is shown beside the words, worded as
+// time spent, not as work done: "… · 12 s so far". It ticks every second;
+// the activity log records the label once, not each tick.
+
+// The clock's default timers; a test hands in its own.
+const TIMERS = {
+  now: () => Date.now(),
+  every: (fn, ms) => setInterval(fn, ms),
+  cancel: (handle) => clearInterval(handle),
+};
+
+// A bar and its label. nodes() returns { fill, label }, looked up each time
+// so a bar whose elements are drawn again still works; where: the place the
+// activity log records its messages at (core/activity-event.js's
+// SHOWN_PLACES), or null to record nothing.
+export function createProgressBar({ nodes, where = null }, timers = TIMERS){
+  let started = null;
+  let ticking = null;
+  let text = '';
+  let withClock = true;
+  let recorded = null;
+
+  const draw = () => {
+    const { label } = nodes();
+    const seconds = started === null ? 0 : Math.floor((timers.now() - started) / 1000);
+    label.textContent = withClock && seconds >= 1 ? `${text} · ${seconds} s so far` : text;
+  };
+  const startClock = () => {
+    if(started !== null) return;
+    started = timers.now();
+    ticking = timers.every(draw, 1000);
+  };
+  const stop = () => {
+    if(ticking !== null) timers.cancel(ticking);
+    ticking = null;
+    started = null;
+  };
+  const show = (id, values, clock) => {
+    const entry = pageMessage(id);
+    text = entry.text(values);
+    withClock = clock;
+    draw();
+    const key = `${id} ${JSON.stringify(recordedValues(entry, values) || {})}`;
+    if(where === null || key === recorded) return;
+    recorded = key;
+    recordShown(where, id, entry, values);
+  };
+  const fill = (classes, width) => {
+    const el = nodes().fill;
+    el.classList.remove('is-working', 'is-error');
+    if(classes) el.classList.add(classes);
+    el.style.width = width;
+  };
+  const fillTo = (done, total) => fill(null, `${total ? Math.min(100, Math.round((done / total) * 100)) : 100}%`);
+
+  return {
+    // A wait that can't be measured: a new clock, the bar striped, and the
+    // message recorded even if it was the last one shown.
+    working(id, values = {}){
+      stop();
+      fill('is-working', '100%');
+      startClock();
+      recorded = null;
+      show(id, values, true);
+    },
+    // Real progress: `done` of `total`. The clock carries on from the wait's
+    // start; the striped state is cleared.
+    measured(id, values, done, total){
+      fillTo(done, total);
+      startClock();
+      show(id, { ...values, done, total }, true);
+    },
+    // Moves the bar without changing the words.
+    fillTo,
+    // Words that carry their own clock (the processing wait's); the bar's
+    // clock stops.
+    label(id, values = {}){
+      stop();
+      show(id, values, false);
+    },
+    // Red, at the width it had reached; an empty bar fills, so the red
+    // shows.
+    failed(id, values = {}){
+      stop();
+      const width = nodes().fill.style.width;
+      fill('is-error', width && width !== '0%' ? width : '100%');
+      show(id, values, false);
+    },
+    stop,
+    // Empty and still, ready for a new wait.
+    reset(){
+      stop();
+      recorded = null;
+      fill(null, '0%');
+      text = '';
+      nodes().label.textContent = '';
+    },
+  };
+}
+
 // --- Load-screen progress ---
-// Three states, because the load has three genuinely different kinds of
-// phase: a measurable transfer, an unmeasurable wait, and finished. Nothing
-// here invents a percentage for work whose size isn't known.
+// The bar under the status line, on the Upload page or borrowed by the
+// loading modal.
+
+let LOAD_BAR = null;
+
+function loadBar(){
+  if(!LOAD_BAR){
+    LOAD_BAR = createProgressBar({
+      nodes: () => ({ fill: document.getElementById('loadProgressFill'), label: document.getElementById('loadProgressLabel') }),
+      where: 'loadProgress',
+    });
+  }
+  return LOAD_BAR;
+}
 
 export function showLoadProgress(){
-  const wrap = document.getElementById('loadProgress');
-  const fill = document.getElementById('loadProgressFill');
-  wrap.hidden = false;
-  fill.classList.remove('is-error', 'is-working');
-  fill.style.width = '0%';
-  document.getElementById('loadProgressLabel').textContent = '';
+  document.getElementById('loadProgress').hidden = false;
+  loadBar().reset();
 }
 
 export function hideLoadProgress(){
+  loadBar().stop();
   document.getElementById('loadProgress').hidden = true;
 }
 
 export function failLoadProgress(){
   const wrap = document.getElementById('loadProgress');
   if(wrap.hidden) return;
+  loadBar().stop();
   const fill = document.getElementById('loadProgressFill');
   fill.classList.remove('is-working');
   fill.classList.add('is-error');
   recordShown('loadProgress', 'progress.failed', pageMessage('progress.failed'));
 }
 
-// A phase whose duration can't be observed: full-width track, no number.
-// Used for the stretch after the request body is fully sent but before the
-// server answers -- the local-dev PUT handler does its processing there, and
-// a bar frozen at 100% would read as hung.
-//
-// The bar moves (CSS stripes, `.progress-fill.is-working`) so the wait
-// reads as work in progress, not a bar frozen at 100% (plan
-// 2026-10-02-upload-processing-failures.md §3). A measured transfer calls
-// setLoadProgressMeasured first, which stops the stripes.
+// A phase whose duration can't be observed: full-width striped track, no
+// number, and the clock.
 export function setLoadProgressIndeterminate(id){
-  const entry = pageMessage(id);
   document.getElementById('loadProgress').hidden = false;
-  const fill = document.getElementById('loadProgressFill');
-  fill.classList.add('is-working');
-  fill.style.width = '100%';
-  document.getElementById('loadProgressLabel').textContent = entry.text({});
-  lastLabelRecord = null;
-  recordShown('loadProgress', id, entry);
+  loadBar().working(id);
 }
 
-// Before a transfer whose progress is measured: a plain bar again.
-export function setLoadProgressMeasured(){
-  document.getElementById('loadProgressFill').classList.remove('is-working');
+// Real progress on the load bar: message `id` with `values`, `done` of
+// `total`.
+export function showLoadMeasured(id, values, done, total){
+  document.getElementById('loadProgress').hidden = false;
+  loadBar().measured(id, values, done, total);
 }
 
-// What setLoadProgressLabel last recorded, so a label that only changes its
-// ticking clock (the wait for the server, rewritten every second) is
-// recorded once, and again only when the message or its numbers change.
-let lastLabelRecord = null;
-
-// Replaces the label only, keeping the bar as it is.
+// Replaces the label only, keeping the bar as it is: for words that carry
+// their own clock. A label that only changes its ticking clock (the wait
+// for the server, rewritten every second) is recorded once, and again only
+// when the message or its numbers change.
 export function setLoadProgressLabel(id, values = {}){
-  const entry = pageMessage(id);
-  document.getElementById('loadProgressLabel').textContent = entry.text(values);
-  const key = `${id} ${JSON.stringify(recordedValues(entry, values) || {})}`;
-  if(key === lastLabelRecord) return;
-  lastLabelRecord = key;
-  recordShown('loadProgress', id, entry, values);
+  loadBar().label(id, values);
 }
 
 // --- The text under the bar for each kind of progress ---
 // One function per kind, so the load steps (ui/load-flow.js) report numbers
 // through callbacks and never write to the page themselves.
 
-function fillTo(pct){
-  document.getElementById('loadProgressFill').style.width = pct + '%';
-}
-
-function labelText(text){
-  document.getElementById('loadProgressLabel').textContent = text;
+// Preparing files in the browser before sending (§7b): bytes read of the
+// files' size, conversations slimmed, bytes compressed.
+export function showPrepareProgress(p){
+  showLoadMeasured('progress.preparing_file', p, p.read, p.size);
 }
 
 // Sending files: bytes so far of the total, and the time left when known.
 export function showSendProgress(loaded, total, eta){
-  const pct = Math.round((loaded / total) * 100);
-  fillTo(pct);
-  labelText(`Sending your file — ${formatBytes(loaded)} of ${formatBytes(total)} (${pct}%)` + (eta ? ` — ${eta}` : ''));
+  showLoadMeasured('progress.sending', { loaded, total, eta }, loaded, total);
 }
 
 // Waiting for the server to process an upload: which attempt, why the last
-// one failed, and a clock (core/upload-wait.js's describeWait).
+// one failed, a clock (core/upload-wait.js's describeWait), and, when the
+// answer says, how far it has got, which moves the bar.
 export function showWaitProgress(answer, elapsedMs){
+  const progress = processingProgress(answer.progress);
+  if(progress) loadBar().fillTo(progress.done, progress.total);
   setLoadProgressLabel(waitMessageId(answer), {
     answer, elapsedMs, attempt: answer.attempt, max_attempts: answer.max_attempts,
   });
 }
 
-// The scan: conversations covered so far of the total.
-export function showScanProgress(covered, total){
-  const pct = total ? Math.round((covered / total) * 100) : 100;
-  fillTo(pct);
-  labelText(`Scanning your messages — ${covered} of ${total} conversation${total === 1 ? '' : 's'} (${pct}%)`);
-}
-
-// Downloading the timeline: a share of the whole when its size is known,
-// otherwise just what has arrived, rather than a made-up proportion.
-export function showDownloadProgress(loaded, total, eta){
-  if(total){
-    const pct = Math.round((loaded / total) * 100);
-    fillTo(pct);
-    labelText(`Receiving your processed timeline — ${formatBytes(loaded)} of ${formatBytes(total)} (${pct}%)` + (eta ? ` — ${eta}` : ''));
-  } else {
-    fillTo(100);
-    labelText(`Receiving your processed timeline — ${formatBytes(loaded)} so far`);
-  }
+// The scan: sessions done so far of the total.
+export function showScanProgress(done, total){
+  showLoadMeasured('progress.scanning', {}, done, total);
 }
 
 // Estimates remaining time from a rolling window of recent progress events

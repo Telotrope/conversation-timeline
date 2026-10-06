@@ -178,6 +178,7 @@ function clone(value){
 function renderSection(section, i){
   return el('div', { className: 'describe-section' },
     sectionHeading(section),
+    untimedWarning(section),
     participantsField(section),
     mediumField(section, i),
     transcriptionField(section),
@@ -290,6 +291,25 @@ function spanField(section){
     el('div', { className: 'span-fields' }, input('start'), ' to ', input('end')), errorNote(section, 'span'));
 }
 
+// Messages whose time is unknown (plan
+// docs/plans/2026-10-06-load-only-what-the-page-shows.md §4e): counted, but
+// not placed by their own times. A conversation holding any is placed on the
+// timeline as one session from its start to its end, so those are worth
+// checking. Null when there are none.
+function untimedWarning(section){
+  const records = section.record ? [section.record] : RECORDS.filter((r) => section.uploadIds.includes(r.source.upload_id));
+  const affected = records.filter((r) => r.untimed > 0);
+  if(affected.length === 0) return null;
+  const messages = affected.reduce((n, r) => n + r.untimed, 0);
+  const counted = `${messages} message${messages === 1 ? ' has' : 's have'} no time. `
+    + `${messages === 1 ? 'It is' : 'They are'} counted, but not placed by ${messages === 1 ? 'its' : 'their'} own time`;
+  const text = section.record
+    ? `${counted}: this conversation is placed on the timeline by the start and end below.`
+    : `In ${affected.length} conversation${affected.length === 1 ? '' : 's'} (${affected.map((r) => r.name || '(untitled)').join(', ')}), `
+      + `${counted}: each such conversation is placed on the timeline by its start and end, which you can change from the Conversations tab.`;
+  return el('p', { className: 'untimed-warning', textContent: text });
+}
+
 // The section's conversations, by name and time range; collapsed, since
 // one file can hold hundreds.
 function conversationList(section){
@@ -333,7 +353,11 @@ async function saveSections(t, edits){
   for(const [i, section] of SECTIONS.entries()){
     if(Object.keys(edits[i]).length === 0) continue;
     if(section.record) await saveConversationMetadata(t, section.conversationId, edits[i]);
-    else for(const id of section.uploadIds) await saveFileMetadata(t, id, edits[i]);
+    else{
+      for(const id of section.uploadIds){
+        await saveFileMetadata(t, id, edits[i], (part) => setDescribeStatus('describe.saving', { done: part.done, total: part.total }));
+      }
+    }
   }
 }
 

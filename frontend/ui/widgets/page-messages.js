@@ -11,15 +11,27 @@
 // core/page-error.js). Values not listed (the server's error message, a
 // name) appear on the page only.
 
-import { describeWait } from '../../core/upload-wait.js';
+import { formatBytes } from '../../core/format.js';
+import { describeWait, processingProgress } from '../../core/upload-wait.js';
 
 const failure = ['status', 'error_kind'];
-const wait = { text: ({ answer, elapsedMs }) => describeWait(answer, elapsedMs), isError: false, record: ['attempt', 'max_attempts'] };
+// The wait for the server to process an upload, with how far it has got
+// when its answer says (bytes read, then conversations written).
+function waitText({ answer, elapsedMs }){
+  const progress = processingProgress(answer.progress);
+  return describeWait(answer, elapsedMs) + (progress ? ` · ${progress.text}` : '');
+}
+const wait = { text: waitText, isError: false, record: ['attempt', 'max_attempts'] };
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const percent = (done, total) => (total ? Math.round((done / total) * 100) : 100);
+// "41 of 117 sessions (35%)": a part of the work, from the server's count.
+const ofSessions = ({ done, total }) => `${done} of ${plural(total, 'session')} (${percent(done, total)}%)`;
 
 export const PAGE_MESSAGES = Object.freeze({
   // The load screen's status line.
   'load.choose_file': { text: () => 'Choose a conversations.json file first.', isError: true },
   'load.signing_in': { text: () => 'Logging in…', isError: false },
+  'load.preparing': { text: () => 'Preparing the file…', isError: false },
   'load.sending': { text: () => 'Sending your file…', isError: false },
   'load.processing': { text: () => 'Processing on the server…', isError: false },
   'load.scanning': { text: () => 'Scanning your messages for flags…', isError: false },
@@ -36,6 +48,32 @@ export const PAGE_MESSAGES = Object.freeze({
   'progress.reading_file': { text: () => 'Reading the file…', isError: false },
   'progress.processing': { text: () => 'Processing on the server…', isError: false },
   'progress.preparing': { text: () => 'Preparing the timeline…', isError: false },
+  // Measured bars: each says how much of what is done; the bar's shared
+  // clock (status-indicators.js) adds the time spent.
+  'progress.preparing_file': {
+    text: ({ read, size, conversations, compressed }) => `Preparing the file — ${formatBytes(read)} of ${formatBytes(size)} read, `
+      + `${plural(conversations, 'conversation')} slimmed, ${formatBytes(compressed)} compressed`,
+    isError: false,
+  },
+  'progress.sending': {
+    text: ({ loaded, total, eta }) => `Sending your file — ${formatBytes(loaded)} of ${formatBytes(total)} (${percent(loaded, total)}%)`
+      + (eta ? ` — ${eta}` : ''),
+    isError: false,
+  },
+  'progress.records': { text: ({ done, total }) => `Receiving your conversations — ${done} of ${total}`, isError: false },
+  'progress.sessions': { text: ({ done, total }) => `Receiving your sessions — ${done} of ${total}`, isError: false },
+  // Drawing counts steps (each session made ready, placed on the Calendar,
+  // each conversation listed), not sessions, so it says how far in percent.
+  'progress.drawing': { text: ({ done, total }) => `Drawing your timeline — ${percent(done, total)}%`, isError: false },
+  'progress.scan_starting': { text: () => 'Starting the scan…', isError: false },
+  'progress.scanning': { text: (v) => `Scanning your messages — ${ofSessions(v)}`, isError: false },
+  'progress.searching': { text: (v) => `Finding your messages — ${ofSessions(v)}`, isError: false },
+  'progress.computing': { text: (v) => `Computing — ${ofSessions(v)}`, isError: false },
+  'progress.server_computing': { text: (v) => `Computing on the server — ${ofSessions(v)}`, isError: false },
+  'progress.finding_files': { text: (v) => `Finding this conversation's files — ${ofSessions(v)}`, isError: false },
+  'progress.exporting': { text: (v) => `Building your annotated download — ${ofSessions(v)}`, isError: false },
+  'progress.data_changed': { text: () => 'Your data changed; starting again.', isError: false },
+  'progress.request_failed': { text: ({ detail }) => `Could not finish: ${detail}`, isError: true, record: failure },
   'progress.failed': { text: null, isError: true }, // the bar turns red; its label stays
   // While the server processes an upload; see core/upload-wait.js's
   // waitMessageId, which picks one of these for each answer.
@@ -55,11 +93,7 @@ export const PAGE_MESSAGES = Object.freeze({
   'save.stale_page': {
     text: () => "Could not save: this page's data is out of date. Reload the page.", isError: true, record: failure,
   },
-  'flags.loaded': {
-    text: ({ count }) => `Loaded ${count} of your confirmed flag${count === 1 ? '' : 's'} from the server.`,
-    isError: false, record: ['count'],
-  },
-  'export.no_data': { text: () => 'No conversation data loaded to annotate.', isError: true },
+  'export.failed': { text: ({ detail }) => `Could not build the download: ${detail}`, isError: true, record: failure },
   'export.downloaded': {
     text: () => 'Downloaded conversations-with-flags.json — load this file directly next time.', isError: false,
   },
@@ -92,6 +126,9 @@ export const PAGE_MESSAGES = Object.freeze({
   },
 
   // The Describe page.
+  'describe.saving': {
+    text: ({ done, total }) => `Saving — ${done} of ${plural(total, 'conversation')} updated…`, isError: false,
+  },
   'describe.invalid': { text: () => 'Some answers need fixing first; they are marked.', isError: true },
   'describe.save_failed': { text: ({ detail }) => `Could not save: ${detail}`, isError: true, record: failure },
   'describe.load_failed': {

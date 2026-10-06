@@ -12,7 +12,7 @@
 
 import { errorKindOf, errorStatusOf } from '../core/page-error.js';
 import { state } from '../core/state.js';
-import { ensureAuthToken, fetchConversationRecords, fetchUploads, usesRealLogin } from '../infra/api-client.js';
+import { ensureAuthToken, fetchConversationsPart, usesRealLogin } from '../infra/api-client.js';
 import { currentPage, showPage } from './navigation/pages.js';
 import { switchTab } from './navigation/tabs.js';
 import { selectConversation } from './views/conversations.js';
@@ -23,15 +23,12 @@ import {
 } from './widgets/status-indicators.js';
 
 // From main.js: signedIn(), accountLabel(), signOut(), refreshSignIn(), resetUploadPage(hasData),
-// uploading(), openDescribe(subject), downloadWithBar(token),
-// applyExportText(text, flagHandles, records, uploads), redrawTimeline(),
-// applyLocationHash(), describeLoadFailure(err).
+// uploading(), openDescribe(subject), loadTimeline(token) (resolves to false
+// when there are no conversations), applyLocationHash(),
+// describeLoadFailure(err).
 let DEPS = null;
 let HAS_DATA = false;
 let TIMELINE_LOADED = false;
-// The timeline's download, started when an upload finished and still
-// running while its files are described.
-let PENDING = null;
 let SUBJECT = null;
 // The timeline's address when the Upload page was opened from it, so going
 // back returns to the same tab.
@@ -94,15 +91,15 @@ export async function start(){
 // it), otherwise the timeline behind its loading modal.
 export async function enterSignedIn(wanted = ''){
   document.getElementById('accountName').textContent = await DEPS.accountLabel();
-  let records;
+  let first;
   try{
-    records = await fetchConversationRecords(await token());
+    first = await fetchConversationsPart(await token());
   } catch(err){
     return checkFailed(err);
   }
-  HAS_DATA = records.length > 0;
+  HAS_DATA = first.total > 0;
   if(wanted === '#upload' || !HAS_DATA) return toUpload(false);
-  await openTimeline(records);
+  await openTimeline();
   const subject = subjectFromAddress(wanted);
   if(subject && TIMELINE_LOADED) toDescribe(subject, false);
 }
@@ -128,7 +125,6 @@ export async function signOut(){
   await DEPS.signOut();
   HAS_DATA = false;
   TIMELINE_LOADED = false;
-  PENDING = null;
   closeLoadingModal();
   toSignIn(null);
 }
@@ -142,14 +138,12 @@ export function toUpload(push){
   address('#upload', push);
 }
 
-// The Upload page finished with at least one file processed: the timeline
-// starts downloading in the background, and Describe opens for the files.
-export function afterUpload({ token: t, files, processed, failed, stopped }){
+// The Upload page finished with at least one file processed: Describe
+// opens for the files. The timeline is read when Describe is left, since
+// describing can move conversations (a changed start and end).
+export function afterUpload({ files, processed, failed, stopped }){
   HAS_DATA = true;
   TIMELINE_LOADED = false;
-  PENDING = DEPS.downloadWithBar(t);
-  // Its failure is reported when the timeline opens and waits for it.
-  PENDING.catch(() => {});
   const notHere = [
     ...failed.map(({ index, error }) => ({ file: files[index].name, reason: error.message })),
     ...stopped.map((index) => ({ file: files[index].name, reason: 'stopped before it was processed' })),
@@ -167,10 +161,11 @@ export function toDescribe(subject, push = true){
 }
 
 // Done (saved) or Cancel: after an upload, to the timeline; otherwise back
-// to the tab it came from, with the saved details read back.
+// to the tab it came from, with the saved details read back (a changed start
+// and end moves a conversation's sessions, so the timeline is read again).
 export async function leaveDescribe(subject, saved){
   if(subject.kind === 'batch') return openTimeline();
-  if(saved && !(await refreshMetadata())) return;
+  if(saved && !(await loadBehindModal())) return;
   showPage('timeline');
   if(subject.kind === 'file') return arriveAtTab('files');
   const idx = state.conversations.findIndex((c) => c.id === subject.conversationId);
@@ -181,45 +176,33 @@ export async function leaveDescribe(subject, saved){
   }
 }
 
-async function refreshMetadata(){
-  try{
-    const t = await token();
-    const [records, uploads] = await Promise.all([fetchConversationRecords(t), fetchUploads(t)]);
-    state.records = new Map(records.map((r) => [r.conversation_id, r]));
-    state.uploads = uploads;
-  } catch(err){
-    console.error(err);
-    if(expired(err)) toSignIn('signIn.ran_out');
-    else setDescribeStatus('describe.load_failed', { detail: err.message, status: errorStatusOf(err), error_kind: errorKindOf(err) });
-    return false;
-  }
-  DEPS.redrawTimeline();
-  return true;
-}
-
 // --- The timeline and its loading modal (plan §6b) ---
 
-export async function openTimeline(records = null){
+export async function openTimeline(){
   showPage('timeline');
+  if(!(await loadBehindModal())) return;
+  arriveAtTimeline();
+}
+
+// Reads and draws the timeline behind the loading modal (plan
+// docs/plans/2026-10-06-load-only-what-the-page-shows.md §8b: records,
+// then sessions, received in parts, then drawn in turns). Resolves to
+// whether it was loaded; a failure is shown in the modal, with Try again.
+async function loadBehindModal(){
   openLoadingModal();
   setLoadStatus(null);
   showLoadProgress();
   setLoadProgressIndeterminate('progress.preparing');
   try{
-    const t = await token();
-    const download = PENDING || DEPS.downloadWithBar(t);
-    PENDING = null;
-    const [{ text, flagHandles }, recs, uploads] = await Promise.all([
-      download, records || fetchConversationRecords(t), fetchUploads(t),
-    ]);
-    if(!DEPS.applyExportText(text, flagHandles, recs, uploads)) throw new Error('your timeline has no conversations');
+    if(!(await DEPS.loadTimeline(await token()))) throw new Error('your timeline has no conversations');
   } catch(err){
-    return loadFailed(err);
+    loadFailed(err);
+    return false;
   }
   hideLoadProgress();
   closeLoadingModal();
   TIMELINE_LOADED = true;
-  arriveAtTimeline();
+  return true;
 }
 
 function loadFailed(err){

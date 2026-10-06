@@ -4,24 +4,25 @@
 // other), then opens the right page (ui/page-flow.js). Nothing else lives
 // here.
 
-import { buildBlocks } from './core/blocks.js';
-import { attachFlags } from './core/flags.js';
 import { state } from './core/state.js';
 import { decideActivityRecording, startActivityCapture } from './ui/activity-capture.js';
 import { installActivityListeners } from './ui/activity-listeners.js';
 import { exportAnnotatedConversations } from './ui/annotated-export.js';
 import { connectDescribe, describeCancel, describeDone, openDescribe } from './ui/describe-form.js';
+import { connectFileViewer, openFileViewer } from './ui/file-viewer.js';
 import { approveRow, onVisibilityToggleChanged, setRowOverrides } from './ui/flag-edits.js';
-import { applyExportText, chooseFiles, connectUploadPage, describeLoadFailure, downloadWithBar, handleUploadClick, redrawTimeline, resetUploadPage, stopUpload, uploading } from './ui/load-flow.js';
+import { chooseFiles, connectUploadPage, describeLoadFailure, handleUploadClick, resetUploadPage, stopUpload, uploading } from './ui/load-flow.js';
 import { accountLabel, devContinue, initLogin, isSignedIn, refreshSignInLine, signIn, signOutEverywhere } from './ui/login-panel.js';
 import { rememberLocation } from './ui/navigation/location.js';
 import { switchTab } from './ui/navigation/tabs.js';
 import * as flow from './ui/page-flow.js';
 import { applyLocationHash } from './ui/router.js';
+import { loadTimeline } from './ui/timeline-load.js';
 import { runAnalysis } from './ui/views/analytics.js';
-import { renderConvList, setConversationEditHandler } from './ui/views/conversations.js';
+import { connectCalendar } from './ui/views/calendar.js';
+import { connectConversations, renderConvList, setConversationEditHandler } from './ui/views/conversations.js';
 import { setFileEditHandler } from './ui/views/files.js';
-import { renderReviewTable, setFlagEditHandlers, showFirstReviewPage } from './ui/views/review.js';
+import { reloadReviewPage, searchChanged, setFileOpener, setFlagEditHandlers, showFirstReviewPage, showReviewTab } from './ui/views/review.js';
 import { setSignInStatus } from './ui/widgets/status-indicators.js';
 import { errorKindOf, errorStatusOf } from './core/page-error.js';
 
@@ -32,8 +33,7 @@ installActivityListeners({ win: window, doc: document, ...startActivityCapture()
 
 flow.connectPageFlow({
   signedIn: isSignedIn, accountLabel, signOut: signOutEverywhere, refreshSignIn: refreshSignInLine,
-  resetUploadPage, uploading, openDescribe,
-  downloadWithBar, applyExportText, redrawTimeline, applyLocationHash, describeLoadFailure,
+  resetUploadPage, uploading, openDescribe, loadTimeline, applyLocationHash, describeLoadFailure,
 });
 connectUploadPage({
   hasData: flow.hasData, dataArrived: flow.dataArrived, toSignIn: flow.toSignIn, afterUpload: flow.afterUpload,
@@ -72,29 +72,34 @@ document.getElementById('uploadBackBtn').addEventListener('click', () => flow.ba
 document.getElementById('describeSaveBtn').addEventListener('click', describeDone);
 document.getElementById('describeLeaveBtn').addEventListener('click', describeCancel);
 
-// Timeline. Nothing renders until an export is downloaded (applyExportText
-// in ui/load-flow.js), which fills state.conversations and the rest and
-// draws every view itself.
+// Timeline. Nothing renders until the timeline is read (ui/timeline-load.js),
+// which fills state.conversations and state.blocks and draws every view.
 document.getElementById('addConversationsBtn').addEventListener('click', () => flow.toUpload(true));
-state.blocks = buildBlocks();
-attachFlags();
 
 window.addEventListener('hashchange', flow.onAddressChange);
 document.querySelectorAll('nav.tabs button').forEach(b=>{
-  b.addEventListener('click', ()=>{ switchTab(b.dataset.tab); rememberLocation(); });
+  b.addEventListener('click', ()=>{
+    switchTab(b.dataset.tab);
+    if(b.dataset.tab === 'review') showReviewTab();
+    rememberLocation();
+  });
 });
 
+connectCalendar();
+connectConversations();
+connectFileViewer();
 document.getElementById('convSearch').addEventListener('input', (e)=> renderConvList(e.target.value));
 
-document.getElementById('reviewSearch').addEventListener('input', showFirstReviewPage);
+document.getElementById('reviewSearch').addEventListener('input', searchChanged);
 document.getElementById('reviewFilter').addEventListener('change', showFirstReviewPage);
 setFlagEditHandlers(setRowOverrides, approveRow);
+setFileOpener(openFileViewer);
 document.getElementById('exportAnnotatedBtn').addEventListener('click', exportAnnotatedConversations);
 document.getElementById('toggleShowAuto').addEventListener('change', onVisibilityToggleChanged);
 document.getElementById('toggleShowUser').addEventListener('change', onVisibilityToggleChanged);
 document.getElementById('toggleShowReplies').addEventListener('change', ()=>{
   state.showReplies = document.getElementById('toggleShowReplies').checked;
-  renderReviewTable();
+  reloadReviewPage();
 });
 
 document.querySelectorAll('.analytics-item').forEach(btn=>{

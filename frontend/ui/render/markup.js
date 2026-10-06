@@ -8,6 +8,12 @@ export function escapeHtml(s){
   return div.innerHTML;
 }
 
+// Text made safe inside an attribute's double or single quotes, which
+// escapeHtml leaves as they are.
+export function escapeAttribute(s){
+  return escapeHtml(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 // A small, dependency-free markdown renderer for displaying message text —
 // handles what actually shows up in real conversations (headers, bold,
 // italic, inline code, bullet/numbered lists, paragraph breaks) without

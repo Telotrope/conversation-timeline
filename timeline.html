@@ -9,6 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="vendor/highlight.js/github.min.css">
 <link rel="stylesheet" href="frontend/timeline.css">
 </head>
 <body>
@@ -167,11 +168,19 @@
       <span id="saveStatus" class="save-status"></span>
       <button id="exportAnnotatedBtn" class="btn-primary btn-compact">Download annotated conversations.json</button>
     </div>
+    <div id="exportProgress" class="progress-wrap" hidden>
+      <div class="progress-track"><div class="progress-fill" id="exportProgressFill"></div></div>
+      <div class="progress-label" id="exportProgressLabel"></div>
+    </div>
     <p class="hint before-table">
       This saves one self-contained file with both the automatic tags and your confirmed flags embedded in it —
       load that file directly next time and everything comes back automatically.
     </p>
     <div id="reviewTable"></div>
+    <div id="reviewProgress" class="progress-wrap" hidden>
+      <div class="progress-track"><div class="progress-fill" id="reviewProgressFill"></div></div>
+      <div class="progress-label" id="reviewProgressLabel"></div>
+    </div>
     <div class="pagination" id="pagination"></div>
   </div>
 
@@ -215,6 +224,26 @@
   </div>
 </div>
 
+<!-- The file viewer: a file from Review shown by its kind, never running
+     any code it holds (ui/file-viewer.js). -->
+<div id="fileViewer" class="modal-backdrop" hidden>
+  <div class="modal file-modal" role="dialog" aria-modal="true" aria-labelledby="fileViewerTitle">
+    <div class="file-modal-head">
+      <h2 id="fileViewerTitle"></h2>
+      <span id="fileViewerNote" class="file-modal-note"></span>
+      <span class="button-group">
+        <button type="button" id="fileViewerSource" class="btn-secondary btn-small" hidden>Show source</button>
+        <a id="fileViewerDownload" class="btn-secondary btn-small" hidden>Download</a>
+        <button type="button" id="fileViewerClose" class="btn-primary btn-small">Close</button>
+      </span>
+    </div>
+    <div id="fileViewerBody" class="file-modal-body"></div>
+  </div>
+</div>
+
+<!-- Code colouring for the file viewer: a plain script defining the global
+     `hljs`. See vendor/highlight.js/README.md. -->
+<script src="vendor/highlight.js/highlight.min.js"></script>
 <!-- Cognito sign-in for a deployed backend (frontend/infra/cognito-login.js);
      a plain script defining the global `oidc`. See vendor/oidc-client-ts/README.md. -->
 <script src="vendor/oidc-client-ts/oidc-client-ts.min.js"></script>

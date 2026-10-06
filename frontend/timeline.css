@@ -887,3 +887,91 @@ table.files .meta{ display:block; font-size:0.72rem; color:var(--ink-faint); }
   margin:0 0 6px;
 }
 
+
+/* Bars that sit under a table or a button, not in an empty panel: the
+   Review search, the annotated download, a conversation's files (plan
+   docs/plans/2026-10-06-load-only-what-the-page-shows.md §8b). */
+#reviewProgress, #exportProgress, .conv-files .progress-wrap{ margin:14px 0; max-width:none; text-align:left; }
+
+/* A note left where a replaced branch was pruned (§4d): a row of its own,
+   quieter than a message, with a rule down its side. */
+tr.note-row td{
+  font-family:var(--font-text);
+  font-style:italic;
+  font-size:0.85rem;
+  color:var(--ink-soft);
+  border-left:3px solid var(--amber);
+  background:var(--amber-soft);
+  padding:8px 14px;
+}
+
+/* Citations (§4c): a small number after the cited words. */
+sup.cite{ font-size:0.68rem; line-height:0; margin-left:1px; color:var(--amber); }
+sup.cite a{ color:var(--amber); text-decoration:none; border-bottom:1px dotted var(--amber); }
+sup.cite a:hover{ color:var(--ink); }
+
+/* A file's card, in its place in a message (§4): a folded corner marks it
+   as a file, not a button like the others. */
+.file-cards{ display:flex; flex-wrap:wrap; gap:8px; margin-top:6px; }
+.file-card{
+  position:relative;
+  display:inline-flex;
+  flex-direction:column;
+  align-items:flex-start;
+  gap:2px;
+  margin:6px 8px 6px 0;
+  padding:8px 26px 8px 12px;
+  min-width:160px;
+  max-width:320px;
+  text-align:left;
+  font-family:var(--font-ui);
+  background:var(--paper);
+  border:1px solid var(--rule);
+  border-left:3px solid var(--amber);
+  border-radius:3px;
+  cursor:pointer;
+  transition:transform 0.15s ease, box-shadow 0.15s ease;
+}
+.file-card::after{
+  content:'';
+  position:absolute;
+  top:-1px; right:-1px;
+  border-width:0 12px 12px 0;
+  border-style:solid;
+  border-color:var(--paper-raised) var(--paper-raised) var(--amber-soft) var(--amber-soft);
+}
+.file-card:hover:not([disabled]){ transform:translateY(-1px); box-shadow:0 3px 8px rgba(36, 34, 29, 0.12); }
+.file-card[disabled]{ cursor:default; opacity:0.75; border-left-color:var(--rule); }
+.file-card-name{ font-size:0.82rem; font-weight:600; color:var(--ink); word-break:break-word; }
+.file-card-kind{ font-size:0.7rem; color:var(--ink-faint); text-transform:uppercase; letter-spacing:0.04em; }
+.file-card-note{ font-size:0.72rem; color:var(--amber); font-style:italic; }
+@media (prefers-reduced-motion: reduce){ .file-card{ transition:none; } }
+
+/* The open conversation's files and its branches. */
+.file-index{ list-style:none; margin:0; padding:0; }
+.file-index li{ padding:6px 0; border-bottom:1px solid var(--rule); }
+.file-index .meta{ display:block; font-size:0.75rem; color:var(--ink-faint); }
+.conv-branches{ font-size:0.82rem; color:var(--ink-soft); margin:6px 0 10px; }
+
+/* Describe's warning about messages of unknown time (§4e). */
+.untimed-warning{
+  font-size:0.85rem;
+  color:var(--ink);
+  background:var(--amber-soft);
+  border-left:3px solid var(--amber);
+  padding:8px 12px;
+  margin:0 0 14px;
+}
+
+/* The file viewer: wider than the loading modal, its body scrolling. */
+.modal.file-modal{ width:min(960px, 94vw); max-height:90vh; display:flex; flex-direction:column; }
+.file-modal-head{ display:flex; flex-wrap:wrap; align-items:baseline; gap:10px 14px; margin-bottom:12px; }
+.file-modal-head h2{ margin:0; word-break:break-word; }
+.file-modal-note{ font-size:0.8rem; color:var(--ink-faint); flex:1; }
+.file-modal-head a.btn-secondary{ text-decoration:none; display:inline-block; }
+.file-modal-body{ overflow:auto; min-height:120px; }
+.file-image{ max-width:100%; background:#fff; border:1px solid var(--rule); }
+.file-frame{ width:100%; height:65vh; border:1px solid var(--rule); background:#fff; }
+.file-code, .file-text{ margin:0; padding:12px 14px; font-size:0.8rem; line-height:1.45; white-space:pre-wrap; word-break:break-word; border:1px solid var(--rule); border-radius:3px; }
+.file-text{ background:var(--paper); }
+.file-markdown{ font-family:var(--font-text); line-height:1.55; }

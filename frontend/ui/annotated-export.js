@@ -1,62 +1,53 @@
-// The download button: saves the conversations with both the automatic flags
-// and your corrections written into each message, in a file this page can
-// load again.
+// The download button: saves every conversation with both the automatic
+// flags and your corrections written into each message, in a file this
+// page can load again. The server builds it from the stored messages, in
+// parts (plan docs/plans/2026-10-06-load-only-what-the-page-shows.md §5,
+// §8c): each part's text is kept as it arrives and the parts are joined into
+// one file once the last arrives, with the bar showing sessions done of the
+// total. If the data changes part-way, the download starts again.
 
-import { FORMAT_VERSION } from '../core/export-format.js';
-import { state } from '../core/state.js';
-import { setSaveStatus } from './widgets/status-indicators.js';
+import { errorKindOf, errorStatusOf } from '../core/page-error.js';
+import { readAllParts } from '../core/parts.js';
+import { ensureAuthToken, fetchExportPart } from '../infra/api-client.js';
+import { createProgressBar, setSaveStatus } from './widgets/status-indicators.js';
 
-// Writes both the auto-detected values and your confirmed overrides onto
-// each message (in two separate, namespaced fields, so a future load can
-// never confuse one for the other), wraps the whole thing with a format
-// version marker, and downloads it. This is now the only save mechanism —
-// one self-contained file carries the conversation data, the automatic
-// tags, and your corrections together.
-export function exportAnnotatedConversations(){
-  if(!state.rawData){
-    setSaveStatus('export.no_data');
-    return;
-  }
-  // Mutate state.rawData directly rather than deep-cloning it first — for a
-  // file this size, a stringify-then-reparse clone briefly needs 2-3x the
-  // data's size in memory all at once (original + serialized string +
-  // freshly parsed copy), which is enough to crash the tab outright on a
-  // large export. There's nothing unsafe about mutating in place here:
-  // we only ever add two clearly namespaced fields to human messages,
-  // never remove or alter anything else, so doing it again on a later
-  // export is harmless and idempotent.
-  const annotated = state.rawData;
-  annotated.forEach((c, convIdx) => {
-    (c.chat_messages || []).forEach(m => {
-      if(m.sender !== 'human') return;
-      const id = convIdx + '|' + m.created_at;
+export const DOWNLOAD_NAME = 'conversations-with-flags.json';
 
-      const msg = state.humanById.get(id);
-      if(msg){
-        m._claude_timeline_auto = {
-          caps: msg.default_caps,
-          angry: msg.default_angry,
-          critical: msg.default_critical,
-          source: msg.auto_source || 'heuristic',
-        };
-      }
+const BAR = createProgressBar({
+  nodes: () => ({ fill: document.getElementById('exportProgressFill'), label: document.getElementById('exportProgressLabel') }),
+});
 
-      if(state.overrides[id] && Object.keys(state.overrides[id]).length){
-        m._claude_timeline_user = state.overrides[id];
-      } else {
-        delete m._claude_timeline_user;
-      }
+// Resolves once the file is saved, or the failure shown on the save line.
+export async function exportAnnotatedConversations(){
+  const button = document.getElementById('exportAnnotatedBtn');
+  const wrap = document.getElementById('exportProgress');
+  button.disabled = true;
+  wrap.hidden = false;
+  BAR.working('progress.exporting', { done: 0, total: 0 });
+  try{
+    const token = await ensureAuthToken(document.getElementById('devLoginSub').value.trim());
+    const { parts } = await readAllParts((cursor) => fetchExportPart(token, cursor), {
+      onPart: (part) => BAR.measured('progress.exporting', {}, part.sessions_done, part.sessions_total),
+      onRestart: () => BAR.working('progress.data_changed'),
     });
-  });
+    save(new Blob(parts.map((p) => p.part), { type: 'application/json' }));
+    setSaveStatus('export.downloaded');
+    wrap.hidden = true;
+  } catch(err){
+    console.error(err);
+    BAR.failed('progress.request_failed', { detail: err.message });
+    setSaveStatus('export.failed', { detail: err.message, status: errorStatusOf(err), error_kind: errorKindOf(err) });
+  } finally {
+    BAR.stop();
+    button.disabled = false;
+  }
+}
 
-  const wrapped = { claude_timeline_format_version: FORMAT_VERSION, conversations: annotated };
-
-  const blob = new Blob([JSON.stringify(wrapped)], {type:'application/json'});
+function save(blob){
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'conversations-with-flags.json';
+  a.download = DOWNLOAD_NAME;
   a.click();
   URL.revokeObjectURL(url);
-  setSaveStatus('export.downloaded');
 }
