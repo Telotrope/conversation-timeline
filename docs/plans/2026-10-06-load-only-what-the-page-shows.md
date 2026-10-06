@@ -26,7 +26,7 @@ Measured on `real-flags.json` (61.8 MB):
 | Tool calls (searches, commands, file edits) | 5.4 MB | no, except the files they made (§4) |
 | Claude's thinking | 0.7 MB | no |
 | Citations (2,446: a span of a reply's text and the web address it came from) | 0.52 MB | **yes**, shown in Review (§4c) |
-| Each message's link to the message it answers (`parent_message_uuid`) | 0.17 MB | **yes**: the only reliable way to tell which reply answers which message once a conversation branches (an edited or retried message keeps both versions; 11 times here) |
+| Each message's link to the message it answers (`parent_message_uuid`) | 0.17 MB | **yes**: used to remove replaced branches (§4d) |
 | Your attachments (8, with their text extracted, up to 32 KB) | < 0.1 MB | **yes, as files** (§4) |
 | Files Claude wrote whose text is in the export (24 created files, 16 widgets) | ~1.5 MB | **yes, as files** (§4) |
 | Your uploaded files (90 references) and files Claude made by running scripts (118: Word, PNG, PowerPoint…) | names only; their contents are not in the export | names only |
@@ -37,7 +37,7 @@ Measured on `real-flags.json` (61.8 MB):
 |---|---|---|
 | Conversation records | DynamoDB `Conversations`, `CONV#…` (exists) | unchanged, plus a version number (§7) |
 | **Sessions** | `Conversations`, new `SESS#{conversation}#{n}` rows | conversation, start, end, message counts, flag counts (§6) |
-| **Messages** | `Conversations`, new `MSG#{conversation}#{message}` rows | conversation, session, sender, time, the message it answers, and its content in order: text pieces with their citations, and markers for the files it presented, where it presented them (§4). For yours, **its flags**: the automatic ones and your own as separate attributes |
+| **Messages**, and the notes of §4d | `Conversations`, new `MSG#{conversation}#{message}` rows | conversation, session, sender (or "note"), time, the message it answers, and its content in order: text pieces with their citations, and markers for the files it presented, where it presented them (§4). For yours, **its flags**: the automatic ones and your own as separate attributes |
 | **Files** | S3, new `files/{user}/{conversation}/{message}/{name}` | the files of §4 |
 | The `MessageFlags` table | **removed**: flags move onto the message rows | (its data was cleared on 2026-10-06) |
 | The uploaded file | S3 `raw/…` | **deleted once processed** (the user) |
@@ -108,6 +108,40 @@ from. Review shows each cited span with a small numbered link after it to the ad
 opens in a new tab. The positions refer to the raw text, before Markdown formatting, so the markers
 are placed before the text is formatted. Citations are kept in the message rows with their text
 pieces, and are part of the annotated download.
+
+## 4d. Replaced branches
+
+When you edit a message or send it again, claude.ai keeps the earlier version too: the conversation
+becomes a tree, every message naming the one it answers. The export holds every branch. The user
+wants the record to be one consistent narrative (2026-10-06): a replaced branch is removed, and a
+note stands in its place.
+
+**Which branch is kept.** The path from the conversation's start to its most recent message; every
+branch off that path was replaced. This is not quite "the newer reply wins", which the data shows
+would sometimes keep the wrong one. In "Starting a government contracting business" the user's
+message at 16:30 on 21 June was answered, and the conversation went on from that answer for 117
+messages over the following days; a resend of the same message at 16:38 got a reply and went
+nowhere. "The newer reply wins" would keep the dead end and drop the 117 messages. The path to
+the latest message keeps them. (That the 16:38 message was a resend is inferred from its identical
+text; the export doesn't say why it was sent.)
+
+**Measured on `real-flags.json`:** 38 messages are removed, in 32 replaced branches. All 32 were
+started by the user (none by a retried reply from Claude); each holds at most 4 messages, sent
+within 15 seconds of each other.
+
+**The note.** Each replaced branch becomes one note row in the conversation: "A branch here was
+replaced: N messages, from HH:MM to HH:MM". It sits where the branch began, and its start and end
+count as activity when sessions are cut, so removing a branch can't split a session that the user
+was in fact working through (the user's suggestion). Measured: removing the branches alone cuts one
+session in two (300 sessions become 299, with a false gap inside one); with the notes, the sessions
+are the same 300 as before. Notes are not messages: they count in no message total, flag count or
+analysis. Review shows them as a thin line between messages. The annotated download leaves them
+out, since the export format has nothing like them.
+
+**Where it happens.** In processing, on the server, as one pure function in `timeline-core`
+(`prune_replaced_branches`: a conversation in, the kept path and its notes out), before the existing
+retried-message clean-up (`dedup_chat_messages`), which still removes resends that the tree does not
+show as branches.
 
 ## 5. What the page loads
 
@@ -256,6 +290,7 @@ DynamoDB writes of about 8,000 write units, roughly $0.005–0.01; about 50 S3 w
    from rows.
 5. **The scan.** Rows instead of the file; the 10-second budget.
 5b. **Slimming the upload** (§7b): in the page, and the server's decompression.
+5d. **Replaced branches** (§4d): pruning and notes in processing; notes in sessions and Review.
 5c. **Files and citations in Review** (§4, §4c): file cards in place in Claude's replies, the
    Conversations tab's list of a conversation's files, numbered citation links.
 6. **The page.** The timeline from conversations and sessions; your messages in the background;
@@ -273,13 +308,17 @@ coding.
 deleted once processed, §7); Q3 (SVGs drawn; web pages and code shown without running anything, with
 a download link, §4). The session files of the previous draft are dropped (the user).
 
-**Still open:** none.
+**Still open:**
+
+- **Q4 — Which branch is kept.** The path to each conversation's latest message (§4d), instead of
+  "the newer reply wins", which would have dropped 117 messages of a real conversation in favour of
+  a dead end. Agreed?
 
 ## Self-critique log
 
 ### C1 [OPEN]: Two files of a batch processed at once can lose each other's messages
 Present in the code built on 2026-10-05 as well. **Mitigation in plan:** versioned conditional
-writes with a retry ([§7 (line 145)](2026-10-06-load-only-what-the-page-shows.md#L145)). **Open:** until
+writes with a retry ([§7 (line 179)](2026-10-06-load-only-what-the-page-shows.md#L179)). **Open:** until
 this plan is built, a batch whose files share conversations can lose added messages on AWS. Trigger:
 this plan's step 2.
 
@@ -291,7 +330,7 @@ this plan's step 2.
 measures them.
 
 ### C4 [RESOLVED]: The first estimates table mixed kinds of numbers
-**Resolution:** one table, the same four columns, absolute times ([§9 (line 208)](2026-10-06-load-only-what-the-page-shows.md#L208)).
+**Resolution:** one table, the same four columns, absolute times ([§9 (line 242)](2026-10-06-load-only-what-the-page-shows.md#L242)).
 
 ### C5 [RESOLVED]: Files and rows both holding messages
 **Resolution:** rows hold every message's text; the session files are dropped, and tool calls,
@@ -300,7 +339,7 @@ tool results and thinking are not kept (the user, 2026-10-06). Only files of §4
 
 ### C6 [RESOLVED]: The Calendar needed messages only to split a session's flags by day
 **Resolution:** a session's flags show on every day it touches; the counts are stored with the
-session ([§6 (line 135)](2026-10-06-load-only-what-the-page-shows.md#L135)).
+session ([§6 (line 169)](2026-10-06-load-only-what-the-page-shows.md#L169)).
 
 ### C7 [OPEN]: Deleting the upload loses what isn't kept, for good
 Tool calls, tool results and thinking are gone once the upload is deleted, and the annotated
@@ -324,11 +363,19 @@ user finds marked files wrong often, drop the replay and keep only the first ver
 They put opening the timeline on AWS at 9 s and processing at 5 s, from a guessed slow-down. The
 activity run of 2026-10-05 had measured 37 s and 6 s, and sending the file, 26 s, was missing
 altogether. **Resolution:** §9 now starts from those measurements, lists what you wait for step by
-step, and derives the slow-down from them ([§9 (line 208)](2026-10-06-load-only-what-the-page-shows.md#L208)).
+step, and derives the slow-down from them ([§9 (line 242)](2026-10-06-load-only-what-the-page-shows.md#L242)).
 
 ### C11 [OPEN]: Slimming is measured in Node, not in a browser
 Parsing the 63.5 MB file took 0.3–0.7 s in Node on this machine; a browser on a slower computer may
 take several seconds, and holds the whole file in memory meanwhile, as it already does today.
 **Open:** step 7 measures it in the user's browser. Trigger: if preparing takes over 10 s, slim on
 the server instead (sending the full file again).
+
+### C12 [OPEN]: A later export can continue a branch that was pruned, or prune one that was kept
+The path is decided per upload. If a later export's newest messages answer a message that an earlier
+upload's path did not end on, the branch kept earlier was itself replaced. **Mitigation in plan:**
+none yet. **Open:** processing would need to compare each new message's parent with the stored
+rows, remove the stored messages after the branch point and add a note: a comparison of stored
+messages the user had ruled out for finding new messages (§7), though here only by the parent
+link of each new message. Trigger: Q4's answer, and the user's view on this comparison.
 
