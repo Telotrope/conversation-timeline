@@ -156,3 +156,15 @@ and the file it came from. Each was put off by the user's decision unless noted.
     already an item in the migration plan
     ([2026-09-09-rust-aws-backend-migration.md](2026-09-09-rust-aws-backend-migration.md), "Sign-in
     that goes stale"), not something the user deferred here.
+
+12. **Matching the names in a file to people.** The Describe page lists a file's participants as a
+    kind (Human, Claude, ChatGPT, Gemini, other AI) and, for humans and other AIs, a typed name. A
+    file names its speakers, and a voice-meeting transcript can name several humans, but the list
+    only records names: nothing says which speaker in the file is which participant, or that the
+    "Ada" of one file is the same person as the "ada@example.com" of another. The user (2026-10-06)
+    wants a way to map each name a file gives to a specific identity, not just to list names. Until
+    then, the Describe page has no Remove button on participants: taking someone out of the list
+    (Claude, say, from a file whose messages are clearly Claude's) would record something untrue
+    about the conversation without changing which messages are whose. Needs its own plan, together
+    with item 7 (other export formats), since those files are where several named speakers come
+    from.
