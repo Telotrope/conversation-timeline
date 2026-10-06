@@ -179,6 +179,38 @@ branch.
 retried-message clean-up (`dedup_chat_messages`), which still removes resends that the tree does not
 show as branches.
 
+## 4e. Messages whose time is unknown
+
+Today the server refuses a whole file if any message has no `created_at`
+([model.rs](../../backend/timeline-core/src/model.rs), `ChatMessage`), so the page's rule for placing
+such conversations (`placedBySpan` in [blocks.js](../../frontend/core/blocks.js)) could never run.
+The user (2026-10-06) wants such messages accepted, with a sentinel for "time unknown":
+
+- **Reading.** A message with no `created_at`, or `null`, is read with the time unknown. A value
+  that is present but isn't a time is still refused, as now: it is a damaged file, not a missing
+  fact.
+- **The sentinel.** Where a time must be written down (the parsed message's `created_at`, a row's
+  key, the annotated download), unknown is written as the zero date, `1970-01-01T00:00:00Z`. Code
+  never compares against it directly: `ChatMessage::time()` and `EntryKey::time()` return a
+  `MessageTime` (known, or unknown), so no reader can mistake the sentinel for a real time. A real
+  message sent at that exact instant would be read as unknown; no Claude conversation is that old.
+  The annotated download leaves `created_at` out for such messages, so a round trip keeps them
+  unknown.
+- **Placing.** A conversation with any message of unknown time is one session from its start to
+  its end as its record gives them (the page's rule, moved to the server): where the user put it,
+  or the upload's guess. Its timed messages don't place it. Editing its start and end moves the
+  session. The session row records that it was placed this way, and reading its messages reads the
+  whole conversation rather than a range of times.
+- **Counting and filters.** Such messages count in their conversation's message total and in the
+  session's counts. A conversation filter finds them; a time span finds them only through their
+  session (a span overlapping it); a Calendar day never does, as the page has always behaved
+  ("counted but not placed on the timeline").
+- **Merging a later file.** A message of unknown time is never added to a known conversation by
+  the time-range rule (it can't be outside the range); it is added only when the conversation is
+  new. Recorded in the run's log line as "messages of unknown time skipped".
+- **The record** gains `untimed`, the count of such messages, so Describe can warn as the
+  screen-flow plan's Q19 asked (the warning was never built because the case was impossible).
+
 ## 5. What the page loads
 
 **Nothing loads all messages.** The first draft of this plan loaded every message of yours in the
@@ -522,6 +554,7 @@ avoids a behaviour change nobody asked for):
 
 | Test | Change | Why |
 |---|---|---|
+| `timeline-core/tests/model.rs` `a missing created_at is caught the same` (line 129) | rewritten: a missing `created_at` is read as unknown (§4e); a malformed one is still refused (its own test, unchanged) | the user, 2026-10-06 |
 | `timeline-storage/tests/memory_message_flags.rs`, `dynamo_message_flags.rs`, `support/message_flags_contract.rs` (all) | **remove** | the `MessageFlags` table and its port go; equivalent contracts are written for flags on message rows |
 | `timeline-storage/tests/contract_memory.rs` | drop the flags contract module | same |
 | `timeline-storage/tests/support/conversation_summary_contract.rs`, `memory_conversations.rs`, `dynamo_conversations_table.rs` | records gain `version`; `put_again_replaces_the_earlier_summary` becomes "a write with the version read replaces it; a stale one is refused" | versioned writes (§7, C1) |
@@ -544,7 +577,7 @@ avoids a behaviour change nobody asked for):
 |---|---|---|
 | `analyses.test.js` | the fixtures build sessions with counts instead of messages; the trend and time-of-day tests (L55, L70, and those parts of L111) **move to Rust** | §5c |
 | `flags.test.js` L49 (`attachFlags`), L79 (`countsTowardRates`) | **remove**; the rules are tested in Rust | sessions come counted from the server |
-| `blocks.test.js` L13, L27; `blocks-span.test.js` (all) | **remove**; session cutting is tested in Rust. Placing a conversation with no message times by its start and end is not carried over: the server refuses messages without a time, so no such conversation can exist (screen-flow analysis, deviation 5) | |
+| `blocks.test.js` L13, L27; `blocks-span.test.js` (all) | **remove**; session cutting and placing by start and end are tested in Rust (§4e) | |
 | `export-format.test.js` | all but L69 **removed** or rewritten as tests of slimming (L32, L69 kept on the slimming function) | the page no longer reads an export into its state |
 | `annotated-export.test.js` L13, `api-client-unit.test.js` L57, L67, L77 | rewritten: the download comes from `GET /export`; handles come from `GET /messages` | |
 | `page-messages.test.js` L34 | wording list follows the changed messages ("Loaded N of your confirmed flags" goes; "Preparing the file" comes) | |
@@ -565,6 +598,56 @@ avoids a behaviour change nobody asked for):
 | `screen-flow.spec.js` L489 | the backend is started with a shorter scan budget for tests, so the scan takes several requests | |
 | `views.spec.js` `waitForAnalysis`, L150, L647 | wait for the analysis's request or its drawn chart | two analyses now come from the server |
 | `views.spec.js` L842 | extended: the same flags on both days of a session crossing midnight | |
+
+### Every removed test and the backend test that replaces it
+
+The user (2026-10-06) asked for each removed test to be matched one-to-one with a new backend test.
+Each new test names the one it replaces in its doc comment.
+
+| Removed | New backend test |
+|---|---|
+| `memory_message_flags.rs` `get_before_any_write_is_none` | message-row contract: a stored message has no automatic flags and no review |
+| … `auto_write_is_visible_via_read_with_no_user_overrides_set` | contract: an automatic write is read back, with no review |
+| … `user_write_is_visible_via_read_without_disturbing_auto` | contract: a review write is read back, automatic flags unchanged |
+| … `a_partial_user_update_only_touches_the_flags_it_names` | contract: a partial review changes only the flags it names (in-memory) |
+| … `list_for_conversation_returns_every_message_in_it` | contract: reading a conversation returns every entry in it, in time order |
+| … `list_for_conversation_does_not_include_a_different_conversations_messages` | contract: reading a conversation leaves out other conversations' entries |
+| … `flags_are_isolated_per_user` | contract: one user's rows are invisible to another (in-memory) |
+| `dynamo_message_flags.rs` `a_row_whose_sort_key_is_not_a_message_id_is_a_backend_error_when_listed` | DynamoDB: a message row whose key isn't a conversation, time and id is a backend error |
+| … `every_method_reports_a_missing_table_as_a_backend_error` | DynamoDB: every message-store method reports a missing table as a backend error |
+| … six `…_stored_as_…_is_an_error` tests (`auto_caps`, `auto_critical`, `auto_angry`, `user_caps`, `user_critical`, `user_angry`) | DynamoDB: the same six attributes, of the wrong type on a message row, are each an error naming the attribute |
+| `message_flags_contract.rs` `get_before_any_write_is_none` | contract: reading a message that was never written is `None` |
+| … `an_auto_write_sets_no_user_override` | contract: an automatic write sets no review |
+| … `a_second_auto_write_replaces_the_first_and_keeps_user_overrides` | contract: a second scan replaces the first and keeps the review |
+| … `a_user_write_does_not_disturb_auto_flags` | contract: a review write leaves the automatic flags alone |
+| … `set_user_flags_returns_the_record_as_stored` | contract: a review write returns the flags as stored |
+| … `a_user_write_on_a_message_with_no_record_creates_one_with_no_auto_flags` | contract: a review write on a message with no row is not found and creates nothing (rows exist for every message now, so a write without one names a message that isn't stored) |
+| … `a_partial_user_update_only_touches_the_flags_it_names` | contract: a partial review changes only the flags it names (both stores) |
+| … `an_empty_user_update_on_an_existing_record_changes_nothing` | contract: an empty review changes nothing |
+| … `an_empty_user_update_on_a_message_with_no_record_is_not_found_and_creates_nothing` | contract: an empty review on a message with no row is not found and creates nothing |
+| … `list_for_conversation_returns_every_message_in_it` | contract: reading a session's span returns exactly its entries |
+| … `list_for_conversation_excludes_other_conversations` | contract: reading a span leaves out other conversations at the same times |
+| … `flags_are_isolated_per_user` | contract: one user's rows are invisible to another (both stores) |
+| `raw_object_key.rs` `added_messages_are_kept_under_their_user_conversation_and_upload` | a stored file is kept under its user, conversation, message and number, and no file name becomes part of the key |
+| `flags.test.js` L49 `attachFlags files each message under its session, or the nearest one` | each of your messages is counted in exactly the session that holds it. **Only half can be matched:** "or the nearest one" covered a message falling between sessions, which the server can't produce (sessions are cut from the messages themselves) |
+| `flags.test.js` L79 `only messages with a value under the switches count toward rates` | `FlagView::counts_toward_rates` under all four views |
+| `blocks.test.js` L13 `a gap of 15 minutes or more starts a new session` | `cut_sessions`: a pause of 15 minutes starts a session, 14:59 does not |
+| `blocks.test.js` L27 `a session continues across midnight, and never spans two conversations` | `cut_sessions`: one session across midnight; two conversations at the same times give separate sessions |
+| `blocks-span.test.js` L20 `a conversation with no message times is one session from its start to its end` | §4e: one session from the record's start to end |
+| … L29 `editing its start and end moves it` | §4e: editing the span rewrites the session |
+| … L35 `some timed messages and some not` | §4e: placed by start and end, not by the timed messages |
+| … L44 `timed conversations, empty ones and ones without a record are placed as before` | §4e: timed conversations are cut by gaps; an empty one has no session. ("Without a record" can't be matched: on the server every conversation has a record) |
+| `export-format.test.js` L6 `FORMAT_VERSION marks files this page saved` | the annotated download is marked with its format version (now written by the server) |
+| … L10 `extractMessageText joins text pieces and skips other kinds` | a stored message's text joins its text pieces and skips file marks |
+| … L16 `a wrapped export is read as already processed` | an annotated download uploaded again is processed with its reviews |
+| … L41 `a message without a timestamp is counted but not placed on the timeline` | §4e: counted in the conversation, found by the conversation filter, not by a Calendar day |
+| … L48 `embedded automatic and confirmed flags are read from their separate fields` | processing takes `_claude_timeline_user` as your review and never takes `_claude_timeline_auto` as one |
+| … L74 `a review field with no flag stated is not counted as a review` | processing: a review field with no flag stated leaves the message unreviewed |
+| … L84 `each conversation's id and its count of untimed messages come beside the list` | the conversation record carries its id and `untimed` count (§4e) |
+| `analyses.test.js` L55 `the trend buckets by week by default, or by month` | trend analysis: weeks by default, months on request, in the viewer's time zone |
+| … L70 `time of day counts by hour and weekday` | time-of-day analysis: counts by local hour and weekday |
+| … L111, its trend and time-of-day parts | both server analyses, with only your flags shown, count reviewed messages only |
+| `upload-flow.spec.js` L348 `a timeline download without a stated size reports what has arrived` | **Can't be matched.** It tested the page reading the 64 MB timeline download as it arrived; that download no longer exists, and no server behaviour corresponds to it |
 
 ## 11. Questions for the user
 
