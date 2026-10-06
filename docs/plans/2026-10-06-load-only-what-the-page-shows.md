@@ -568,8 +568,10 @@ AWS; any gap over ten seconds is a failure of this plan.
 **The time limit.** The user chose 10 seconds (2026-10-06). The bar moves when an answer arrives,
 so the limit is on the server's work, set so that work plus the round trip stays within 10 seconds:
 the server starts no new step after **9 seconds** of work (a step takes milliseconds, §8b), and
-answers. On AWS the round trip measured about 0.1–0.3 s on top of our code (API Gateway's time
-against our code's, 2026-10-05), so the bar moves within about 9.5 s of the request leaving. A
+answers. On AWS, API Gateway added about 0.1 s to our code's time (3.0–4.3 s against 2.9–4.2 s,
+measured 2026-10-05); the trip between the user's browser and AWS was not measured, and the
+one-second margin assumes it is well under a second. Step 7 measures the gap between two moves of
+the bar end to end. A
 request that finishes sooner answers sooner; nothing is split before the limit. Tests run the
 server with a shorter limit (an environment setting) so that small test data still makes several
 requests.
