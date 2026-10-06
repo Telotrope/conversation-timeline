@@ -1,7 +1,8 @@
 # Load only what the page shows
 
-**Status:** proposed 2026-10-06, revised several times the same day with the user's answers; not
-approved. Open questions are in §11.
+**Status:** approved 2026-10-06, with the changes to existing tests (§10b) and the resumption
+tests (§8c). Coding started the same day: the first core types are committed but untested and
+unused (§10, "Already done"). To be carried out by another session. Open questions are in §11.
 
 ## 1. The problem
 
@@ -626,6 +627,7 @@ page analysis:
 |---|---|
 | Parts add up to the whole | with a budget of 1, 2 and 3 steps, the joined parts equal the one-request answer: the same records, sessions, matches in the same order, flags written, analysis numbers, download file |
 | A cursor stops anywhere | the stop falls in the middle of a session, at a session's last entry, at a conversation's end, and at the very end (the last answer carries no cursor) |
+| Starting from a given cursor | without running out of time: a request started from a cursor built for a known point in the test data (mid-session, a session's start, a conversation's end) returns exactly the answer worked out in advance for the rest of the data (the user's suggestion, 2026-10-06) |
 | Nothing is done twice or skipped | every entry is read, scanned or written exactly once across the parts (the scan's write count; the search's match ids) |
 | A changed data version starts over | a flag saved between two parts; the next answer says so and the page restarts |
 | A bad cursor is refused | text that isn't a cursor, a cursor of another request kind, a cursor naming a session that no longer exists: each a 400 naming why |
@@ -682,38 +684,74 @@ DynamoDB writes of about 8,000 write units, roughly $0.005–0.01; about 50 S3 w
 
 ## 10. Order of work
 
-1. **Storage.** Session and message rows with flags on them, message keys with the time (core types
-   and ports, in-memory and DynamoDB adapters), range reads of one session's messages, analysis rows
-   and the user's data version, the files store, paged queries, the conversation record's version;
-   the `MessageFlags` table removed from the template.
-2. **Processing.** Sessions, messages and files written with the versioned write and its retry,
-   up to 16 batches at a time; step durations in its log line; the files of §4 extracted; the upload
-   deleted when done; the additions and `conversation_rebuild.rs` replaced.
-3. **Flags and their counts.** `FlagView`'s rules on the server; flag saves and the scan writing
-   message rows; the fourteen session counts kept current; the data version raised.
-4. **Finding messages** (§5b). `MessageFilter` and `find_messages`, then the routes on them:
-   `GET /messages`, `GET /sessions`, `GET /conversations/{id}/files`, `GET /files/…`; the annotated
-   download rebuilt from rows.
-4b. **Analytics** (§5c). Rate over time and time of day on the server, with the time zone and saved
-   results; the other three analyses in the page reading the session counts.
-5. **The scan.** Rows instead of the file; the 10-second budget.
-5b. **Slimming the upload** (§7b): in the page, and the server's decompression.
-5d. **Replaced branches** (§4d): pruning and notes in processing; notes in sessions and Review.
-5c. **Files and citations in Review** (§4, §4c): file cards in place in Claude's replies, the
-   Conversations tab's list of a conversation's files, numbered citation links.
-6. **The page.** The timeline from conversations and sessions; Review a page at a time from
-   `GET /messages`; two analyses from `GET /analyses`, three from the sessions; the same session flags on each day a session
-   touches; `state.humanMessages`, the page's filtering and the two moved analyses removed.
-7. **Tests and measurements.** Every step tested as in the screen-flow plan, including the
-   resumption tests of §8c for every request in parts and every analysis; then §9 measured
-   locally and, after a deployment, on AWS, with processing at 512 MB and 1,769 MB, and written up
-   as an analysis.
+**Already done** (2026-10-06, commit `3fde146`): core types, compiled but **untested and not yet
+called by anything**:
+[flag_values.rs](../../backend/timeline-core/src/flag_values.rs) (`FlagSet` and `FlagOverrides`
+moved here from the flags port, `MessageFlags`, `FlagKind`),
+[flag_view.rs](../../backend/timeline-core/src/flag_view.rs) (`FlagView` over the existing
+`flags::matrix::effective_flag`),
+[stored_message.rs](../../backend/timeline-core/src/stored_message.rs) (`EntryKey`, `Entry`,
+`StoredMessage`, `BranchNote`, `Piece`, `Citation`, `FileRef`),
+[stored_session.rs](../../backend/timeline-core/src/stored_session.rs) (`SessionCounts` with the
+fourteen numbers, `cut_sessions`),
+[message_filter.rs](../../backend/timeline-core/src/message_filter.rs) (`MessageFilter`,
+`SearchText`, `TimeSpan`, `FlagFilter`), [branches.rs](../../backend/timeline-core/src/branches.rs)
+(`prune_replaced_branches`), and `ChatMessage::parent()` in
+[model.rs](../../backend/timeline-core/src/model.rs). They predate §4e (unknown times), §8b and §8c
+(time limits, cursors), so they need: `MessageTime` and the sentinel; a placed-by-span session
+(§4e) and `admits` taking the session for messages of unknown time; the cursor. The old flags
+port's types are still in [ports/message_flags.rs](../../backend/timeline-core/src/ports/message_flags.rs)
+too, until step 1 removes that port.
 
-Existing tests that read the downloaded export, the flags table, the page's own filtering or
-analysis arithmetic, or a flag drawn on only one day of a session crossing midnight will need
-changes. The list comes to the user for approval before coding.
+1. **Storage.** Session and message rows with flags on them, message keys with the time (the zero
+   date for unknown, §4e) (core types and ports, in-memory and DynamoDB adapters), range reads of
+   one session's messages that can start from a cursor, analysis rows (with partial results) and
+   the user's record (data version; counts of conversations, sessions and messages, §8b), the files
+   store with an object delete, reads in parts with a cursor, the conversation record's version and
+   `untimed` count; the `MessageFlags` table removed from the template.
+2. **Processing.** The upload read as a stream (gzip or plain), one conversation at a time;
+   progress written to the progress row every second; sessions (cut by gaps, or placed by span,
+   §4e), messages, notes and files written with the versioned write and its retry, up to 16 batches
+   at a time; step durations in its log line; an upload already processed skipped; the upload
+   deleted when done; the additions objects and `conversation_rebuild.rs` replaced.
+3. **The time limit and cursors** (§8b, §8c). `WorkBudget` (clock, or counting steps for tests),
+   the typed `Cursor`, the data version in every answer.
+4. **Flags and their counts.** `FlagView`'s rules on the server; flag saves finding their message
+   among the conversation's rows and recounting its session; the scan writing message rows; the
+   fourteen session counts kept current; the data version raised.
+5. **Finding messages** (§5b). `MessageFilter` and `find_messages` with the time limit and cursor,
+   then the routes on them: `GET /conversations` and `GET /sessions` in parts, `GET /messages`,
+   `GET /conversations/{id}/files`, `GET /files/…`; the annotated download in parts, rebuilt from
+   rows.
+6. **Analytics** (§5c). Rate over time and time of day on the server, with the time zone, partial
+   results and saved results.
+7. **The scan** (§8). Rows instead of the file; the time limit; a cursor that can stop inside a
+   session.
+8. **Slimming the upload** (§7b): in a Web Worker, with @streamparser/json, progress every half
+   second; the server's decompression.
+9. **Replaced branches** (§4d): pruning and notes in processing; important branches kept as their
+   own conversations; a revived branch found by its parent; notes in sessions and Review.
+10. **Files and citations in Review** (§4, §4c): file extraction in processing (replayed edits,
+    widgets, attachments, the "may have been changed later" mark); file cards in place in Claude's
+    replies, the Conversations tab's list of a conversation's files, numbered citation links;
+    highlight.js vendored.
+11. **The page.** The timeline from conversations and sessions, received and drawn in time-limited
+    parts; Review a page at a time from `GET /messages`, carrying on with cursors, one cursor kept
+    per page of 50; two analyses from `GET /analyses`, three from the sessions in 50 ms turns,
+    each resumable; the same session flags on each day a session touches; the progress bar of §8b
+    for every wait (the striped state cleared by every measured bar); `state.humanMessages`, the
+    page's filtering and the two moved analyses removed; Describe's warning for conversations with
+    messages of unknown time.
+12. **Tests and measurements.** Every step tested as in the screen-flow plan, with 100% coverage
+    through public interfaces; the replacement tests of §10b's matching table, each naming the test
+    it replaces; the resumption tests of §8c, including runs from cursors whose results were worked
+    out in advance; then §9 and §8b's longest gap between moves of the bar measured locally and,
+    after a deployment, on AWS, with processing at 512 MB and 1,769 MB, and written up as an
+    analysis.
 
-## 10b. Changes to existing tests (for the user's approval)
+The changes to existing tests are listed in §10b; the user approved them on 2026-10-06.
+
+## 10b. Changes to existing tests (approved by the user, 2026-10-06)
 
 Found by reading every test on 2026-10-06. Choices made first, to keep the list short (each also
 avoids a behaviour change nobody asked for):
