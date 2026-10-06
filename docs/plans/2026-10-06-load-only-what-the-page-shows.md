@@ -469,15 +469,20 @@ progress-bar studies). Waits that always end within ten seconds meet the rule wi
 **Estimates are not enough** (the user, 2026-10-06): a wait expected to take two seconds can take
 thirty on a slow computer, on a slow connection, or with ten times the data. So the rule is met by
 construction, not by estimate: **no wait contains a step whose length grows with the data, the
-computer or the connection.** Every wait is a loop over small units of fixed size, and reports
-after each unit, or once a second, whichever is later:
+computer or the connection.** Every wait is a loop with a **time limit** (the user's approach,
+first asked for the scan, 2026-10-06): it does as much as fits in its time, then stops, reports
+how far it has got, and carries on. Chunks of a fixed size are not used to decide when to report: a
+fixed number of items takes an unknown time on an unknown computer. Between checks of the clock
+the loop does one *step*, the smallest piece of work there is (one message, one entry, one piece
+the browser hands over), which takes milliseconds whatever the data:
 
-| Kind of work | The unit | How progress is known |
-|---|---|---|
-| A transfer (sending, receiving) | the browser's own progress events | bytes of the stated size; every answer this server sends states its size |
-| Work in the browser (preparing the file, drawing the timeline) | a 64 KB piece of the file; one conversation; 200 sessions drawn | in a Web Worker for the file (§7b), or between animation frames for drawing; bytes or items of the total |
-| Work on the server for a request (the scan, Review's messages, a search, the two server analyses, the annotated download, the timeline's sessions) | one session's entries, and within a long session one 1 MB DynamoDB page | each request works for at most **2 seconds**, then answers with what it has and a **cursor** (where to carry on: a session and an entry key); the page asks again. Progress is sessions done of the total |
-| Processing an upload | one conversation, read from the file as a stream | the processing function records bytes of the file read, and conversations written, in the upload's progress row at least once a second; the page reads it every second (exists) |
+| Kind of work | Time limit | Step between checks | Progress shown |
+|---|---|---|---|
+| A transfer (sending, receiving) | none needed: the browser reports as bytes move | | bytes of the stated size; every answer this server sends states its size |
+| Preparing the file, in a Web Worker (§7b) | reports every **0.5 s** | one piece of the file stream; one message slimmed; one piece compressed | bytes read and parsed, conversations slimmed, bytes compressed, each of its total |
+| Drawing the timeline in the page | hands the screen back every **50 ms**, reporting each time | one session drawn | sessions drawn of the total |
+| A server request (the timeline's records and sessions, Review's messages, a search, the two server analyses, the scan, the annotated download) | answers after at most **2 s** of work, with what it has and a **cursor** (where to carry on); the page asks again | one entry read, matched, scanned or written | sessions (or conversations) done of the total |
+| Processing an upload | writes its progress row every **1 s**; the page reads it every second (exists) | one message parsed and written | bytes of the file read, conversations written |
 
 **Totals known in advance.** A bar needs a total. The user's record (which already holds the data
 version, §5c) also holds the counts of conversations, sessions, your messages and all messages,
@@ -485,11 +490,10 @@ kept current by processing. A request that walks sessions reports "done of total
 
 **What this changes, wait by wait:**
 
-- **Opening the timeline.** `GET /conversations` and `GET /sessions` answer in parts (one DynamoDB
-  page each, about 1 MB), each with the total and a cursor; the bar is conversations, then
-  sessions, received of their totals, and between parts bytes of the part. Drawing the Calendar and
-  the Conversations tab then goes 200 sessions per animation frame, with the bar showing sessions
-  drawn.
+- **Opening the timeline.** `GET /conversations` and `GET /sessions` each answer after at most
+  2 s with the total and a cursor; the bar is conversations, then sessions, received of their
+  totals, and within a part bytes of the part. Drawing the Calendar and the Conversations tab then
+  runs in 50 ms turns, with the bar showing sessions drawn.
 - **Review, any filter, including search** (closes C17's stall; its cost stays). The shared
   `find_messages` (§5b) gains the 2-second budget and the cursor: it reads the admitted sessions in
   key order, stops at the budget, and returns what it found with "sessions searched of sessions to
@@ -499,17 +503,22 @@ kept current by processing. A request that walks sessions reports "done of total
 - **The two server analyses.** Computed in the same steps: each request adds the next sessions'
   messages to a partial result kept in the analysis row (§5c) with its cursor, and answers with
   sessions done of the total. Once finished, the row is the saved result, as before.
-- **The scan.** Its unit is one session, not one conversation, so one very long conversation can't
-  make a request run long; the budget becomes 2 seconds, like every other request.
+- **The scan.** It checks the clock after every message, not after every conversation, so one very
+  long conversation can't make a request run past its 2 seconds; the cursor can stop inside a
+  session.
 - **The annotated download.** Built in parts the same way into the file store, then received with
   its size stated.
-- **Processing.** The file is parsed one conversation at a time (serde's streaming sequence access
-  over the decompressing reader), not in one call, so a large file is never one long step; the
-  progress row is written at least once a second with bytes read of the file's size and
-  conversations written.
+- **Processing.** The file is parsed as a stream (serde's streaming sequence access over the
+  decompressing reader), not in one call, so a large file is never one long step; the progress row
+  is written every second with bytes read of the file's size and conversations written.
 - **Preparing the file in the browser.** As before: a Web Worker, the file read as a stream and
   parsed with **@streamparser/json** (MIT; to be confirmed from its licence file when vendored),
-  reporting bytes.
+  reporting every half second.
+
+Why the first version of this section used fixed chunks (200 sessions per frame, one conversation
+or one session per check): it copied the page's existing pattern (`computeWithProgress` in
+[analytics.js](../../frontend/ui/views/analytics.js), 400 items per chunk) instead of the time
+limit the user had already chosen. Corrected the same day at the user's question.
 
 **What it costs.** More requests: a search over 300 sessions that takes 6 seconds of server work is
 three requests instead of one, each with its own sign-in check and round trip (about 50–100 ms on
