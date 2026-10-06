@@ -13,34 +13,12 @@ use super::ids::UserId;
 /// How much the user has: what "done of total" counts against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Totals {
-    pub conversations: i64,
-    pub sessions: i64,
+    pub conversations: usize,
+    pub sessions: usize,
     /// Your messages.
-    pub your_messages: i64,
+    pub your_messages: usize,
     /// Every message, yours and Claude's.
-    pub messages: i64,
-}
-
-impl Totals {
-    /// Each count of `self` plus `other`'s.
-    pub fn plus(self, other: Totals) -> Totals {
-        Totals {
-            conversations: self.conversations + other.conversations,
-            sessions: self.sessions + other.sessions,
-            your_messages: self.your_messages + other.your_messages,
-            messages: self.messages + other.messages,
-        }
-    }
-
-    /// Each count of `self` minus `other`'s.
-    pub fn minus(self, other: Totals) -> Totals {
-        Totals {
-            conversations: self.conversations - other.conversations,
-            sessions: self.sessions - other.sessions,
-            your_messages: self.your_messages - other.your_messages,
-            messages: self.messages - other.messages,
-        }
-    }
+    pub messages: usize,
 }
 
 /// The user's record. A user who has stored nothing has version 0 and no
@@ -55,12 +33,17 @@ pub struct UserRecord {
 pub trait UserRecordStore: Send + Sync {
     async fn get(&self, user_id: &UserId) -> Result<UserRecord, StoreError>;
 
-    /// Raises the data version by one, adds `change` to the totals, and
-    /// returns the record as stored. Applied by the store itself, so two
-    /// writers can't both read the old values.
-    async fn record_change(
+    /// Raises the data version by one and returns the record as stored.
+    /// Applied by the store itself, so two writers can't both read the old
+    /// version.
+    async fn raise_version(&self, user_id: &UserId) -> Result<UserRecord, StoreError>;
+
+    /// Replaces the totals, raises the data version by one, and returns the
+    /// record as stored. Processing counts the totals afresh after every
+    /// upload, so they can't drift.
+    async fn record_totals(
         &self,
         user_id: &UserId,
-        change: Totals,
+        totals: Totals,
     ) -> Result<UserRecord, StoreError>;
 }

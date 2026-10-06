@@ -221,10 +221,17 @@ pub const UNDATED_LENGTH_HOURS: i64 = 1;
 /// The span of a conversation's known message times, or `None` when no
 /// message has a time.
 pub fn message_span(conversation: &Conversation) -> Option<ConversationSpan> {
-    let mut times = conversation
-        .chat_messages
-        .iter()
-        .filter_map(|m| m.time().known());
+    span_of_times(
+        conversation
+            .chat_messages
+            .iter()
+            .filter_map(|m| m.time().known()),
+    )
+}
+
+/// From the earliest to the latest of `times`, or `None` when there are
+/// none.
+pub fn span_of_times(mut times: impl Iterator<Item = DateTime<Utc>>) -> Option<ConversationSpan> {
     let first = times.next()?;
     let (start, end) = times.fold((first, first), |(s, e), t| (s.min(t), e.max(t)));
     Some(ConversationSpan {

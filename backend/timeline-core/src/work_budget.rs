@@ -52,6 +52,12 @@ pub enum WorkBudget {
 }
 
 impl WorkBudget {
+    /// A budget that never runs out, for work that is never split: a flag
+    /// save's recount of its session (§8c).
+    pub fn unlimited() -> Self {
+        WorkBudget::Steps { left: usize::MAX }
+    }
+
     /// Whether another step may be done; if so, the step is counted.
     pub fn take_step(&mut self) -> bool {
         match self {

@@ -115,7 +115,7 @@ pub fn prune_replaced_branches(conversation: &Conversation) -> PrunedConversatio
 
     let kept_texts: Vec<(Sender, String)> = kept
         .iter()
-        .map(|m| (m.sender.clone(), collapse_spaces(&extract_text(m))))
+        .map(|m| (m.sender.clone(), extract_text(m)))
         .collect();
 
     let mut branches = Vec::new();
@@ -140,11 +140,11 @@ pub fn prune_replaced_branches(conversation: &Conversation) -> PrunedConversatio
             }
         }
         branch.sort_by_key(|x| x.created_at);
-        let words_not_repeated = branch
+        let branch_texts: Vec<(Sender, String)> = branch
             .iter()
-            .filter(|x| !is_repeated(x, &kept_texts))
-            .map(|x| extract_text(x).split_whitespace().count())
-            .sum();
+            .map(|x| (x.sender.clone(), extract_text(x)))
+            .collect();
+        let words_not_repeated = words_not_repeated(&branch_texts, &kept_texts);
         branches.push(ReplacedBranch {
             messages: branch,
             replaced_by: kept_child.get(&parent).copied(),
@@ -159,11 +159,23 @@ fn collapse_spaces(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Whether `message`'s text is included in a kept message's from the same
-/// sender. Empty text is included in any message.
-fn is_repeated(message: &ChatMessage, kept_texts: &[(Sender, String)]) -> bool {
-    let text = collapse_spaces(&extract_text(message));
-    kept_texts
+/// Words in `branch`'s messages (each a sender and its text) whose text is
+/// not included in a message from the same sender in `kept`. Text is
+/// compared after collapsing runs of spaces and line breaks; empty text is
+/// included in any message, so it adds no words.
+pub fn words_not_repeated(branch: &[(Sender, String)], kept: &[(Sender, String)]) -> usize {
+    let kept: Vec<(&Sender, String)> = kept
         .iter()
-        .any(|(sender, kept)| *sender == message.sender && kept.contains(&text))
+        .map(|(sender, text)| (sender, collapse_spaces(text)))
+        .collect();
+    branch
+        .iter()
+        .filter(|(sender, text)| {
+            let text = collapse_spaces(text);
+            !kept
+                .iter()
+                .any(|(kept_sender, kept_text)| *kept_sender == sender && kept_text.contains(&text))
+        })
+        .map(|(_, text)| text.split_whitespace().count())
+        .sum()
 }
