@@ -146,11 +146,16 @@ like failed sends that were resent; inferred, as the export records no failures)
 review of yours, because this file was saved by this tool's annotated download.
 
 **Branches worth keeping as their own conversation** (the user, 2026-10-06, answering C12 and Q5).
-A replaced branch is important when it holds **100 words or more once its duplicates are removed**:
-a message in the branch is a duplicate when a message on the kept path of the same conversation has
-the same sender and the same text (after collapsing runs of spaces and line breaks). Measured here:
-23 of the 32 branches are nothing but duplicates (0 words left); one is kept, two messages of 155
-words in "C-Corporation banking setup for payroll". An important branch is not reduced to a note:
+A replaced branch is important when it holds **100 words or more once its repeated messages are
+removed**: a message in the branch is repeated when its text is included in the text of a message
+from the same sender on the kept path of the same conversation (both compared after collapsing runs
+of spaces and line breaks). "Included" covers an identical message, and also a message that was cut
+off and then sent again in full, or sent and then extended (the user, 2026-10-06, after reading the
+branches: two of them were such cut-off starts). An empty message is included in any message, and
+copies of one message within a branch are each included, so neither adds words. The same count
+gives the "W words not repeated below" in the note. Measured here: 26 of the 32 branches are
+nothing but repeats (0 words left); five keep 1 to 10 words; one is kept, two messages of 155 words
+in "C-Corporation banking setup for payroll". An important branch is not reduced to a note:
 it is kept as a conversation of its own, named "{name}: earlier branch from {date, time}", holding
 the branch's own messages from the branch point on, and linked to the conversation it branched from
 (both show the link). It holds only the branch's messages, not the start the two share, so no
