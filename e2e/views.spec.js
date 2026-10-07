@@ -662,7 +662,11 @@ test('a calendar session opens the review tab on that session, and the banner wi
   // Dispatched on the bar itself so a flag icon inside it can't take the click.
   await (await busiestBar(page)).dispatchEvent('click');
   await expectReviewOpenOnSession(page);
-  await expect(page.locator('#reviewTable tr.row-highlight')).not.toHaveCount(0);
+  // A session opens with nothing flashed: flashing every row shown would
+  // mark none (plan docs/plans/2026-10-06-load-only-what-the-page-shows.md
+  // §12.1). The rows are waited for first, so the check isn't made too soon.
+  await expect(page.locator('#reviewTable tbody tr[data-msg-id]').first()).toBeVisible();
+  await expect(page.locator('#reviewTable tr.row-highlight')).toHaveCount(0);
 
   await page.click('#viewEntireConvBtn');
   await expect(reviewBanner(page)).not.toContainText('Time span');
