@@ -17,7 +17,7 @@ resolve_s3 = true
 s3_prefix = "timeline-dev"
 confirm_changeset = true
 capabilities = "CAPABILITY_IAM"
-parameter_overrides = "Stage=\"dev\" FrontendUrl=\"https://dev.tail13dce8.ts.net/proxy/8000/timeline.html\" LogS3Events=\"off\" FailProcessing=\"off\" HostPage=\"on\" PageDomain=\"dev.howangryami.telotrope.ai\" PageCertificateArn=\"arn:aws:acm:us-east-1:014810124096:certificate/33130ff2-3a02-473a-9f54-f21c606f7b37\" AlsoAllowLocalPage=\"on\""
+parameter_overrides = "Stage=\"dev\" FrontendUrl=\"https://dev.tail13dce8.ts.net/proxy/8000/timeline.html\" LogS3Events=\"off\" FailProcessing=\"off\" HostPage=\"on\" PageDomain=\"dev.howangryami.telotrope.ai\" PageCertificateArn=\"arn:aws:acm:us-east-1:014810124096:certificate/9f866213-de7f-45b7-80ac-cc77f5149f81\" AlsoAllowLocalPage=\"on\""
 image_repositories = []
 
 [dev.global.parameters]
