@@ -282,8 +282,22 @@ click.
 The chain preview → `vscode.open` → `code-oss` opener → extension is inferred
 from reading minified source. **Mitigation in plan:** the F2 click test comes
 before any report rewrite ([§3d, line 175](docs/plans/2026-10-07-report-diff-links-in-vs-code.md#L175)).
-**Open:** if the click does nothing, check the "Doc links" output channel and
-the browser console, and come back with a revised plan.
+**Result of the F2 click (user, 2026-10-07): nothing happened; the "Doc
+links" output stayed empty.** Cause, read in the installed code-server after
+the failure:
+- §2's first bullet was misread. The preview's click handler
+  (`media/index.js`) passes a link to the Markdown extension only when it has
+  *no* scheme; a `code-oss:` link is left to the webview (the sandboxed page
+  the preview runs in).
+- The webview host opens a clicked link only if `isSupportedLink` allows it
+  (`workbench.web.main.internal.js`): `http`, `https`, `mailto`, `vscode`,
+  `vscode-insider`, `command` when the webview enables command links (the
+  preview does not), or the product's own scheme (`code-oss`) **only when not
+  running in a browser**. code-server runs in a browser, so the click is
+  dropped without a message.
+**Open:** the comparison links need a different route; options put to the
+user 2026-10-07. The line links and the switch to the preview (§3e, §3f)
+work (user, 2026-10-07).
 
 ### C2 [OPEN]: VS Code may ask "Allow 'doc-links' to open this URI?" on first click
 The opener passes `trusted: true`, which I expect skips the question, but I
