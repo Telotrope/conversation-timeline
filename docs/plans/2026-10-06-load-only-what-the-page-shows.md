@@ -1219,13 +1219,6 @@ connection wording for a permanent failure. **Mitigation in plan:** every existi
 gains a check of the variant. **Open:** a damaged-row check added later must use `Damaged`. Trigger:
 a code review of any new row-reading code.
 
-### C23 [OPEN]: Times out of file order can make a conversation's sessions overlap in time
-FU-B3 cuts sessions in position order. If a file's times run backwards somewhere (not seen yet;
-not checked in the user's export), two sessions of one conversation could cover overlapping times
-on the Calendar. **Mitigation in plan:** none beyond cutting at timed gaps. **Open:** whether to
-cut at a backwards step too. Trigger: overlapping sessions of one conversation seen in a real
-export, or a test file built to show it.
-
 ### C21 [RESOLVED]: Highlighting a session highlighted every row shown
 The B5 fix highlighted all of a session's messages, which marks nothing. **Resolution:** no highlight
 for a session; flag highlights wait on Q6 ([§12.1](#121-fu-b5-no-highlight-when-a-session-is-opened)).
@@ -1235,3 +1228,9 @@ The B7 fix made the page wait so a committed test's assumption held. **Resolutio
 removed and the test identifies the held file by name
 ([§12.5](#125-fu-b7-files-are-sent-as-soon-as-each-is-prepared)).
 
+### C23 [OPEN]: Times out of file order can make a conversation's sessions overlap in time
+FU-B3 cuts sessions in position order. If a file's times run backwards somewhere (not seen yet;
+not checked in the user's export), two sessions of one conversation could cover overlapping times
+on the Calendar. **Mitigation in plan:** none beyond cutting at timed gaps. **Open:** whether to
+cut at a backwards step too. Trigger: overlapping sessions of one conversation seen in a real
+export, or a test file built to show it.
