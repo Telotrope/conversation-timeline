@@ -21,8 +21,10 @@ use timeline_core::ports::errors::StoreError;
 
 pub(crate) type Item = HashMap<String, AttributeValue>;
 
+/// Stored data that can't be read: `StoreError::Damaged`, so the page can
+/// tell it apart from the store failing to answer.
 pub(crate) fn invalid_data(msg: impl Into<String>) -> StoreError {
-    StoreError::Backend(Box::new(std::io::Error::new(
+    StoreError::Damaged(Box::new(std::io::Error::new(
         std::io::ErrorKind::InvalidData,
         msg.into(),
     )))

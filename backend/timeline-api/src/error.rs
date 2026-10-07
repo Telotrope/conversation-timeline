@@ -63,6 +63,11 @@ fn bounded(message: &str) -> String {
 #[derive(Serialize)]
 struct ErrorBody {
     error: String,
+    /// Set only for stored data that can't be read (`"data_integrity"`), so
+    /// the page can tell a failure that trying again won't fix from one it
+    /// might (plan 2026-10-06-load-only-what-the-page-shows.md §12.4).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_kind: Option<&'static str>,
 }
 
 impl IntoResponse for ApiError {
@@ -74,6 +79,7 @@ impl IntoResponse for ApiError {
         // structured `tracing` subscriber instead of a raw eprintln; this is
         // the minimal version that still satisfies CLAUDE.md's rule that an
         // error must be visible somewhere, not silently discarded.
+        let mut error_kind = None;
         let (status, message) = match &self {
             ApiError::NotFound => (StatusCode::NOT_FOUND, "not found".to_string()),
             // These messages can quote text from the request (serde names an
@@ -81,6 +87,14 @@ impl IntoResponse for ApiError {
             // echoed back. JSON serialization escapes the rest.
             ApiError::BadRequest(m) => (StatusCode::BAD_REQUEST, bounded(m)),
             ApiError::Forbidden(m) => (StatusCode::FORBIDDEN, bounded(m)),
+            ApiError::Store(e @ StoreError::Damaged(_)) => {
+                eprintln!("{e}");
+                error_kind = Some("data_integrity");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "stored data can't be read".to_string(),
+                )
+            }
             ApiError::Store(e) => {
                 eprintln!("storage backend error: {e}");
                 (
@@ -103,6 +117,13 @@ impl IntoResponse for ApiError {
                 )
             }
         };
-        (status, Json(ErrorBody { error: message })).into_response()
+        (
+            status,
+            Json(ErrorBody {
+                error: message,
+                error_kind,
+            }),
+        )
+            .into_response()
     }
 }

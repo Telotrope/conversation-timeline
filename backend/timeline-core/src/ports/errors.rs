@@ -21,6 +21,12 @@ pub enum StoreError {
     /// problem, ...); the source is preserved so the caller can log or
     /// inspect what actually happened, not just that something did.
     Backend(BoxError),
+    /// Stored data that can't be read: a row missing a field, holding one
+    /// of the wrong type, or under a key this code didn't write. Distinct
+    /// from `Backend`, which is the store failing to answer, because this
+    /// one won't go away by trying again (plan
+    /// 2026-10-06-load-only-what-the-page-shows.md §12.4).
+    Damaged(BoxError),
     /// A versioned write found a newer version stored than the one the
     /// writer read: someone else wrote first. Re-read and redo.
     Conflict,
@@ -34,6 +40,7 @@ impl fmt::Display for StoreError {
         match self {
             StoreError::NotFound => write!(f, "item not found"),
             StoreError::Backend(e) => write!(f, "storage backend error: {e}"),
+            StoreError::Damaged(e) => write!(f, "stored data can't be read: {e}"),
             StoreError::Conflict => write!(f, "someone else changed this record first"),
             StoreError::Unwritten { left, total } => write!(
                 f,
@@ -47,7 +54,7 @@ impl StdError for StoreError {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match self {
             StoreError::NotFound | StoreError::Conflict | StoreError::Unwritten { .. } => None,
-            StoreError::Backend(e) => Some(e.as_ref()),
+            StoreError::Backend(e) | StoreError::Damaged(e) => Some(e.as_ref()),
         }
     }
 }
