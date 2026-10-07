@@ -987,18 +987,9 @@ unknown time sorts first, and messages with equal times sort by id.
     - the messages are still stored, in file order.
   - A conversation with any message of unknown time stays placed by its start and end, as one
     session (§4e unchanged).
-- **Review (revised 2026-10-07 by the user's direction):** messages of two conversations are never
-  interleaved. Review lists **sessions in time order (by start), and each session's messages in
-  file order**.
-  - **Every view:** a Calendar day, a span, all messages, or a search. The "time, then
-    conversation" order of O1 (in the report) and the Calendar day's order by conversation name
-    both go.
-  - **Ties:** two sessions starting at the same time are ordered by conversation id, then position.
-  - **The walk's cursor:** names the session and the last position done. The "groups of
-    overlapping sessions" of O1 are no longer needed.
-  - Messages of unknown time stay matched through their session (O3).
-  - **Tests:** the committed Review tests that expect O1's order across conversations (in
-    `review.rs` and the browser tests) change to session order, approved by this direction.
+- **Review's order** is its own follow-up, [§12.7](#127-fu-order-review-lists-sessions-in-time-order-file-order-inside).
+  Until it is done, Review keeps O1's order across conversations; within a conversation, rows
+  come in position order, since that is now the key's order.
 - **Pruning ([branches.rs](../../backend/timeline-core/src/branches.rs)):**
   - It still finds "the latest message" by time; position breaks ties, as file order does today.
   - A conversation with any message of unknown time is still left whole (B3).
@@ -1103,7 +1094,25 @@ The page-request half of B8 is tested. The count walk's half is not: "a replaced
   - the bar shows no failure;
   - the new walk's count is shown.
 
-### 12.7 Deferred problems
+### 12.7 FU-ORDER. Review lists sessions in time order, file order inside
+
+Decided by the user on 2026-10-07; a follow-up of its own, done after FU-B3, whose positions it
+uses.
+
+Messages of two conversations are never
+interleaved. Review lists **sessions in time order (by start), and each session's messages in
+file order**.
+- **Every view:** a Calendar day, a span, all messages, or a search. The "time, then
+  conversation" order of O1 (in the report) and the Calendar day's order by conversation name
+  both go.
+- **Ties:** two sessions starting at the same time are ordered by conversation id, then position.
+- **The walk's cursor:** names the session and the last position done. The "groups of
+  overlapping sessions" of O1 are no longer needed.
+- Messages of unknown time stay matched through their session (O3).
+- **Tests:** the committed Review tests that expect O1's order across conversations (in
+  `review.rs` and the browser tests) change to session order, approved by this direction.
+
+### 12.8 Deferred problems
 
 Recorded, not part of this follow-up:
 - **D1. Damage isolation** (the user, 2026-10-07): when stored data can't be read, the whole read
@@ -1115,12 +1124,13 @@ Recorded, not part of this follow-up:
 - **D3.** Report P10: a crash between a conversation's record and its kept branches loses the
   branches.
 
-### 12.8 Order of work
+### 12.9 Order of work
 
 1. FU-B7, FU-B8, FU-B5: page and test changes only.
 2. FU-B6: the storage error variant, the API's error kind, the page's two messages.
-3. FU-B3: the key, sessions, pruning, Review; then every test that spells a key.
-4. FU-B4: once the user confirms dropping empty conversations.
+3. FU-B4: dropping conversations with no messages.
+4. FU-B3: the key, sessions, pruning, the out-of-order warning; then every test that spells a key.
+5. FU-ORDER: Review's order.
 
 Each step follows the usual loop: code, the post-addition check, tests, all suites green, then
 small topical commits. The browser suite runs at the end.
