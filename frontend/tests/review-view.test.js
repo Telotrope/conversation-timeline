@@ -338,7 +338,9 @@ test('a page request replaced by a newer one fails quietly, with a note in the c
   assert.match(page.el('pagination').innerHTML, /Page 3 of 3/);
 });
 
-test("a session opened from elsewhere flashes its rows: all of yours, or those with the flag clicked, once a part holds one", async () => {
+// Plan §12.1: a session opened without a flag flashes nothing, since
+// flashing every row shown would mark none.
+test("a session opened from a flag flashes the rows with that flag once a part holds one; opened plainly, nothing", async () => {
   const flagged = { ...row(2), flags: { auto: { caps: false, critical: true, angry: false }, user: { caps: null, critical: null, angry: null } } };
   const elements = {};
   for(const id of ['m0', 'm1', 'm2']){
@@ -351,10 +353,10 @@ test("a session opened from elsewhere flashes its rows: all of yours, or those w
   await settle();
   assert.deepEqual(['m0', 'm1', 'm2'].map((id) => elements[id].classes.has('row-highlight')), [false, false, true]);
   for(const id of ['m0', 'm1', 'm2']) elements[id].classes.delete('row-highlight');
-  script = [part({ rows: rows(0, 2), matched: 2 })];
-  review.jumpToReview({ conv: 0, rangeStart: 0, rangeEnd: 1, highlightFlag: 'all' });
+  script = [part({ rows: [...rows(0, 2), flagged], matched: 3 })];
+  review.jumpToReview({ conv: 0, rangeStart: 0, rangeEnd: 1 });
   await settle();
-  assert.deepEqual(['m0', 'm1'].map((id) => elements[id].classes.has('row-highlight')), [true, true]);
+  assert.deepEqual(['m0', 'm1', 'm2'].map((id) => elements[id].classes.has('row-highlight')), [false, false, false]);
 });
 
 test('a count replaced by a newer one fails quietly, with a note in the console', async () => {

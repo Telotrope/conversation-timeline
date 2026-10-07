@@ -103,10 +103,15 @@ export function renderCalendar(){
   while(!steps.next().done);
 }
 
-// Opens Review on a session's span: all its messages, or only those with
-// the flag of the icon clicked; either way the session's rows are flashed.
+// Opens Review on a session's span: all its messages, with nothing flashed
+// (flashing every row shown would mark none), or only those with the flag
+// of the icon clicked, flashed (plan
+// docs/plans/2026-10-06-load-only-what-the-page-shows.md §12.1).
 export function reviewSession(b, flagType){
-  jumpToReview({ conv: b.conv, rangeStart: new Date(b.start).getTime(), rangeEnd: new Date(b.end).getTime(), flagType, highlightFlag: flagType });
+  jumpToReview({
+    conv: b.conv, rangeStart: new Date(b.start).getTime(), rangeEnd: new Date(b.end).getTime(), flagType,
+    highlightFlag: flagType === 'all' ? null : flagType,
+  });
 }
 
 // One click handler for the whole Calendar, set once by main.js: a flag

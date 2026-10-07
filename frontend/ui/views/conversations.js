@@ -282,7 +282,8 @@ export function connectConversations(){
       rangeStart: new Date(b.start).getTime(),
       rangeEnd: new Date(b.end).getTime(),
       flagType: icon ? icon.dataset.flagType : 'all',
-      highlightFlag: icon ? icon.dataset.flagType : 'all',
+      // A session row flashes nothing; a flag icon flashes its flag (§12.1).
+      highlightFlag: icon ? icon.dataset.flagType : null,
     });
   });
 }
