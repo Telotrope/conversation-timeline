@@ -11,6 +11,7 @@
 //! a file carries (`_claude_timeline_auto`) are never taken: the scan
 //! writes those.
 
+use std::collections::HashMap;
 use std::fmt;
 
 use chrono::{DateTime, Utc};
@@ -27,7 +28,7 @@ use crate::model::{
 };
 use crate::stored_message::{
     BranchNote, Citation, CitedAddress, Entry, EntryKey, FileContents, FileKind, FileRef, Piece,
-    StoredMessage,
+    Position, StoredMessage,
 };
 
 /// The field an annotated download carries your review in.
@@ -112,21 +113,32 @@ pub fn keep_conversation(
     } else {
         dedup_chat_messages(&pruned.kept)
     };
-    let mut main = keep_messages(conversation.uuid, conversation.name.clone(), kept_path)?;
+    let positions = file_positions(conversation);
+    let mut main = keep_messages(
+        conversation.uuid,
+        conversation.name.clone(),
+        kept_path,
+        &positions,
+    )?;
     let mut branches = Vec::new();
     for branch in &pruned.branches {
         // Pruning never makes an empty branch.
         let first = &branch.messages[0];
         let kept_as = if branch.is_important() {
-            let kept = keep_branch(conversation, branch)?;
+            let kept = keep_branch(conversation, branch, &positions)?;
             let id = kept.conversation.conversation_id;
             branches.push(kept);
             Some(id)
         } else {
             None
         };
-        main.entries
-            .push(note_for(conversation.uuid, first, branch, kept_as));
+        main.entries.push(note_for(
+            conversation.uuid,
+            first,
+            branch,
+            kept_as,
+            &positions,
+        ));
     }
     main.entries.sort_by_key(Entry::key);
     Ok(Kept { main, branches })
@@ -138,6 +150,7 @@ pub fn note_for(
     first: &ChatMessage,
     branch: &ReplacedBranch,
     kept_as: Option<ConversationId>,
+    positions: &FilePositions,
 ) -> Entry {
     let last_at = branch
         .messages
@@ -147,6 +160,7 @@ pub fn note_for(
     Entry::Note(BranchNote {
         key: EntryKey {
             conversation_id,
+            position: positions.of(first.uuid),
             at: first.created_at,
             id: first.uuid,
         },
@@ -165,6 +179,7 @@ pub fn note_for(
 fn keep_branch(
     conversation: &Conversation,
     branch: &ReplacedBranch,
+    positions: &FilePositions,
 ) -> Result<KeptBranch, KeepError> {
     let first = &branch.messages[0];
     let id = branch_conversation_id(conversation.uuid, first.uuid);
@@ -175,7 +190,7 @@ fn keep_branch(
         "{}: earlier branch from {when}",
         conversation.name.0
     ));
-    let kept = keep_messages(id, name, branch.messages.clone())?;
+    let kept = keep_messages(id, name, branch.messages.clone(), positions)?;
     Ok(KeptBranch {
         conversation: kept,
         branch_of: conversation.uuid,
@@ -188,17 +203,53 @@ pub fn branch_conversation_id(conversation: ConversationId, first: MessageId) ->
     ConversationId(Uuid::new_v5(&conversation.0, first.0.as_bytes()))
 }
 
-/// The rows and files of `messages`, all of one conversation, in order.
+/// Each message's place in its conversation's `chat_messages` list, the
+/// order the file gives (plan §12.3).
+pub struct FilePositions(HashMap<MessageId, Position>);
+
+impl FilePositions {
+    /// `id`'s position. Every message kept comes from the list the
+    /// positions were read from.
+    fn of(&self, id: MessageId) -> Position {
+        // Unreachable backstop: kept messages and notes are all taken from
+        // the conversation the positions were read from.
+        *self
+            .0
+            .get(&id)
+            .expect("a kept message is in its file's list")
+    }
+}
+
+/// The positions of `conversation`'s messages in its file.
+pub fn file_positions(conversation: &Conversation) -> FilePositions {
+    FilePositions(
+        conversation
+            .chat_messages
+            .iter()
+            .enumerate()
+            .map(|(i, m)| (m.uuid, Position(i as i64)))
+            .collect(),
+    )
+}
+
+/// The rows and files of `messages`, all of one conversation, ordered by
+/// their `positions` in the file.
 pub fn keep_messages(
     conversation_id: ConversationId,
     name: ConversationName,
     messages: Vec<ChatMessage>,
+    positions: &FilePositions,
 ) -> Result<KeptConversation, KeepError> {
     let replay = FileReplay::of(&messages);
     let mut entries = Vec::with_capacity(messages.len());
     let mut files = Vec::new();
     for message in &messages {
-        let (stored, message_files) = keep_message(conversation_id, message, &replay)?;
+        let (stored, message_files) = keep_message(
+            conversation_id,
+            positions.of(message.uuid),
+            message,
+            &replay,
+        )?;
         entries.push(Entry::Message(stored));
         files.extend(message_files);
     }
@@ -254,6 +305,7 @@ fn file_name(raw: &str, number: usize) -> FileName {
 
 fn keep_message(
     conversation_id: ConversationId,
+    position: Position,
     message: &ChatMessage,
     replay: &FileReplay,
 ) -> Result<(StoredMessage, Vec<KeptFile>), KeepError> {
@@ -347,6 +399,7 @@ fn keep_message(
     let stored = StoredMessage {
         key: EntryKey {
             conversation_id,
+            position,
             at: message.created_at,
             id: message.uuid,
         },

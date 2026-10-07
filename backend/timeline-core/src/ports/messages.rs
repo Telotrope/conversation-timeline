@@ -1,8 +1,9 @@
 //! The stored rows of conversations' messages and branch notes, with your
 //! messages' flags on them (plan
 //! `docs/plans/2026-10-06-load-only-what-the-page-shows.md` §3). Each row is
-//! keyed by conversation, time and id, so one session's rows are one
-//! unbroken run of keys, read with one range query.
+//! keyed by conversation, position in the file and id, so one session's
+//! rows are one unbroken run of keys, read with one range query (plan
+//! §12.3).
 //!
 //! Writing is split into narrow traits, as the `MessageFlags` port this
 //! replaces was, so that the automatic/yours separation of
@@ -15,34 +16,34 @@
 //! the other's.
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 
 use super::errors::StoreError;
 use super::ids::UserId;
 use crate::flag_values::{FlagOverrides, FlagSet, MessageFlags};
 use crate::model::{ConversationId, MessageId};
-use crate::stored_message::{Entry, EntryKey};
+use crate::stored_message::{Entry, EntryKey, Position};
 use crate::stored_session::{Placement, StoredSession};
 
 /// Which of a conversation's rows to read, in key order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EntryRange {
     pub conversation_id: ConversationId,
-    /// Only rows timed from `from` to `to`, ends included; `None` for the
-    /// whole conversation.
-    pub times: Option<(DateTime<Utc>, DateTime<Utc>)>,
+    /// Only rows positioned from `first` to `last`, ends included; `None`
+    /// for the whole conversation.
+    pub positions: Option<(Position, Position)>,
     /// Only rows after this key: where an earlier part stopped.
     pub after: Option<EntryKey>,
 }
 
 impl EntryRange {
-    /// Every row of one session: a range of times, or for a session placed
-    /// by its conversation's start and end, the whole conversation (§4e).
+    /// Every row of one session: a range of positions, or for a session
+    /// placed by its conversation's start and end, the whole conversation
+    /// (§4e).
     pub fn session(session: &StoredSession) -> Self {
         Self {
             conversation_id: session.conversation_id,
-            times: match session.placement {
-                Placement::Gaps => Some((session.start, session.end)),
+            positions: match session.placement {
+                Placement::Gaps => Some((session.first, session.last)),
                 Placement::Span => None,
             },
             after: None,

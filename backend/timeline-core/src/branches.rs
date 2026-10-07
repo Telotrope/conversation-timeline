@@ -58,7 +58,7 @@ impl ReplacedBranch {
 pub struct PrunedConversation {
     /// The path from the start to the most recent message, in order.
     pub kept: Vec<ChatMessage>,
-    /// Every branch off that path, in the order they began.
+    /// Every branch off that path, in the order the file lists their first messages.
     pub branches: Vec<ReplacedBranch>,
 }
 
@@ -107,6 +107,13 @@ pub fn prune_replaced_branches(conversation: &Conversation) -> PrunedConversatio
     path.reverse();
 
     let by_id: HashMap<MessageId, &ChatMessage> = messages.iter().map(|m| (m.uuid, m)).collect();
+    // Each message's place in the file, which orders a branch's messages and
+    // the branches themselves (plan §12.3).
+    let index_of: HashMap<MessageId, usize> = messages
+        .iter()
+        .enumerate()
+        .map(|(i, m)| (m.uuid, i))
+        .collect();
     let kept: Vec<ChatMessage> = path.iter().map(|id| by_id[id].clone()).collect();
 
     // The kept child of each kept message, and the kept root.
@@ -146,7 +153,7 @@ pub fn prune_replaced_branches(conversation: &Conversation) -> PrunedConversatio
                 stack.extend(kids.iter().copied());
             }
         }
-        branch.sort_by_key(|x| x.created_at);
+        branch.sort_by_key(|x| index_of[&x.uuid]);
         let branch_texts: Vec<(Sender, String)> = branch
             .iter()
             .map(|x| (x.sender.clone(), extract_text(x)))
@@ -158,7 +165,7 @@ pub fn prune_replaced_branches(conversation: &Conversation) -> PrunedConversatio
             words_not_repeated,
         });
     }
-    branches.sort_by_key(|b| b.messages[0].created_at);
+    branches.sort_by_key(|b| index_of[&b.messages[0].uuid]);
     PrunedConversation { kept, branches }
 }
 

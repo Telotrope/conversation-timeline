@@ -22,7 +22,7 @@ use crate::flag_view::FlagView;
 use crate::message_time::MessageTime;
 use crate::model::ConversationId;
 use crate::sessions::GAP_THRESHOLD_SEC;
-use crate::stored_message::Entry;
+use crate::stored_message::{Entry, Position};
 
 /// For one view: your messages showing each flag, and any of the three.
 /// "Any" is stored, not added up, since one message can carry two flags.
@@ -132,10 +132,14 @@ pub struct SessionKey {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StoredSession {
     pub conversation_id: ConversationId,
-    /// From 0, in time order within the conversation.
+    /// From 0, in the file's order within the conversation.
     pub number: usize,
     pub start: DateTime<Utc>,
     pub end: DateTime<Utc>,
+    /// Its first and last entry's positions in the conversation: its rows
+    /// are the run between them (plan §12.3).
+    pub first: Position,
+    pub last: Position,
     pub placement: Placement,
     /// Every message in the session, yours and Claude's.
     pub message_count: usize,
@@ -182,31 +186,40 @@ pub fn sessions_for(
     if !untimed {
         return cut_sessions(conversation_id, entries);
     }
+    let positions = || entries.iter().map(|e| e.key().position);
     vec![StoredSession {
         conversation_id,
         number: 0,
         start: span.start().with_timezone(&Utc),
         end: span.end().with_timezone(&Utc),
+        // Unreachable backstops: a conversation with a message has entries.
+        first: positions().min().expect("a message is an entry"),
+        last: positions().max().expect("a message is an entry"),
         placement: Placement::Span,
         message_count: entries.iter().filter(|e| e.as_message().is_some()).count(),
         counts: SessionCounts::of(entries),
     }]
 }
 
-/// Cuts one conversation's entries into sessions, oldest first: a pause of
-/// [`GAP_THRESHOLD_SEC`] or more between one entry's activity ending and the
-/// next one's starting begins a new session.
+/// Cuts one conversation's entries into sessions, in the file's order
+/// (plan §12.3): a pause of [`GAP_THRESHOLD_SEC`] or more between one
+/// entry's activity ending and the next one's starting begins a new
+/// session, and so does a time stepping backwards, so no two sessions
+/// overlap.
 pub fn cut_sessions(conversation_id: ConversationId, entries: &[Entry]) -> Vec<StoredSession> {
     let mut sorted: Vec<&Entry> = entries.iter().collect();
-    sorted.sort_by_key(|e| e.activity().0);
+    sorted.sort_by_key(|e| e.key());
 
     let mut runs: Vec<Vec<&Entry>> = Vec::new();
     let mut run_end: Option<DateTime<Utc>> = None;
+    let mut previous_start: Option<DateTime<Utc>> = None;
     for entry in sorted {
         let (start, end) = entry.activity();
+        let backwards = previous_start.is_some_and(|p| start < p);
+        previous_start = Some(start);
         match (run_end, runs.last_mut()) {
             (Some(previous_end), Some(run))
-                if (start - previous_end).num_seconds() < GAP_THRESHOLD_SEC =>
+                if !backwards && (start - previous_end).num_seconds() < GAP_THRESHOLD_SEC =>
             {
                 run.push(entry);
                 run_end = Some(previous_end.max(end));
@@ -237,6 +250,9 @@ pub fn cut_sessions(conversation_id: ConversationId, entries: &[Entry]) -> Vec<S
                 number,
                 start,
                 end,
+                first: run[0].key().position,
+                // Unreachable backstop: a run is only made with an entry in it.
+                last: run.last().expect("a run has an entry").key().position,
                 placement: Placement::Gaps,
                 message_count: run.iter().filter(|e| e.as_message().is_some()).count(),
                 counts: SessionCounts::of(run.iter().copied()),

@@ -13,14 +13,45 @@ use crate::labels::FileName;
 use crate::message_time::MessageTime;
 use crate::model::{ConversationId, MessageId, Sender};
 
-/// Where an entry sits: its conversation, its time and its own id. Entries
-/// are stored and read in this order, so a session's entries are one
-/// unbroken run between its start and end (§3). `at` is the zero-date
-/// sentinel when the time is unknown (§4e); read it through
+/// Where an entry stands in its conversation: the order the file gives it
+/// (plan `docs/plans/2026-10-06-load-only-what-the-page-shows.md` §12.3).
+/// Within one file it is the message's index in the conversation's
+/// `chat_messages` list; a later file's additions are numbered below the
+/// first stored position or above the last, so it can be negative.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Position(pub i64);
+
+impl Position {
+    /// Added so every position written is a positive number of the same
+    /// width, so text order is number order.
+    const OFFSET: i64 = 1_000_000_000_000;
+
+    /// The position as fixed-width text that sorts as the number does.
+    pub fn sort_text(self) -> String {
+        format!("{:013}", self.0 + Self::OFFSET)
+    }
+
+    /// Reads [`Position::sort_text`] back; `None` for anything it didn't
+    /// write.
+    pub fn from_sort_text(text: &str) -> Option<Self> {
+        if text.len() != 13 || !text.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        text.parse::<i64>().ok().map(|n| Position(n - Self::OFFSET))
+    }
+}
+
+/// Where an entry sits: its conversation, its position and its own id.
+/// Entries are stored and read in this order, the file's, so a session's
+/// entries are one unbroken run between its first and last position (§3,
+/// §12.3). `at` is the entry's time, carried with the key but not deciding
+/// its order (positions are unique within a conversation); it is the
+/// zero-date sentinel when the time is unknown (§4e), read through
 /// [`EntryKey::time`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct EntryKey {
     pub conversation_id: ConversationId,
+    pub position: Position,
     pub at: DateTime<Utc>,
     pub id: MessageId,
 }
@@ -176,6 +207,26 @@ pub struct BranchNote {
     pub replaced_by: Option<MessageId>,
     /// The conversation the branch was kept as, when it was important.
     pub kept_as: Option<ConversationId>,
+}
+
+/// How many of `entries`' messages, taken in key order (the file's), are
+/// timed earlier than the timed message before them (plan §12.3). Notes and
+/// messages of unknown time are passed over.
+pub fn count_out_of_order(entries: &[Entry]) -> usize {
+    let mut sorted: Vec<&StoredMessage> = entries.iter().filter_map(Entry::as_message).collect();
+    sorted.sort_by_key(|m| m.key);
+    let mut previous: Option<DateTime<Utc>> = None;
+    let mut count = 0;
+    for m in sorted {
+        let Some(at) = m.key.time().known() else {
+            continue;
+        };
+        if previous.is_some_and(|p| at < p) {
+            count += 1;
+        }
+        previous = Some(at);
+    }
+    count
 }
 
 /// One stored row of a conversation's messages.

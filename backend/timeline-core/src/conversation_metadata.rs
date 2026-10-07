@@ -280,6 +280,9 @@ pub fn guess_summary(
             .iter()
             .filter(|m| m.time() == MessageTime::Unknown)
             .count(),
+        // Counted from the stored rows, in the file's order, by whoever
+        // writes the record (plan §12.3).
+        out_of_order: 0,
         message_span: messages,
         participants: Participants(vec![
             Participant::Human {

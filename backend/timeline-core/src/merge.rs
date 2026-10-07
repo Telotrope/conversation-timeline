@@ -28,7 +28,7 @@ use crate::dedup::extract_text;
 use crate::keep::{branch_conversation_id, Kept, KeptBranch, KeptFile};
 use crate::message_time::MessageTime;
 use crate::model::{ChatMessage, ConversationId, ConversationName, MessageId, ParentLink, Sender};
-use crate::stored_message::{BranchNote, Entry, EntryKey, StoredMessage};
+use crate::stored_message::{BranchNote, Entry, EntryKey, Position, StoredMessage};
 
 /// Stored messages moved into a conversation of their own because a revived
 /// branch replaced them and they are important.
@@ -79,7 +79,20 @@ pub fn plan_merge(
     let Some(first_new) = path.iter().position(|m| !stored_ids.contains(&m.uuid)) else {
         return MergePlan::default();
     };
-    if let Some(plan) = plan_revival(&stored_messages, &stored_ids, name, file, first_new) {
+    // After every stored row, notes included: where a revived path goes.
+    let after_all = stored
+        .iter()
+        .map(|e| e.key().position.0 + 1)
+        .max()
+        .unwrap_or(0);
+    if let Some(plan) = plan_revival(
+        &stored_messages,
+        &stored_ids,
+        name,
+        file,
+        first_new,
+        after_all,
+    ) {
         return plan;
     }
     let outside = |at: MessageTime| match (at, stored_span) {
@@ -105,7 +118,35 @@ pub fn plan_merge(
         Entry::Note(n) => outside(n.key.time()),
     });
     plan.untimed_skipped = untimed_skipped;
+    // Plan §12.3: what comes before the stored range is numbered below the
+    // first stored position, what comes after it above the last, each in
+    // the file's order.
+    let before = |e: &Entry| match stored_span {
+        Some(span) => e.key().at.fixed_offset() < span.start(),
+        None => false,
+    };
+    let (mut earlier, mut later): (Vec<Entry>, Vec<Entry>) =
+        plan.add.drain(..).partition(|e| before(e));
+    let first = stored.iter().map(|e| e.key().position).min();
+    let last = stored.iter().map(|e| e.key().position).max();
+    let below = earlier.len() as i64;
+    renumber(&mut earlier, first.map_or(0, |p| p.0 - below));
+    renumber(&mut later, last.map_or(0, |p| p.0 + 1));
+    plan.add = earlier;
+    plan.add.extend(later);
     plan
+}
+
+/// Gives `entries`, already in the file's order, consecutive positions from
+/// `from`.
+fn renumber(entries: &mut [Entry], from: i64) {
+    for (i, entry) in entries.iter_mut().enumerate() {
+        let key = match entry {
+            Entry::Message(m) => &mut m.key,
+            Entry::Note(n) => &mut n.key,
+        };
+        key.position = Position(from + i as i64);
+    }
 }
 
 /// The file's entries `wanted` picks, with their files, and the important
@@ -158,6 +199,7 @@ fn plan_revival(
     name: &ConversationName,
     file: &Kept,
     first_new: usize,
+    after_all: i64,
 ) -> Option<MergePlan> {
     let path = &file.main.kept_path;
     let parent = match path[first_new].parent() {
@@ -198,7 +240,9 @@ fn plan_revival(
     let first = *replaced.first()?;
     let mut plan = take_from_file(file, |entry| match entry {
         Entry::Message(m) => new_ids.contains(&m.key.id),
-        Entry::Note(n) => n.key > branch_point.key && !stored_ids.contains(&n.key.id),
+        // By time: the file's positions and the stored ones are numbered
+        // apart (plan §12.3).
+        Entry::Note(n) => n.key.at > branch_point.key.at && !stored_ids.contains(&n.key.id),
     });
     plan.untimed_skipped = untimed_skipped;
     plan.remove = replaced.iter().map(|m| m.key).collect();
@@ -231,8 +275,19 @@ fn plan_revival(
         });
         id
     });
+    // Plan §12.3: the note stands where the file lists the replaced branch
+    // (the file's own note for it), or, if the file doesn't hold it, before
+    // the new path. The new path and the note follow every stored position,
+    // in the file's order.
+    let in_file = file.main.entries.iter().find_map(|e| match e {
+        Entry::Note(n) if n.key.id == first.key.id => Some(n.key.position),
+        _ => None,
+    });
     plan.add.push(Entry::Note(BranchNote {
-        key: first.key,
+        key: EntryKey {
+            position: in_file.unwrap_or(Position(i64::MIN)),
+            ..first.key
+        },
         last_at: replaced
             .iter()
             .map(|m| m.key.at)
@@ -243,5 +298,6 @@ fn plan_revival(
         kept_as,
     }));
     plan.add.sort_by_key(Entry::key);
+    renumber(&mut plan.add, after_all);
     Some(plan)
 }

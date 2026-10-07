@@ -53,6 +53,9 @@ pub struct ConversationSummary {
     pub message_count: usize,
     /// Messages whose time the export didn't give (§4e).
     pub untimed: usize,
+    /// Messages timed earlier than the timed message before them in the
+    /// file: bad data the user is told about on Describe (plan §12.3).
+    pub out_of_order: usize,
     /// From the earliest to the latest known message time; `None` when no
     /// message has a time. Decides which messages a later file adds.
     pub message_span: Option<ConversationSpan>,
