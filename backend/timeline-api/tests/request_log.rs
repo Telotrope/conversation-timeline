@@ -238,7 +238,8 @@ async fn detection_uploads_and_exports_log_their_facts() {
     let upload = &lines_for(&lines, "POST", "/uploads")[0];
     assert!(uuid::Uuid::parse_str(upload["facts"]["upload_id"].as_str().unwrap()).is_ok());
     let export = &lines_for(&lines, "GET", "/export")[0];
-    assert_eq!(export["facts"]["conversations"], 6);
+    // Plan §12.2: the fixture's conversation with no messages isn't stored.
+    assert_eq!(export["facts"]["conversations"], 5);
     assert!(export["facts"]["export_bytes"].as_u64().unwrap() > 0);
 }
 

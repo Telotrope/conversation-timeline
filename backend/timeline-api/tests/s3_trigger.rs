@@ -76,12 +76,16 @@ async fn summaries(stores: &ProcessingStores, user: &UserId) -> Vec<Conversation
     list
 }
 
+/// The fixture's conversations that have messages: one has none, and plan
+/// 2026-10-06-load-only-what-the-page-shows.md §12.2 drops those.
 fn fixture_conversation_count() -> usize {
     serde_json::from_str::<Value>(FIXTURE)
         .unwrap()
         .as_array()
         .unwrap()
-        .len()
+        .iter()
+        .filter(|c| !c["chat_messages"].as_array().unwrap().is_empty())
+        .count()
 }
 
 #[tokio::test]

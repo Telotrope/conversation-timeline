@@ -315,6 +315,38 @@ async fn totals_are_counted_afresh_and_the_version_raised() {
     );
 }
 
+/// Plan §12.2: a conversation with no messages is dropped: no record, and
+/// not counted in the totals.
+#[tokio::test]
+async fn a_conversation_with_no_messages_is_not_stored_or_counted() {
+    let stores = local_app::memory_stores();
+    process(
+        &stores,
+        export(vec![
+            conversation(1, "One", &[you(0, "a")]),
+            conversation(2, "", &[]),
+        ])
+        .into_bytes(),
+    )
+    .await
+    .1
+    .unwrap();
+    let records = stores
+        .conversation_summary_store
+        .list_for_user(&alice())
+        .await
+        .unwrap();
+    assert_eq!(
+        records
+            .iter()
+            .map(|r| r.name.0.as_str())
+            .collect::<Vec<_>>(),
+        vec!["One"]
+    );
+    let user = stores.user_records.get(&alice()).await.unwrap();
+    assert_eq!(user.totals.conversations, 1);
+}
+
 /// Files Claude wrote and presented are stored under their message and
 /// number, and listed and handed out by the routes (§4).
 #[tokio::test]

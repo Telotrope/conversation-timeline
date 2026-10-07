@@ -120,8 +120,11 @@ async fn a_ready_upload_logs_what_was_read_and_stored_on_its_own_channel() {
             "bytes": FIXTURE.len(),
             "bytes_plain": FIXTURE.len(),
             "reviews": 0,
-            "conversations": 6,
-            "totals": {"conversations": 6, "sessions": 7, "your_messages": 14, "messages": 30},
+            // Plan §12.2: the fixture's one conversation with no messages
+            // is dropped, and the line says so.
+            "conversations": 5,
+            "empty_conversations_dropped": 1,
+            "totals": {"conversations": 5, "sessions": 7, "your_messages": 14, "messages": 30},
         })
     );
     assert!(run["ms"].is_u64());
