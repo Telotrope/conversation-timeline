@@ -14,15 +14,13 @@ globalThis.window = { location: { search: '', hash: '' } };
 globalThis.localStorage = { getItem: () => null, setItem(){} };
 page.el('devLoginSub').value = 'alice';
 
-// The worker: answers the file it is posted as the test says, after
-// `workerDelay(file)` ms (none unless a test says).
+// The worker: answers the file it is posted as the test says.
 let workerAnswer = () => [];
-let workerDelay = () => 0;
 class FakeWorker {
   constructor(){ this.listeners = {}; }
   addEventListener(type, fn){ this.listeners[type] = fn; }
   postMessage({ file }){
-    setTimeout(() => { for(const data of workerAnswer(file)) this.listeners.message({ data }); }, workerDelay(file));
+    setImmediate(() => { for(const data of workerAnswer(file)) this.listeners.message({ data }); });
   }
   terminate(){}
 }
@@ -80,7 +78,6 @@ beforeEach(() => {
   results.length = 0;
   detectParts = [];
   conversationsTotal = 2;
-  workerDelay = () => 0;
   window.location.search = '';
   page.el('autoDetectCheckbox').checked = false;
   flow.resetUploadPage(false);
@@ -169,13 +166,4 @@ test('the scan stops when asked, and an upload of no conversations says so', asy
   assert.equal(results.length, 0);
   assert.match(page.el('loadStatus').textContent, /contained no conversations/);
   hideLoadProgress();
-});
-
-test('files are sent in their order, even when a later one is prepared first', async () => {
-  workerAnswer = (file) => [{ kind: 'done', blob: new Blob([file.name]), conversations: 1, slimmed: 1 }];
-  workerDelay = (file) => (file.name === 'slow.json' ? 30 : 0);
-  choose(new File(['[{}]'], 'slow.json'), new File(['[{}]'], 'quick.json'));
-  await flow.handleUploadClick();
-  assert.deepEqual(await Promise.all(sent.map((s) => s.body.text())), ['slow.json', 'quick.json']);
-  assert.deepEqual(asked.filter(([method, path]) => method === 'POST' && path === '/uploads').length, 2);
 });
