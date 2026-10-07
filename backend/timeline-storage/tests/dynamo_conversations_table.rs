@@ -156,7 +156,7 @@ async fn an_upload_row_without_a_status_is_a_backend_error() {
     )
     .await;
     let got = table.get_outcome(&alice(), upload()).await;
-    assert!(matches!(got, Err(StoreError::Backend(_))), "got {got:?}");
+    assert!(matches!(got, Err(StoreError::Damaged(_))), "got {got:?}");
 }
 
 #[tokio::test]
@@ -173,7 +173,7 @@ async fn an_upload_row_with_an_unknown_status_is_a_backend_error() {
     )
     .await;
     let got = table.get_outcome(&alice(), upload()).await;
-    assert!(matches!(got, Err(StoreError::Backend(_))), "got {got:?}");
+    assert!(matches!(got, Err(StoreError::Damaged(_))), "got {got:?}");
 }
 
 #[tokio::test]
@@ -189,7 +189,7 @@ async fn a_conversation_row_without_an_upload_id_is_a_backend_error() {
     )
     .await;
     let got = ConversationSummaryStore::get(&table, &alice(), conversation()).await;
-    assert!(matches!(got, Err(StoreError::Backend(_))), "got {got:?}");
+    assert!(matches!(got, Err(StoreError::Damaged(_))), "got {got:?}");
 }
 
 #[tokio::test]
@@ -206,7 +206,7 @@ async fn a_conversation_row_with_a_malformed_upload_id_is_a_backend_error() {
     )
     .await;
     let got = ConversationSummaryStore::get(&table, &alice(), conversation()).await;
-    assert!(matches!(got, Err(StoreError::Backend(_))), "got {got:?}");
+    assert!(matches!(got, Err(StoreError::Damaged(_))), "got {got:?}");
 }
 
 #[tokio::test]
@@ -223,7 +223,7 @@ async fn a_conversation_row_whose_sort_key_is_not_a_uuid_is_a_backend_error_when
     )
     .await;
     let got = table.list_for_user(&alice()).await;
-    assert!(matches!(got, Err(StoreError::Backend(_))), "got {got:?}");
+    assert!(matches!(got, Err(StoreError::Damaged(_))), "got {got:?}");
 }
 
 /// Every method reports a missing table as `Backend` -- a misconfiguration,
@@ -303,7 +303,7 @@ fn assert_backend_error_mentions<T: std::fmt::Debug>(
     expected: &[&str],
 ) {
     match result {
-        Err(StoreError::Backend(e)) => {
+        Err(StoreError::Damaged(e)) => {
             let text = e.to_string();
             for piece in expected {
                 assert!(

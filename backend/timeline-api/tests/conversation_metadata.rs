@@ -555,8 +555,9 @@ async fn a_conversation_edit_sets_its_start_and_end_and_answers_with_the_record(
 /// §10b: both read message rows now, so damage is a damaged row. The
 /// in-memory store holds typed rows that can't be damaged, so a reader
 /// stands in that reports a damaged row the way the DynamoDB adapter does
-/// (a backend error naming the row; see `timeline-storage`'s
-/// `tests/dynamo_message_rows.rs`).
+/// (a damaged-data error naming the row; see `timeline-storage`'s
+/// `tests/dynamo_message_rows.rs`). Plan §12.4: the answer says its kind,
+/// `data_integrity`, so the page can say "Data integrity failure".
 #[tokio::test]
 async fn damaged_stored_rows_are_a_server_error() {
     use timeline_core::model::{ConversationId, MessageId};
@@ -568,7 +569,7 @@ async fn damaged_stored_rows_are_a_server_error() {
     struct DamagedRows;
 
     fn damaged() -> StoreError {
-        StoreError::Backend(Box::new(std::io::Error::new(
+        StoreError::Damaged(Box::new(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "row with sk \"MSG#...\": attribute `entry` is not the expected JSON",
         )))
@@ -601,9 +602,57 @@ async fn damaged_stored_rows_are_a_server_error() {
     let (status, body) = call(&router, "GET", "/export", Some(&token), None).await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
     assert_eq!(
-        body["error"], "storage backend error",
+        body["error"], "stored data can't be read",
         "no detail on the page"
     );
+    assert_eq!(body["error_kind"], "data_integrity");
     let (status, _) = call(&router, "POST", "/detect", Some(&token), Some(json!({}))).await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+/// Plan §12.4: a store that fails to answer (an outage, not damage) is a
+/// server error without the `data_integrity` kind, so the page offers to try
+/// again rather than reporting damaged data.
+#[tokio::test]
+async fn a_store_outage_is_a_server_error_without_a_kind() {
+    use timeline_core::model::{ConversationId, MessageId};
+    use timeline_core::ports::errors::StoreError;
+    use timeline_core::ports::ids::UserId;
+    use timeline_core::ports::messages::{EntryRange, MessageReader};
+    use timeline_core::stored_message::{Entry, EntryKey};
+
+    struct Down;
+
+    fn down() -> StoreError {
+        StoreError::Backend(Box::new(std::io::Error::other("DynamoDB did not answer")))
+    }
+
+    #[async_trait::async_trait]
+    impl MessageReader for Down {
+        async fn read_entries(&self, _: &UserId, _: EntryRange) -> Result<Vec<Entry>, StoreError> {
+            Err(down())
+        }
+        async fn find_entry(
+            &self,
+            _: &UserId,
+            _: ConversationId,
+            _: MessageId,
+        ) -> Result<Option<Entry>, StoreError> {
+            Err(down())
+        }
+        async fn entry_after(&self, _: &UserId, _: EntryKey) -> Result<Option<Entry>, StoreError> {
+            Err(down())
+        }
+    }
+
+    let (healthy, mut state, dev) = local_app::app();
+    let token = login(&healthy, "alice").await;
+    upload(&healthy, &token, "first.json", None, &json!([first_a()])).await;
+    state.message_reader = Arc::new(Down);
+    let router = build_router(state).merge(build_dev_router(dev));
+
+    let (status, body) = call(&router, "GET", "/export", Some(&token), None).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert_eq!(body["error"], "storage backend error");
+    assert!(body.get("error_kind").is_none(), "{body}");
 }

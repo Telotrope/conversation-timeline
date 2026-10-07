@@ -139,7 +139,7 @@ async fn a_message_row_whose_key_is_not_a_conversation_time_and_id_is_a_backend_
         put_raw(&client, &table, vec![("pk", s("alice")), ("sk", s(&bad))]).await;
         let got = store.read_entries(&alice(), whole()).await;
         match got {
-            Err(StoreError::Backend(e)) => assert!(
+            Err(StoreError::Damaged(e)) => assert!(
                 e.to_string().contains("is not a conversation, time and id"),
                 "{e}"
             ),
@@ -165,7 +165,7 @@ async fn a_row_whose_entry_has_another_key_is_a_backend_error() {
     item[1] = ("sk", s(&sk(key(5, 2))));
     put_raw(&client, &table, item).await;
     match store.read_entries(&alice(), whole()).await {
-        Err(StoreError::Backend(e)) => {
+        Err(StoreError::Damaged(e)) => {
             assert!(
                 e.to_string()
                     .contains("holds an entry with a different key"),
@@ -185,7 +185,7 @@ async fn a_row_whose_entry_is_not_the_expected_json_is_a_backend_error() {
     item[4] = ("entry", s(r#"{"entry": "message""#));
     put_raw(&client, &table, item).await;
     match store.read_entries(&alice(), whole()).await {
-        Err(StoreError::Backend(e)) => assert!(e.to_string().contains("`entry`"), "{e}"),
+        Err(StoreError::Damaged(e)) => assert!(e.to_string().contains("`entry`"), "{e}"),
         other => panic!("expected a backend error, got {other:?}"),
     }
 }
@@ -254,11 +254,11 @@ async fn read_with_one_bad_attribute(attribute: &'static str, value: AttributeVa
         .find_entry(&alice(), conversation(), key(0, 2).id)
         .await;
     assert!(
-        matches!(found, Err(StoreError::Backend(_))),
+        matches!(found, Err(StoreError::Damaged(_))),
         "finding must fail too: {found:?}"
     );
     match store.read_entries(&alice(), whole()).await {
-        Err(StoreError::Backend(e)) => e.to_string(),
+        Err(StoreError::Damaged(e)) => e.to_string(),
         other => panic!("expected a Backend error for {attribute}, got {other:?}"),
     }
 }
@@ -324,14 +324,14 @@ async fn a_yours_marker_of_the_wrong_type_is_an_error() {
     item[3] = ("yours", s("yes"));
     put_raw(&client, &table, item).await;
     match store.read_entries(&alice(), whole()).await {
-        Err(StoreError::Backend(e)) => assert_mentions(&e.to_string(), &["`yours`", "is a string"]),
+        Err(StoreError::Damaged(e)) => assert_mentions(&e.to_string(), &["`yours`", "is a string"]),
         other => panic!("expected a backend error, got {other:?}"),
     }
     let empty = store
         .set_user_flags(&alice(), key(0, 2), FlagOverrides::default())
         .await;
     assert!(
-        matches!(empty, Err(StoreError::Backend(_))),
+        matches!(empty, Err(StoreError::Damaged(_))),
         "got {empty:?}"
     );
 }

@@ -94,7 +94,7 @@ async fn a_session_row_whose_key_differs_from_its_session_is_a_backend_error() {
         .await
         .unwrap();
     match store.list_sessions(&alice()).await {
-        Err(StoreError::Backend(e)) => {
+        Err(StoreError::Damaged(e)) => {
             assert!(
                 e.to_string().contains("holds a session of a different key"),
                 "{e}"
@@ -174,8 +174,8 @@ async fn record_with(attribute: &str, value: AttributeValue) -> String {
         .await
         .unwrap();
     match UserRecordStore::get(&store, &alice()).await {
-        Err(StoreError::Backend(e)) => e.to_string(),
-        other => panic!("expected a backend error, got {other:?}"),
+        Err(StoreError::Damaged(e)) => e.to_string(),
+        other => panic!("expected a damaged-data error, got {other:?}"),
     }
 }
 
@@ -218,7 +218,7 @@ async fn a_saved_analysis_that_is_not_the_expected_json_is_an_error() {
         .await
         .unwrap();
     match AnalysisStore::get(&store, &alice(), &request().key()).await {
-        Err(StoreError::Backend(e)) => assert!(e.to_string().contains("`saved`"), "{e}"),
+        Err(StoreError::Damaged(e)) => assert!(e.to_string().contains("`saved`"), "{e}"),
         other => panic!("expected a backend error, got {other:?}"),
     }
 }

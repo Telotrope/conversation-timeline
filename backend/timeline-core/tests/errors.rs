@@ -61,3 +61,15 @@ fn a_conflict_and_unwritten_rows_say_what_happened_and_have_no_source() {
     );
     assert!(unwritten.source().is_none());
 }
+
+/// Plan 2026-10-06-load-only-what-the-page-shows.md §12.4: stored data that
+/// can't be read is its own case, apart from the store failing to answer.
+#[test]
+fn damaged_data_says_so_and_carries_its_cause() {
+    let err = StoreError::Damaged(Box::new(DummyCause));
+    assert_eq!(
+        err.to_string(),
+        format!("stored data can't be read: {DummyCause}")
+    );
+    assert_eq!(err.source().unwrap().to_string(), DummyCause.to_string());
+}
