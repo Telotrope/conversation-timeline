@@ -335,6 +335,7 @@ fn conversation_summary_from_item(
         additions,
         message_count,
         untimed: required_count(item, "untimed")?,
+        out_of_order: required_count(item, "out_of_order")?,
         message_span,
         participants,
         medium,
@@ -467,6 +468,10 @@ impl ConversationSummaryStore for DynamoConversationsTable {
                 AttributeValue::N(summary.message_count.to_string()),
             )
             .item("untimed", AttributeValue::N(summary.untimed.to_string()))
+            .item(
+                "out_of_order",
+                AttributeValue::N(summary.out_of_order.to_string()),
+            )
             .item("message_span", json_attribute(&summary.message_span))
             .item("participants", json_attribute(&summary.participants))
             .item("medium", json_attribute(&summary.medium))

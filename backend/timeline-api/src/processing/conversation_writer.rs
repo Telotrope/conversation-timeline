@@ -23,7 +23,7 @@ use timeline_core::ports::errors::{ObjectStoreError, StoreError};
 use timeline_core::ports::ids::{UploadId, UserId};
 use timeline_core::ports::messages::EntryRange;
 use timeline_core::ports::uploads::file_object_key;
-use timeline_core::stored_message::{Entry, EntryKey, FileContents};
+use timeline_core::stored_message::{count_out_of_order, Entry, EntryKey, FileContents};
 use timeline_core::stored_session::{sessions_for, SessionKey, StoredSession};
 use timeline_core::MessageTime;
 
@@ -198,7 +198,7 @@ fn new_record(
     upload_id: UploadId,
     facts: &UploadFacts,
 ) -> ConversationSummary {
-    guess_summary(
+    let mut record = guess_summary(
         &Conversation {
             uuid: conversation.conversation_id,
             name: conversation.name.clone(),
@@ -207,7 +207,9 @@ fn new_record(
         },
         upload_id,
         facts,
-    )
+    );
+    record.out_of_order = count_out_of_order(&conversation.entries);
+    record
 }
 
 /// Writes a conversation never stored before; `Ok(false)` when someone else
@@ -342,7 +344,7 @@ async fn merge(
             user_id,
             EntryRange {
                 conversation_id: id,
-                times: None,
+                positions: None,
                 after: None,
             },
         )
@@ -397,6 +399,7 @@ async fn merge(
         .filter_map(Entry::as_message)
         .filter(|m| m.key.time() == MessageTime::Unknown)
         .count();
+    record.out_of_order = count_out_of_order(&after);
     record.message_span = known_span(&after);
     if record.span_origin == MetadataOrigin::Guessed {
         if let Some(span) = &record.message_span {
@@ -475,6 +478,7 @@ async fn merge(
             .iter()
             .filter(|e| e.key().time() == MessageTime::Unknown)
             .count();
+        moved_record.out_of_order = count_out_of_order(&moved.entries);
         moved_record.message_span = known_span(&moved.entries);
         if let Some(span) = moved_record.message_span {
             moved_record.span = span;

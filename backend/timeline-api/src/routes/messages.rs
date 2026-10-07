@@ -41,7 +41,7 @@ use timeline_core::ports::ids::UserId;
 use timeline_core::ports::messages::MessageReader;
 use timeline_core::ports::sessions::SessionStore;
 use timeline_core::ports::user_record::UserRecordStore;
-use timeline_core::stored_message::{BranchNote, Entry, FileRef, Piece};
+use timeline_core::stored_message::{BranchNote, Entry, EntryKey, FileRef, Piece};
 use timeline_core::stored_session::StoredSession;
 use timeline_core::walk_cursor::WalkCursor;
 use timeline_core::work_budget::BudgetSetting;
@@ -151,6 +151,9 @@ pub struct MessageRow {
     pub handle: FlagHandle,
     /// The reply that follows, with `replies` on and when there is one.
     pub reply: Option<Reply>,
+    /// Where the row is stored, to find the reply after it; not sent.
+    #[serde(skip)]
+    pub key: EntryKey,
 }
 
 /// Claude's reply to a message.
@@ -232,6 +235,7 @@ impl EntryVisitor for Collect<'_> {
                         .key
                         .handle_for(self.user_id, m.key.conversation_id, m.key.id),
                     reply: None,
+                    key: m.key,
                 }),
             });
         }
@@ -256,11 +260,7 @@ async fn attach_replies(
 ) -> Result<(), ApiError> {
     for row in rows {
         let Row::Message(row) = row else { continue };
-        let key = timeline_core::stored_message::EntryKey {
-            conversation_id: row.conversation_id,
-            at: row.at.unwrap_or(timeline_core::UNKNOWN_TIME),
-            id: row.message_id,
-        };
+        let key = row.key;
         if let Some(Entry::Message(next)) = messages.entry_after(user_id, key).await? {
             if next.sender == Sender::Assistant {
                 row.reply = Some(Reply {

@@ -11,7 +11,9 @@
 //! was given (Review stops once it has its page of rows).
 //!
 //! **Groups and order.** Sessions are read in groups, and the rows of a
-//! group are sorted by (time, conversation, id) before they are visited:
+//! group are sorted before they are visited ([`order_key`]): by key, the
+//! file's order, for a group of one session or one conversation, and by
+//! time for Review's groups of overlapping sessions:
 //! - [`WalkOrder::Key`]: each session is its own group, in key order
 //!   (conversation, then number). Any order would do for the scan, the
 //!   download and the two server analyses.
@@ -135,15 +137,15 @@ fn groups(mut sessions: Vec<StoredSession>, order: &WalkOrder) -> Vec<Vec<Stored
     }
 }
 
-/// A row's place within its group.
-fn order_key(
-    key: &EntryKey,
-) -> (
-    chrono::DateTime<chrono::Utc>,
-    ConversationId,
-    timeline_core::model::MessageId,
-) {
-    (key.at, key.conversation_id, key.id)
+/// A row's place within its group. A group of one session, or of one
+/// conversation, is in the file's order, its rows' keys (plan §12.3).
+/// Review's groups of overlapping sessions interleave conversations by
+/// time, then each conversation's rows in the file's order.
+fn order_key(order: &WalkOrder, key: &EntryKey) -> (chrono::DateTime<chrono::Utc>, EntryKey) {
+    match order {
+        WalkOrder::Time => (key.at, *key),
+        WalkOrder::Key | WalkOrder::ConversationName(_) => (chrono::DateTime::UNIX_EPOCH, *key),
+    }
 }
 
 /// Walks the rows `filter` admits; see the module doc. `start` is where an
@@ -189,7 +191,7 @@ pub async fn find_messages(
                 rows.push((entry, session));
             }
         }
-        rows.sort_by_key(|(entry, _)| order_key(&entry.key()));
+        rows.sort_by_key(|(entry, _)| order_key(order, &entry.key()));
         let after = resume_after.take();
         let mut last_done = after;
         let here = |after: Option<EntryKey>| WalkCursor {
@@ -197,10 +199,9 @@ pub async fn find_messages(
             after,
         };
         let mut stopped = false;
-        for (entry, session) in rows
-            .iter()
-            .filter(|(e, _)| after.is_none_or(|a| order_key(&e.key()) > order_key(&a)))
-        {
+        for (entry, session) in rows.iter().filter(|(e, _)| {
+            after.is_none_or(|a| order_key(order, &e.key()) > order_key(order, &a))
+        }) {
             if stopped {
                 // A visitor stopped on the row before this one.
                 return Ok(WalkEnd {

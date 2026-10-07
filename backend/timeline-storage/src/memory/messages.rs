@@ -36,8 +36,8 @@ impl InMemoryMessageStore {
 fn in_range(key: &EntryKey, range: &EntryRange) -> bool {
     key.conversation_id == range.conversation_id
         && range
-            .times
-            .is_none_or(|(from, to)| from <= key.at && key.at <= to)
+            .positions
+            .is_none_or(|(first, last)| first <= key.position && key.position <= last)
         && range.after.is_none_or(|after| *key > after)
 }
 

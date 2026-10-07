@@ -1,8 +1,10 @@
 //! Message and note rows in the `Conversations` table (plan
 //! `docs/plans/2026-10-06-load-only-what-the-page-shows.md` §3): sort key
-//! `MSG#{conversation}#{time}#{message}`, so one session's rows are one
-//! unbroken run of keys. The time is written at a fixed width (nanoseconds,
-//! `Z`), so keys sort as times do; an unknown time is the zero date (§4e).
+//! `MSG#{conversation}#{position}#{message}`, so a conversation's rows sort
+//! in the file's order and one session's rows are one unbroken run of keys
+//! (§12.3). The position is written at a fixed width
+//! ([`Position::sort_text`]), so keys sort as positions do. The time is in
+//! the entry, not the key.
 //!
 //! Each row holds the entry as JSON (`entry`, its flags left out), the
 //! message id (`message_id`, which finding a message by id filters on), and
@@ -22,7 +24,6 @@ use aws_sdk_dynamodb::types::{
     AttributeValue, DeleteRequest, PutRequest, ReturnValue, WriteRequest,
 };
 use aws_sdk_dynamodb::Client;
-use chrono::{DateTime, SecondsFormat, Utc};
 use timeline_core::flag_values::{FlagOverrides, FlagSet, MessageFlags};
 use timeline_core::model::{ConversationId, MessageId};
 use timeline_core::ports::errors::StoreError;
@@ -30,7 +31,7 @@ use timeline_core::ports::ids::UserId;
 use timeline_core::ports::messages::{
     AutoFlagWriter, EntryRange, MessageReader, MessageRowWriter, UserFlagWriter,
 };
-use timeline_core::stored_message::{Entry, EntryKey};
+use timeline_core::stored_message::{Entry, EntryKey, Position};
 
 use super::attributes::{invalid_data, json_attribute, optional_bool, required_json, Item};
 use super::backend_error;
@@ -57,38 +58,51 @@ fn conversation_prefix(conversation_id: ConversationId) -> String {
     format!("{PREFIX}{conversation_id}#")
 }
 
-fn time_text(at: DateTime<Utc>) -> String {
-    at.to_rfc3339_opts(SecondsFormat::Nanos, true)
-}
-
 fn sort_key(key: &EntryKey) -> String {
     format!(
         "{}{}#{}",
         conversation_prefix(key.conversation_id),
-        time_text(key.at),
+        key.position.sort_text(),
         key.id
     )
 }
 
-/// Parses a sort key [`sort_key`] wrote; anything else is a backend error
-/// naming the key, never skipped.
-fn key_from_sort_key(sk: &str) -> Result<EntryKey, StoreError> {
+/// What a sort key [`sort_key`] wrote names: the conversation, position and
+/// id. The entry's time is in the entry.
+#[derive(Debug, PartialEq, Eq)]
+struct RowKey {
+    conversation_id: ConversationId,
+    position: Position,
+    id: MessageId,
+}
+
+impl RowKey {
+    fn of(key: &EntryKey) -> Self {
+        Self {
+            conversation_id: key.conversation_id,
+            position: key.position,
+            id: key.id,
+        }
+    }
+}
+
+/// Parses a sort key [`sort_key`] wrote; anything else is a damaged-data
+/// error naming the key, never skipped.
+fn key_from_sort_key(sk: &str) -> Result<RowKey, StoreError> {
     let bad = || {
         invalid_data(format!(
-            "message row sort key {sk:?} is not a conversation, time and id"
+            "message row sort key {sk:?} is not a conversation, position and id"
         ))
     };
     let rest = sk.strip_prefix(PREFIX).ok_or_else(bad)?;
     let mut parts = rest.splitn(3, '#');
-    let (Some(conversation), Some(at), Some(id)) = (parts.next(), parts.next(), parts.next())
+    let (Some(conversation), Some(position), Some(id)) = (parts.next(), parts.next(), parts.next())
     else {
         return Err(bad());
     };
-    Ok(EntryKey {
+    Ok(RowKey {
         conversation_id: ConversationId(conversation.parse().map_err(|_| bad())?),
-        at: DateTime::parse_from_rfc3339(at)
-            .map_err(|_| bad())?
-            .with_timezone(&Utc),
+        position: Position::from_sort_text(position).ok_or_else(bad)?,
         id: MessageId(id.parse().map_err(|_| bad())?),
     })
 }
@@ -127,7 +141,7 @@ fn flags_from_item(item: &Item) -> Result<MessageFlags, StoreError> {
 fn entry_from_item(item: &Item) -> Result<Entry, StoreError> {
     let key = key_from_sort_key(sk_of(item)?)?;
     let mut entry: Entry = required_json(item, "entry")?;
-    if entry.key() != key {
+    if RowKey::of(&entry.key()) != key {
         return Err(invalid_data(format!(
             "message row {:?} holds an entry with a different key",
             sk_of(item)?
@@ -301,12 +315,12 @@ impl MessageReader for DynamoMessageStore {
         range: EntryRange,
     ) -> Result<Vec<Entry>, StoreError> {
         let prefix = conversation_prefix(range.conversation_id);
-        let (low, high) = match range.times {
-            Some((from, to)) => (
-                format!("{prefix}{}", time_text(from)),
-                // `~` sorts after every character of a time or an id, so the
-                // last message at `to` is included.
-                format!("{prefix}{}#~", time_text(to)),
+        let (low, high) = match range.positions {
+            Some((first, last)) => (
+                format!("{prefix}{}", first.sort_text()),
+                // `~` sorts after every character of a position or an id, so
+                // the row at `last` is included.
+                format!("{prefix}{}#~", last.sort_text()),
             ),
             None => (prefix.clone(), format!("{prefix}~")),
         };
