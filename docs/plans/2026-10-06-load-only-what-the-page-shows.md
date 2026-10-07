@@ -889,6 +889,218 @@ saved, the other three in the page from the session counts, and every chart draw
 
 **Still open:** none.
 
+## 12. Follow-up after implementation (2026-10-07)
+
+Asked for by the user on 2026-10-07, after reading the implementation report
+([docs/analysis/2026-10-07-load-only-what-the-page-shows-implementation-report.md](../analysis/2026-10-07-load-only-what-the-page-shows-implementation-report.md)).
+Each item is named after the report's ID for the bug it revisits (B3 etc.). The user said this
+work needs no new plan; it is recorded here.
+
+### 12.1 FU-B5. No highlight when a session is opened
+
+**Decided by the user:** clicking a session (a Calendar bar, or a session row in the Conversations
+tab) opens Review on that session with nothing highlighted. Highlighting everything shown makes
+nothing stand out.
+
+- **Code:**
+  - [calendar.js:109](../../frontend/ui/views/calendar.js#L109) and
+    [conversations.js:285](../../frontend/ui/views/conversations.js#L285) pass a highlight only for a
+    flag icon, never for a session.
+  - The `'all'` value of `highlightFlag` in [review.js](../../frontend/ui/views/review.js#L38) goes,
+    since nothing passes it any more.
+- **Flag icons:** unchanged until the report's Q6 is answered. Today a flag click filters Review to
+  that flag and highlights the rows shown, which are then all flagged. That highlight is as
+  meaningless as a session's, so Q6's answer decides it: "All" plus highlights, or the filter with
+  no highlight.
+- **Tests:**
+  - Browser test "a calendar session opens the review tab on that session, and the banner widens
+    it" ([views.spec.js:665](../../e2e/views.spec.js#L665)): its check
+    `not.toHaveCount(0)` on `tr.row-highlight` becomes `toHaveCount(0)`. This changes a committed
+    test, approved by the user's direction on 2026-10-07.
+  - Page unit test "a session opened from elsewhere flashes its rows…"
+    ([review-view.test.js:341](../../frontend/tests/review-view.test.js#L341)): its `'all'` half
+    is replaced by a check that a session jump highlights nothing. Same approval.
+
+### 12.2 FU-B4. Conversations with no messages
+
+**Facts (2026-10-07):**
+- The user's export holds one conversation with no messages and no name (created 2026-07-05).
+- The page lists it in the Conversations tab as "(untitled) — 0 messages · 0 days · 0s active".
+  It is also counted in the header's conversation count and in Describe's list of the file's
+  conversations.
+- It has no sessions, so it appears on no Calendar day, in Review, or in Analytics.
+
+**Proposed, pending the user's confirmation** (the user is "inclined to drop these altogether"):
+- Processing skips a conversation with no messages: no record, no rows, not counted in the totals.
+- The code the download gained to add empty conversations (B4,
+  [export.rs:265](../../backend/timeline-api/src/routes/export.rs#L265)) is removed, since none can
+  be stored.
+- **Where:** [`keep_conversation`](../../backend/timeline-core/src/keep.rs#L105) returns "nothing to
+  keep"; processing reports how many were skipped in its log line.
+- **Tests:** a new processing test that an empty conversation is not stored and not in the totals.
+  - The pre-existing `a_stored_conversation_with_no_messages_takes_every_message_a_later_file_has`
+    ([processing_merge.rs:225](../../backend/timeline-api/tests/processing_merge.rs#L225)) sets up
+    a stored empty record directly, so it still passes. It becomes obsolete, and is recommended for
+    removal with the user's approval.
+
+### 12.3 FU-B3. Messages keep the order the file gives them
+
+**Decided by the user:** a stored message's key includes its position in the file, and rows sort
+by it. Today the key is conversation, then time, then id
+([`EntryKey`](../../backend/timeline-core/src/stored_message.rs#L22),
+[`sort_key`](../../backend/timeline-storage/src/dynamo/message_rows.rs#L64)). So a message of
+unknown time sorts first, and messages with equal times sort by id.
+
+**Design:**
+- **The key:** `MSG#{conversation}#{position}#{message id}`. The time stays a field on the row, not
+  part of the key.
+  - `position` is a fixed-width number, so text order equals numeric order. It is stored with an
+    offset, so positions can go below the first file's (see "later files").
+- **Within one file:** a message's position is its index in the conversation's `chat_messages`
+  list.
+  - **Kept path:** the messages on it keep their file indices, gaps included.
+  - **Notes:** a note for a replaced branch takes the position of the branch's first message, which
+    is not stored, so the note sits where the branch was.
+  - **A branch kept as its own conversation:** its messages keep their indices from the original
+    file.
+- **Later files** (Q18 adds only messages before or after the stored time range):
+  - Messages added *after* the stored ones get positions after the last stored position, in the
+    later file's order.
+  - Messages added *before* get positions below the first stored position, in the later file's
+    order.
+  - **Revival (§4d):** the new path's messages get positions after the branch point, which is safe
+    because everything the stored path held after that point is removed.
+- **Sessions:** a session's stored range becomes its first and last position, not its first and
+  last time. Reading a session reads that position range.
+  - Session cutting walks the conversation in position order and cuts at a pause of 15 minutes or
+    more between consecutive *timed* messages.
+  - A conversation with any message of unknown time stays placed by its start and end, as one
+    session (§4e unchanged).
+- **Review:**
+  - Within one conversation, rows are shown in position order.
+  - Across conversations, the time order of O1 (in the report) stays: time, then conversation,
+    then position.
+  - Messages of unknown time stay matched through their session (O3).
+- **Pruning ([branches.rs](../../backend/timeline-core/src/branches.rs)):**
+  - It still finds "the latest message" by time; position breaks ties, as file order does today.
+  - A conversation with any message of unknown time is still left whole (B3).
+  - Branches are listed by their first message's position, not its time.
+- **Stored data:** rows written under the old key can no longer be read by position. The dev
+  stack's conversations table held 0 items on 2026-10-07, so nothing needs migrating; any other
+  table must be cleared first (report P8).
+- **Tests:**
+  - The message-row contract gains "rows are read in position order, whatever their times", run on
+    both stores.
+  - Core tests: positions from a file; notes; branch conversations; later files before and after
+    the stored range; revival.
+  - Processing tests: a message of unknown time in the middle of a file stays in the middle, read
+    back and downloaded; two messages with the same time keep the file's order.
+  - Committed tests that build or assert keys by time change only in how they spell keys. This is
+    approved by the user's direction, as a refactor rename.
+
+### 12.4 FU-B6. What a failed read after Describe says
+
+**Facts:**
+- After Done, the page saves the details, then reads the timeline (`GET /conversations`,
+  `GET /sessions`). Your files were read and processed before this, so "Could not read your files'
+  details" names the wrong thing.
+- Damaged stored data reaches the API today as `StoreError::Backend`, the same as a DynamoDB outage
+  ([errors.rs](../../backend/timeline-core/src/ports/errors.rs#L15)). So the page cannot yet tell a
+  permanent failure from a temporary one.
+
+**Decided by the user:**
+- **A permanent failure (stored data that can't be read)** shows **"Data integrity failure"**.
+- **A connection failure** shows **"Could not complete request, please try again."** That covers
+  no answer at all, a cancelled request, a server error other than damaged data, and a gateway
+  timeout.
+
+**Design:**
+- **Storage:** gains `StoreError::Damaged(BoxError)`. Every place the DynamoDB adapters report a
+  row they can't read (a missing or wrong-typed field, a key they didn't write) returns it, instead
+  of `Backend`. A DynamoDB request failure stays `Backend`.
+- **The API:** answers `Damaged` with status 500 and `{"error": …, "error_kind":
+  "data_integrity"}`. Other failures keep their statuses.
+- **The page:**
+  - A new error kind, `data_integrity`, is read from the answer
+    ([page-error.js](../../frontend/core/page-error.js)). The Describe read-back's message chooses
+    between the two wordings by kind.
+  - The read-back gets two messages of its own, `describe.readback_integrity` and
+    `describe.readback_connection`. The existing `describe.load_failed` ("Could not read your files'
+    details") stays for what it describes accurately: Describe's own first read of your files and
+    records when it opens ([describe-form.js:67](../../frontend/ui/describe-form.js#L67)).
+  - A run-out sign-in still goes to the Sign-in page, as now.
+- **Tests:**
+  - Storage: a damaged row is reported as `Damaged`; added to the existing damaged-row tests (a
+    stricter check).
+  - API: a damaged record answers 500 with `data_integrity`.
+  - Page unit test: the two messages, by kind.
+  - The browser test "a save whose details can't be read back stays on Describe and says so"
+    ([screen-flow.spec.js](../../e2e/screen-flow.spec.js)) expects "Could not read your files'
+    details". It changes to "Could not complete request, please try again.", approved by the user's
+    direction.
+- **Open:** should the loading box (opening the timeline, or Try again) use the same two wordings?
+  It reads the same data and today says "Could not load that file through the backend — …".
+  Trigger: the user's answer.
+
+**The time limit (the user's question):**
+- Every route that reads in parts answers within about 9 s of work (§8c). The rest do a fixed,
+  small amount of work: a flag save, an upload's start or status, a file's address.
+- The API function's own limit is 30 s ([template.yaml:158](../../infra/template.yaml#L158)), and
+  API Gateway gives up at 30 s too.
+- A request reaches those limits only when a single step stalls, for example DynamoDB slowing
+  requests and the AWS client retrying with pauses. The 9 s check runs only between steps. That
+  is rare and temporary, so it gets the connection wording.
+
+### 12.5 FU-B7. Files are sent as soon as each is prepared
+
+**Decided by the user:** the wait that made each file start sending only after the one before it
+([load-flow.js:285](../../frontend/ui/load-flow.js#L285)) is removed. Files are sent in whatever
+order they finish preparing. Processing order was never tied to sending order (C1).
+
+- **Code:** `turn`, `sending` and the `begun` gate go from `uploadOneFile` and `sendBatch`.
+- **Tests:**
+  - The page unit test "files are sent in their order, even when a later one is prepared first"
+    ([upload-flow.test.js:174](../../frontend/tests/upload-flow.test.js#L174)) is removed with the
+    code it tested, along with its harness's `workerDelay` (report T2).
+  - The committed browser test "Stop with one file processed and one still sending…"
+    ([screen-flow.spec.js:167](../../e2e/screen-flow.spec.js#L167)) holds back `stuck.json`'s own
+    bytes, whichever is sent first:
+    - it reads each `POST /uploads` request's `file_name` and the `upload_url` in its answer;
+    - it holds only the upload request to `stuck.json`'s address.
+  - Both test changes were approved by the user on 2026-10-07.
+
+### 12.6 FU-B8. A test for the count walk's replaced failure
+
+The page-request half of B8 is tested. The count walk's half is not: "a replaced count stopped: …"
+([review.js:162](../../frontend/ui/views/review.js#L162)).
+- **New page unit test:** start a walk whose next part fails with a 500, start a new walk before
+  that answer arrives, and check three things:
+  - the console notes "a replaced count stopped: …";
+  - the bar shows no failure;
+  - the new walk's count is shown.
+
+### 12.7 Deferred problems
+
+Recorded, not part of this follow-up:
+- **D1. Damage isolation** (the user, 2026-10-07): when stored data can't be read, the whole read
+  fails, so one damaged record or session hides the entire timeline. A better design would report
+  and skip the damaged item and show the rest. Trigger: any "Data integrity failure" seen in use,
+  or the next change to stored data's shape.
+- **D2.** Report P7: a pending highlight can outlive its jump. FU-B5 removes the session case;
+  flag and file highlights keep the problem until it is fixed.
+- **D3.** Report P10: a crash between a conversation's record and its kept branches loses the
+  branches.
+
+### 12.8 Order of work
+
+1. FU-B7, FU-B8, FU-B5: page and test changes only.
+2. FU-B6: the storage error variant, the API's error kind, the page's two messages.
+3. FU-B3: the key, sessions, pruning, Review; then every test that spells a key.
+4. FU-B4: once the user confirms dropping empty conversations.
+
+Each step follows the usual loop: code, the post-addition check, tests, all suites green, then
+small topical commits. The browser suite runs at the end.
+
 ## Self-critique log
 
 ### C1 [OPEN]: Two files of a batch processed at once can lose each other's messages
@@ -991,3 +1203,35 @@ English letters; a few letters in other alphabets lowercase differently (inferre
 languages' documentation, not tested). **Mitigation in plan:** tests with accented and non-Latin
 letters in step 4. **Open:** if those tests show a difference that matters, the page sends the text
 already lowercased.
+
+### C19 [OPEN]: Positions across files are only ordered within each file
+FU-B3 ([§12.3](#123-fu-b3-messages-keep-the-order-the-file-gives-them)) gives a later file's added
+messages positions before or after the stored ones. Between two files, order therefore follows the
+time rule (Q18), not one file's list. A later export that inserts a message *inside* the stored range
+is not added at all (Q18), so this cannot misorder stored messages. **Open:** if Q18 is ever relaxed
+to add messages inside the stored range, positions would need renumbering. Trigger: any change to
+Q18.
+
+### C20 [OPEN]: The two error wordings depend on the adapters labelling damage correctly
+FU-B6 ([§12.4](#124-fu-b6-what-a-failed-read-after-describe-says)) shows "Data integrity failure" only
+when an adapter returns `Damaged`. A damaged-row path left returning `Backend` would show the
+connection wording for a permanent failure. **Mitigation in plan:** every existing damaged-row test
+gains a check of the variant. **Open:** a damaged-row check added later must use `Damaged`. Trigger:
+a code review of any new row-reading code.
+
+### C23 [OPEN]: Times out of file order can make a conversation's sessions overlap in time
+FU-B3 cuts sessions in position order. If a file's times run backwards somewhere (not seen yet;
+not checked in the user's export), two sessions of one conversation could cover overlapping times
+on the Calendar. **Mitigation in plan:** none beyond cutting at timed gaps. **Open:** whether to
+cut at a backwards step too. Trigger: overlapping sessions of one conversation seen in a real
+export, or a test file built to show it.
+
+### C21 [RESOLVED]: Highlighting a session highlighted every row shown
+The B5 fix highlighted all of a session's messages, which marks nothing. **Resolution:** no highlight
+for a session; flag highlights wait on Q6 ([§12.1](#121-fu-b5-no-highlight-when-a-session-is-opened)).
+
+### C22 [RESOLVED]: Sending files in order fitted the page to a test's assumption
+The B7 fix made the page wait so a committed test's assumption held. **Resolution:** the wait is
+removed and the test identifies the held file by name
+([§12.5](#125-fu-b7-files-are-sent-as-soon-as-each-is-prepared)).
+
