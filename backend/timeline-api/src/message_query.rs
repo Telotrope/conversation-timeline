@@ -10,29 +10,21 @@
 //! saying where to carry on. A visitor can also stop it, after the row it
 //! was given (Review stops once it has its page of rows).
 //!
-//! **Groups and order.** Sessions are read in groups, and the rows of a
-//! group are sorted before they are visited ([`order_key`]): by key, the
-//! file's order, for a group of one session or one conversation, and by
-//! time for Review's groups of overlapping sessions:
-//! - [`WalkOrder::Key`]: each session is its own group, in key order
-//!   (conversation, then number). Any order would do for the scan, the
-//!   download and the two server analyses.
-//! - [`WalkOrder::Time`]: sessions whose spans overlap form one group, so
-//!   Review's rows come out in exact time order however conversations
-//!   interleave (a decision made while building this plan; see the report).
-//! - [`WalkOrder::ConversationName`]: one group per conversation, ordered by
-//!   name: a Calendar day's rows, grouped by conversation as the page has
-//!   always shown them.
+//! **Order.** Sessions are walked one at a time, each session's rows in
+//! the file's order (their keys); messages of two conversations are never
+//! interleaved (plan §12.7):
+//! - [`WalkOrder::Key`]: sessions in key order (conversation, then number).
+//!   Any order would do for the scan, the download and the two server
+//!   analyses.
+//! - [`WalkOrder::Time`]: sessions by start, then conversation and number:
+//!   Review, in every view.
 //!
-//! A cursor names its group by the group's first session and the last row
-//! done in it; a cursor naming a group that no longer starts with that
-//! session is refused, since the data changed under it.
-
-use std::collections::HashMap;
+//! A cursor names its session and the last row done in it; a cursor naming
+//! a session no longer among the results is refused, since the data
+//! changed under it.
 
 use async_trait::async_trait;
 use timeline_core::message_filter::MessageFilter;
-use timeline_core::model::ConversationId;
 use timeline_core::ports::ids::UserId;
 use timeline_core::ports::messages::{EntryRange, MessageReader};
 use timeline_core::ports::sessions::SessionStore;
@@ -43,12 +35,10 @@ use timeline_core::work_budget::WorkBudget;
 
 use crate::error::ApiError;
 
-/// How rows are grouped and ordered; see the module doc.
+/// How sessions are ordered; see the module doc.
 pub enum WalkOrder {
     Key,
     Time,
-    /// Conversations ordered by these names (then id).
-    ConversationName(HashMap<ConversationId, String>),
 }
 
 /// What a visitor wants after a row.
@@ -93,59 +83,13 @@ pub struct WalkStores<'a> {
     pub messages: &'a dyn MessageReader,
 }
 
-/// Sorts and groups the admitted sessions.
+/// Orders the admitted sessions, each a group of its own.
 fn groups(mut sessions: Vec<StoredSession>, order: &WalkOrder) -> Vec<Vec<StoredSession>> {
     match order {
-        WalkOrder::Key => {
-            sessions.sort_by_key(StoredSession::key);
-            sessions.into_iter().map(|s| vec![s]).collect()
-        }
-        WalkOrder::Time => {
-            sessions.sort_by_key(|s| (s.start, s.key()));
-            let mut groups: Vec<Vec<StoredSession>> = Vec::new();
-            let mut group_end = None;
-            for session in sessions {
-                match (groups.last_mut(), group_end) {
-                    (Some(group), Some(end)) if session.start <= end => {
-                        group_end = Some(std::cmp::max(end, session.end));
-                        group.push(session);
-                    }
-                    _ => {
-                        group_end = Some(session.end);
-                        groups.push(vec![session]);
-                    }
-                }
-            }
-            groups
-        }
-        WalkOrder::ConversationName(names) => {
-            let name = |id: &ConversationId| names.get(id).map(String::as_str).unwrap_or("");
-            sessions.sort_by(|a, b| {
-                (name(&a.conversation_id), a.key()).cmp(&(name(&b.conversation_id), b.key()))
-            });
-            let mut groups: Vec<Vec<StoredSession>> = Vec::new();
-            for session in sessions {
-                match groups.last_mut() {
-                    Some(group) if group[0].conversation_id == session.conversation_id => {
-                        group.push(session)
-                    }
-                    _ => groups.push(vec![session]),
-                }
-            }
-            groups
-        }
+        WalkOrder::Key => sessions.sort_by_key(StoredSession::key),
+        WalkOrder::Time => sessions.sort_by_key(|s| (s.start, s.key())),
     }
-}
-
-/// A row's place within its group. A group of one session, or of one
-/// conversation, is in the file's order, its rows' keys (plan §12.3).
-/// Review's groups of overlapping sessions interleave conversations by
-/// time, then each conversation's rows in the file's order.
-fn order_key(order: &WalkOrder, key: &EntryKey) -> (chrono::DateTime<chrono::Utc>, EntryKey) {
-    match order {
-        WalkOrder::Time => (key.at, *key),
-        WalkOrder::Key | WalkOrder::ConversationName(_) => (chrono::DateTime::UNIX_EPOCH, *key),
-    }
+    sessions.into_iter().map(|s| vec![s]).collect()
 }
 
 /// Walks the rows `filter` admits; see the module doc. `start` is where an
@@ -191,7 +135,7 @@ pub async fn find_messages(
                 rows.push((entry, session));
             }
         }
-        rows.sort_by_key(|(entry, _)| order_key(order, &entry.key()));
+        rows.sort_by_key(|(entry, _)| entry.key());
         let after = resume_after.take();
         let mut last_done = after;
         let here = |after: Option<EntryKey>| WalkCursor {
@@ -199,9 +143,10 @@ pub async fn find_messages(
             after,
         };
         let mut stopped = false;
-        for (entry, session) in rows.iter().filter(|(e, _)| {
-            after.is_none_or(|a| order_key(order, &e.key()) > order_key(order, &a))
-        }) {
+        for (entry, session) in rows
+            .iter()
+            .filter(|(e, _)| after.is_none_or(|a| e.key() > a))
+        {
             if stopped {
                 // A visitor stopped on the row before this one.
                 return Ok(WalkEnd {

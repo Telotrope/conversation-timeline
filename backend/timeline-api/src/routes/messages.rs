@@ -22,7 +22,6 @@
 //! counting matches until the time limit or the end, so the page can say
 //! how many pages there are.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -36,7 +35,6 @@ use timeline_core::message_filter::{
     FlagFilter, MessageFilter, SearchText, SpanFilter, SpanKind, TimeSpan,
 };
 use timeline_core::model::{ConversationId, MessageId, Sender};
-use timeline_core::ports::conversations::ConversationSummaryStore;
 use timeline_core::ports::ids::UserId;
 use timeline_core::ports::messages::MessageReader;
 use timeline_core::ports::sessions::SessionStore;
@@ -278,7 +276,6 @@ pub async fn list_messages(
     AuthenticatedUser(user_id): AuthenticatedUser,
     State(sessions): State<Arc<dyn SessionStore>>,
     State(messages): State<Arc<dyn MessageReader>>,
-    State(conversations): State<Arc<dyn ConversationSummaryStore>>,
     State(user_records): State<Arc<dyn UserRecordStore>>,
     State(key): State<Arc<FlagHandleKey>>,
     State(budget): State<BudgetSetting>,
@@ -291,21 +288,9 @@ pub async fn list_messages(
         _ => None,
     })?;
     let wanted = query.rows.unwrap_or(PAGE_ROWS).min(PAGE_ROWS);
-    let order = match filter.span {
-        Some(SpanFilter {
-            kind: SpanKind::Day,
-            ..
-        }) => {
-            let names: HashMap<ConversationId, String> = conversations
-                .list_for_user(&user_id)
-                .await?
-                .into_iter()
-                .map(|s| (s.conversation_id, s.name.0))
-                .collect();
-            WalkOrder::ConversationName(names)
-        }
-        _ => WalkOrder::Time,
-    };
+    // Sessions by start, each one's messages in the file's order, in every
+    // view (plan §12.7).
+    let order = WalkOrder::Time;
     let record = user_records.get(&user_id).await?;
     let mut collect = Collect {
         user_id: &user_id,
