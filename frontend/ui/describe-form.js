@@ -179,6 +179,7 @@ function renderSection(section, i){
   return el('div', { className: 'describe-section' },
     sectionHeading(section),
     untimedWarning(section),
+    outOfOrderWarning(section),
     participantsField(section),
     mediumField(section, i),
     transcriptionField(section),
@@ -307,6 +308,23 @@ function untimedWarning(section){
     ? `${counted}: this conversation is placed on the timeline by the start and end below.`
     : `In ${affected.length} conversation${affected.length === 1 ? '' : 's'} (${affected.map((r) => r.name || '(untitled)').join(', ')}), `
       + `${counted}: each such conversation is placed on the timeline by its start and end, which you can change from the Conversations tab.`;
+  return el('p', { className: 'untimed-warning', textContent: text });
+}
+
+// Messages timed earlier than the message before them in the file (plan
+// docs/plans/2026-10-06-load-only-what-the-page-shows.md §12.3): bad data,
+// so you are told; they keep the file's order. Null when there are none.
+function outOfOrderWarning(section){
+  const records = section.record ? [section.record] : RECORDS.filter((r) => section.uploadIds.includes(r.source.upload_id));
+  const affected = records.filter((r) => r.out_of_order > 0);
+  if(affected.length === 0) return null;
+  const messages = affected.reduce((n, r) => n + r.out_of_order, 0);
+  const where = section.record
+    ? 'this conversation'
+    : affected.map((r) => r.name || '(untitled)').join(', ');
+  const text = `${messages} message${messages === 1 ? '' : 's'} in ${where} `
+    + `${messages === 1 ? 'has a time' : 'have times'} earlier than the message before `
+    + `${messages === 1 ? 'it' : 'them'} in the file; their order is kept as the file gives it.`;
   return el('p', { className: 'untimed-warning', textContent: text });
 }
 
