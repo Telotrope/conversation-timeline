@@ -219,7 +219,7 @@ click.
 ## 4. Tests
 
 - **Unit tests, Node's built-in `node:test`** (no new dependency), in
-  `devtools/vscode-diff-link/test/`, through the extension's public entry
+  `devtools/vscode-doc-links/test/`, through the extension's public entry
   point: `activate(context)` is called with a stand-in for the `vscode`
   module (substituted through Node's module loader), the registered handler
   is given links, and the test checks which `vscode.diff` call or error
