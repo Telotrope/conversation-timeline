@@ -341,7 +341,11 @@ async fn process(
         }
     };
     // Unreachable backstop: the parse task returns rather than panics.
-    let kept: Vec<Kept> = kept.expect("the parse task doesn't panic")?;
+    let read = kept.expect("the parse task doesn't panic")?;
+    if read.empty_dropped > 0 {
+        note("empty_conversations_dropped", read.empty_dropped);
+    }
+    let kept: Vec<Kept> = read.kept;
     note("ms_parse", ms(started.elapsed()));
     refuse_oversized(&kept)?;
     note("reviews", reviews_in(&kept));

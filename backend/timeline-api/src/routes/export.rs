@@ -8,9 +8,9 @@
 //! and thinking are not kept, but it can be uploaded again: messages of text
 //! alone are a valid export, and uploading it brings back your flags. Notes
 //! for pruned branches are left out; the export format has nothing like
-//! them. A conversation with no messages has no sessions to walk; the last
-//! part adds those, with no messages, so the download still holds every
-//! conversation. A message of unknown time is written without `created_at`, so a
+//! them. Every stored conversation has messages (processing drops empty
+//! ones, plan §12.2), so walking sessions reaches every conversation. A
+//! message of unknown time is written without `created_at`, so a
 //! round trip keeps it unknown (§4e).
 //!
 //! **In parts.** The file is written in pieces, each reply carrying one as
@@ -256,25 +256,6 @@ pub async fn export(
     .await?;
     if end.cursor.is_none() {
         writer.close_open();
-        let with_sessions: std::collections::HashSet<ConversationId> = sessions
-            .list_sessions(&user_id)
-            .await?
-            .iter()
-            .map(|s| s.conversation_id)
-            .collect();
-        let mut empty: Vec<(&ConversationId, &String)> = names
-            .iter()
-            .filter(|(id, _)| !with_sessions.contains(id))
-            .collect();
-        empty.sort();
-        for (id, name) in empty {
-            if writer.any {
-                writer.push(",");
-            }
-            writer.push(&json!({"uuid": id, "name": name, "chat_messages": []}).to_string());
-            writer.any = true;
-            writer.begun += 1;
-        }
         writer.push("]}");
     }
     // For this request's log line (crate::request_log).

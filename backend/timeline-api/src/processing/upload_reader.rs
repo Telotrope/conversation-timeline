@@ -70,12 +70,23 @@ impl Read for Counting<'_> {
     }
 }
 
-/// Every conversation of the upload, kept; `bytes_read` counts the parse's
-/// progress through `plain`.
+/// What was read from an upload: every conversation with messages, kept,
+/// and how many had none and were dropped.
+#[derive(Debug)]
+pub struct ReadUpload {
+    pub kept: Vec<Kept>,
+    /// Conversations with no messages. They are not stored: the page would
+    /// list them with nothing to show (plan
+    /// 2026-10-06-load-only-what-the-page-shows.md §12.2).
+    pub empty_dropped: usize,
+}
+
+/// Every conversation of the upload that has messages, kept;
+/// `bytes_read` counts the parse's progress through `plain`.
 pub fn read_conversations(
     plain: &[u8],
     bytes_read: Arc<AtomicU64>,
-) -> Result<Vec<Kept>, ReadError> {
+) -> Result<ReadUpload, ReadError> {
     std::str::from_utf8(plain).map_err(ReadError::NotUtf8)?;
     let mut deserializer = serde_json::Deserializer::from_reader(Counting {
         inner: plain,
@@ -85,6 +96,10 @@ pub fn read_conversations(
     let result = (&mut deserializer)
         .deserialize_any(TopLevel { marks: &marks })
         .and_then(|kept| deserializer.end().map(|()| kept));
+    let result = result.map(|kept| ReadUpload {
+        kept,
+        empty_dropped: marks.empty_dropped.get(),
+    });
     result.map_err(|e| {
         if let Some(keep) = marks.failure.take() {
             return ReadError::Keep(keep);
@@ -106,6 +121,8 @@ struct Marks {
     failure: Cell<Option<KeepError>>,
     /// The document is neither of the two accepted shapes.
     wrong_shape: Cell<bool>,
+    /// Conversations with no messages, dropped.
+    empty_dropped: Cell<usize>,
 }
 
 /// The document's top: an array of conversations, or an object holding one
@@ -180,6 +197,10 @@ fn keep_each<'de, A: SeqAccess<'de>>(
 ) -> Result<Vec<Kept>, A::Error> {
     let mut kept = Vec::new();
     while let Some(conversation) = seq.next_element::<Conversation>()? {
+        if conversation.chat_messages.is_empty() {
+            marks.empty_dropped.set(marks.empty_dropped.get() + 1);
+            continue;
+        }
         match keep_conversation(&conversation, already_processed) {
             Ok(k) => kept.push(k),
             Err(e) => {
