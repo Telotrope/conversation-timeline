@@ -1,7 +1,11 @@
 # Report "diff" links that open VS Code's side-by-side comparison, and line links that work in the preview
 
 **Date:** 2026-10-07
-**Status:** approved 2026-10-07; extension repository to be pushed to the Telotrope GitHub organization
+**Status:** revision 2 (2026-10-07), waiting for approval. Revision 1 was
+approved and built; its line links and switch to the preview work (user,
+2026-10-07), but its comparison links do nothing in the preview (C1). This
+revision changes only how a comparison link reaches the extension (route A,
+chosen by the user 2026-10-07): §2, §3a, §3g, §4 and C1, C9–C11.
 
 ## 1. Goal
 
@@ -22,24 +26,51 @@ that line, instead of the preview opening at the top.
 Read in the installed code-server (`/usr/lib/code-server/lib/vscode/`), not yet
 seen working end to end:
 
-- **Rendered preview link clicks.** In
-  `extensions/markdown-language-features/media/index.js`, links starting
-  `http:`, `https:`, `mailto:`, `vscode:` or `vscode-insiders:` are handled by
-  the browser; every other link is passed to the Markdown extension, which (in
-  `dist/extension.js`, `openDocumentLink`) opens any link with a scheme other
-  than `file` through VS Code's `vscode.open` command.
+- **Rendered preview link clicks — corrected in revision 2.** Revision 1
+  read `extensions/markdown-language-features/media/index.js` as passing
+  every link without a web scheme to the Markdown extension. It does not: it
+  passes a link to the Markdown extension only when the link has **no scheme
+  at all** (a relative path). A link with any scheme (`code-oss:`, `https:`,
+  …) is left to the webview, the sandboxed page the preview runs in.
+- **What the webview opens.** The webview host opens a clicked link only if
+  `isSupportedLink` allows it (`workbench.web.main.internal.js`): `http`,
+  `https`, `mailto`, `vscode`, `vscode-insider`; `command` only when the
+  webview enables command links (the preview does not); and the product's own
+  scheme (`code-oss`) **only when not running in a browser**. code-server runs
+  in a browser, so revision 1's `code-oss:` links were dropped without a
+  message — the F2 test (user, 2026-10-07).
+- **How a web link opens.** For an `https:` link the webview calls VS Code's
+  opener with `fromUserGesture`, `allowContributedOpeners` and
+  `fromWorkspace` set. The opener first runs its checks: the link-protection
+  check (the "open external website?" question) is skipped when the link
+  comes `fromWorkspace`, the workspace is trusted, and
+  `workbench.trustedDomains.promptInTrustedWorkspace` is off (its default).
+  It then offers the link to openers that extensions registered with
+  `vscode.window.registerExternalUriOpener`, before falling back to the
+  browser. An extension opener that answers "Preferred"
+  (`ExternalUriOpenerPriority.Preferred`, 3) is used without asking which
+  opener to use.
+- **That hook is a "proposed" VS Code feature.** The extension API
+  `registerExternalUriOpener(id, opener, { schemes, label })` exists in this
+  build's extension host but is allowed only for extensions that declare
+  `"enabledApiProposals": ["externalUriOpener"]` and that code-server is
+  started to allow, through its `enable-proposed-api` option (a list of
+  extension IDs; code-server's `config.yaml` accepts a YAML list for it, read
+  in `/usr/lib/code-server/out/node/cli.js`). Only `http` and `https` are
+  accepted. The opener object needs `canOpenExternalUri(uri, token)` and
+  `openExternalUri(resolvedUri, { sourceUri }, token)`. If
+  `openExternalUri` fails, VS Code shows a notification offering to open the
+  link in the browser instead.
 - **`vscode.open` refuses command links.** In
   `out/vs/workbench/workbench.web.main.internal.js`, the `_workbench.open`
   handler returns without doing anything when the address starts `command:`.
   This is why a `command:vscode.diff?…` link works on Ctrl+click in the text
   editor (tested by the user, 2026-10-07) but cannot work in the preview.
-- **`code-oss:` links reach extensions.** For any other address,
-  `vscode.open` hands it to VS Code's opener. In the same file, an opener
-  (minified class `Kuo`) takes addresses whose scheme equals the product's
-  `urlProtocol` and passes them to the URL service with `trusted: true`. This
-  code-server's `product.json` sets `urlProtocol` to `code-oss`. The URL
-  service delivers `code-oss://<publisher>.<extension>/…` to that extension's
-  URI handler (a function an extension registers to receive such links).
+- **`code-oss:` links reach extensions — but not from a webview in a
+  browser.** `vscode.open` hands other addresses to VS Code's opener, where an
+  opener (minified class `Kuo`) passes `code-oss://<publisher>.<extension>/…`
+  to that extension's URI handler. That route is real, but the preview never
+  reaches it (see the corrected bullets above), so revision 2 drops it.
 - **No installed extension opens a comparison from a link.** The only
   built-in URI handlers are Git (`/clone` only, read in
   `extensions/git/dist/main.js`), GitHub and Microsoft sign-in, and Copilot.
@@ -96,28 +127,37 @@ the timeline product. Only the report rewrite (§3d) and this plan change the
 timeline repository. Files in the new repository:
 
 - `package.json` — publisher `telotrope`, name `doc-links`, activation on
-  `onUri` and `onStartupFinished` (when code-server finishes loading; changed
+  `onStartupFinished` (when code-server finishes loading; changed
   from `onLanguage:markdown` during coding and confirmed by the user
   2026-10-07, because an extension started by the first Markdown file opening
   would start too late to switch that file's tab), VS Code engine `^1.80.0`;
+  `enabledApiProposals: ["externalUriOpener"]` (revision 2, §3g);
   contributes the
   preview script (§3e) and the command and editor-title button (§3f). Only
   development dependency: `jsdom` (MIT) for testing the preview script.
 - `extension.js` (plain JavaScript, no build step) — `activate` wires the
   pieces below; each piece is its own file.
-- `diff_link.js` — the URI handler for comparison links.
+- `diff_link.js` — the link opener for comparison links (revision 2; was a
+  URI handler).
 - `uri_request.js` — parses and checks the link (§3b) into a request object,
   with no VS Code imports, so it is testable without VS Code.
 - `media/line_fragment.js` — the preview script (§3e).
 - `preview_switch.js` — the command and the automatic switch (§3f).
 
-Link format (what goes in the report):
+Link format (what goes in the report), revision 2:
 
 ```
-code-oss://telotrope.doc-links/diff?path=backend/README.md&from=3ae3c16&to=b2dc683
+https://doc-links.invalid/diff?path=backend/README.md&from=3ae3c16&to=b2dc683
 ```
 
-The handler:
+`.invalid` is a top-level name reserved never to exist on the internet, so
+the address can only ever mean this extension; if the extension is not
+running, the browser opens a tab that fails to load instead of reaching a real
+site (C11).
+
+The opener registers for `https` links, answers "Preferred" for links whose
+host is `doc-links.invalid` and "None" for every other link, so all other web
+links open as before. When it is given a link, it:
 
 1. Parses the link once at the boundary (§3b). A bad link shows a VS Code
    error message naming the problem; nothing opens.
@@ -141,6 +181,12 @@ The handler:
 The empty side is a read-only empty document provided by the
 extension's own `doc-links-empty:` content provider, so no blank editor tab is
 left behind.
+
+If VS Code refuses to register the opener (code-server not started with the
+`enable-proposed-api` option, §3g), the extension shows one error message
+saying comparison links are off and why, writes it to the "Doc links"
+output, and starts the rest — line links and the switch to the preview —
+normally (C9).
 
 ### 3b. Parsing at the boundary
 
@@ -226,14 +272,39 @@ reachable from an open preview. Its cost: a second chat link into a document
 whose preview is already open opens the text; the button then takes one
 click.
 
+### 3g. code-server configuration (revision 2)
+
+One line added to `~/.config/code-server/config.yaml` (the file's other
+settings untouched):
+
+```yaml
+enable-proposed-api: [telotrope.doc-links]
+```
+
+code-server reads it only at start, so it is restarted once with
+`sudo systemctl restart code-server@molinemc` (it runs as that system
+service; the command needs the user's password). **A restart stops every
+Claude session running inside code-server, this one included.** Order agreed
+with the user 2026-10-07: Claude adds the line; the user restarts when the
+other sessions are idle; the user reopens this conversation from the Claude
+panel's session history; Claude then writes the code. Checked after the
+restart, before coding: the extension host log shows code-server started
+with the option (the extension logs whether the opener registered, §3a).
+
 ## 4. Tests
 
 - **Unit tests, Node's built-in `node:test`** (no new dependency), in
   `~/workspace/vscode-doc-links/test/`, through the extension's public entry
   point: `activate(context)` is called with a stand-in for the `vscode`
-  module (substituted through Node's module loader), the registered handler
+  module (substituted through Node's module loader), the registered opener
   is given links, and the test checks which `vscode.diff` call or error
-  message results. Cases: both sides exist; added file; removed file;
+  message results. Revision 2 changes the comparison-link tests in
+  `test/diff_link.test.js` (committed in revision 1) to give links to the
+  opener instead of the URI handler, with `https://doc-links.invalid/…`
+  links; approving this revision approves that test change. Added cases: the
+  opener answers "Preferred" for its host and "None" for other hosts and for
+  `http`; registration refused (the proposal is off) shows the one message
+  and leaves the preview switch working. Cases: both sides exist; added file; removed file;
   neither; each parse rejection in §3b; path outside every workspace folder;
   git failing to start; `vscode.diff` rejecting. The git checks run against a
   temporary real git repository made in the test, not a stand-in.
@@ -258,8 +329,8 @@ click.
 
 ## 5. Not covered
 
-- Desktop VS Code uses `vscode://`, not `code-oss://`; these links only work
-  in this code-server.
+- Comparison links need code-server started with `enable-proposed-api`
+  (§3g). A code-server upgrade could change or remove the proposed hook (C10).
 - Files renamed by the work show as one removed and one added, because rows
   are per path.
 - Plain file links from the chat panel (no line) still open as text first;
@@ -281,7 +352,7 @@ click.
 ### C1 [OPEN]: The route through the preview is read from minified code, not yet seen working
 The chain preview → `vscode.open` → `code-oss` opener → extension is inferred
 from reading minified source. **Mitigation in plan:** the F2 click test comes
-before any report rewrite ([§3d, line 175](docs/plans/2026-10-07-report-diff-links-in-vs-code.md#L175)).
+before any report rewrite ([§3d, line 225](docs/plans/2026-10-07-report-diff-links-in-vs-code.md#L225)).
 **Result of the F2 click (user, 2026-10-07): nothing happened; the "Doc
 links" output stayed empty.** Cause, read in the installed code-server after
 the failure:
@@ -295,31 +366,36 @@ the failure:
   preview does not), or the product's own scheme (`code-oss`) **only when not
   running in a browser**. code-server runs in a browser, so the click is
   dropped without a message.
-**Open:** the comparison links need a different route; options put to the
-user 2026-10-07. The line links and the switch to the preview (§3e, §3f)
-work (user, 2026-10-07).
+The line links and the switch to the preview (§3e, §3f) work (user,
+2026-10-07). **Mitigation in revision 2:** comparison links become `https:`
+links caught by an extension link opener (route A, chosen by the user,
+[§3a, line 158](docs/plans/2026-10-07-report-diff-links-in-vs-code.md#L158)).
+**Open:** the same F2 click test, after the restart in §3g; if it fails, the
+"Doc links" output and the extension host log are read before anything else
+is changed.
 
-### C2 [OPEN]: VS Code may ask "Allow 'doc-links' to open this URI?" on first click
-The opener passes `trusted: true`, which I expect skips the question, but I
-have not read the URL service's confirmation code. **Open:** if the question
-appears, the user can tick "don't ask again"; revisit if it appears every
-time.
+### C2 [RESOLVED]: VS Code may ask "Allow 'doc-links' to open this URI?" on first click
+Original concern: the URI-handler route might ask before handing a link to
+the extension. **Resolution:** moot in revision 2, which no longer uses a URI
+handler; the opener route's only question, link protection, is skipped for
+links clicked in a trusted workspace
+([§2, line 42](docs/plans/2026-10-07-report-diff-links-in-vs-code.md#L42)).
 
 ### C3 [RESOLVED]: An empty left side for added files could leave a blank tab
 Original concern: using `untitled:` for the empty side opens an editable
 empty buffer. **Resolution:** the extension provides its own read-only empty
-document ([§3a, line 137](docs/plans/2026-10-07-report-diff-links-in-vs-code.md#L137)).
+document ([§3a, line 181](docs/plans/2026-10-07-report-diff-links-in-vs-code.md#L181)).
 
 ### C4 [RESOLVED]: Link text from a document could make git read an option or another file
 Original concern: `path` or a commit beginning `-`, or containing `..`, would
 be passed to git. **Resolution:** strict parsing of both fields and `execFile`
-with an argument list ([§3b, line 141](docs/plans/2026-10-07-report-diff-links-in-vs-code.md#L141)).
+with an argument list ([§3b, line 191](docs/plans/2026-10-07-report-diff-links-in-vs-code.md#L191)).
 
 ### C6 [RESOLVED]: An automatic switch could flip "Open Source" straight back to the preview
 Original concern: switching every Markdown text tab to the preview would make
 the preview's "Open Source" button useless. **Resolution:** the switch is
 skipped when a preview of that file is already open, and limited to `docs/`
-([§3f, line 211](docs/plans/2026-10-07-report-diff-links-in-vs-code.md#L211)).
+([§3f, line 261](docs/plans/2026-10-07-report-diff-links-in-vs-code.md#L261)).
 
 ### C7 [OPEN]: The chat panel's selection timing is read from minified code
 The automatic switch relies on the chat panel selecting the linked line soon
@@ -335,10 +411,29 @@ present, and the preview's own code does nothing for a fragment it cannot
 match. **Open:** if the preview jumps after landing, check in the end-to-end
 run with the text editor visible beside it.
 
+### C9 [RESOLVED]: If the proposed hook is off, the whole extension could fail to start
+Original concern: `registerExternalUriOpener` throws when the proposal is not
+enabled, which would stop `activate` and take the working line links down
+with it. **Resolution:** the registration failure is caught, reported once,
+and the rest of the extension starts
+([§3a, line 185](docs/plans/2026-10-07-report-diff-links-in-vs-code.md#L185)).
+
+### C10 [OPEN]: A proposed hook can change in any code-server upgrade
+**Mitigation in plan:** the failure path in C9 makes a removed or renamed
+hook visible (one error message) instead of silent. **Open:** after each
+code-server upgrade, if that message appears, read the new build's
+extension-host API and revise.
+
+### C11 [OPEN]: Without the extension, a comparison link opens a dead browser tab
+If the extension is not installed or not running, the `.invalid` link opens a
+browser tab that fails to load. **Mitigation in plan:** `.invalid` can never
+reach a real site. **Open:** acceptable unless the reports are read
+somewhere without the extension (e.g. on GitHub); revisit then.
+
 ### C5 [RESOLVED]: Reuse before new code
 Original concern: an existing extension might already do this. **Resolution:**
 the installed URI handlers were read and a web search done; none opens a
-comparison ([§2, line 43](docs/plans/2026-10-07-report-diff-links-in-vs-code.md#L43)).
+comparison ([§2, line 74](docs/plans/2026-10-07-report-diff-links-in-vs-code.md#L74)).
 The `git:` address format is reused from the Git extension's own `toGitUri`
 rather than invented. The line scroll reuses the preview's own `data-line`
 marks and `code-active-line` style, and the fragment forms reuse the text
