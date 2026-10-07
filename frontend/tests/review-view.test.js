@@ -356,3 +356,21 @@ test("a session opened from elsewhere flashes its rows: all of yours, or those w
   await settle();
   assert.deepEqual(['m0', 'm1'].map((id) => elements[id].classes.has('row-highlight')), [true, true]);
 });
+
+test('a count replaced by a newer one fails quietly, with a note in the console', async () => {
+  const notes = [];
+  const info = console.info;
+  console.info = (text) => notes.push(text);
+  try{
+    // The first walk's answer fails; the second walk has started by then.
+    script = [500, part({ rows: rows(0, 3), matched: 3 })];
+    review.startReviewQuery();
+    review.startReviewQuery();
+    await settle();
+  } finally {
+    console.info = info;
+  }
+  assert.deepEqual(notes, ['a replaced count stopped: reading your messages failed (500): broken']);
+  assert.equal(page.el('reviewProgress').hidden, true);
+  assert.equal(page.el('reviewCount').textContent, '3 messages');
+});
