@@ -87,7 +87,13 @@ Why line links fail in the preview, read in
 
 The extension now does three things (comparison links, line links in the
 preview, switching to the preview), so it is named "doc-links" rather than
-"diff-link". New folder [devtools/vscode-doc-links/](../../devtools/vscode-doc-links/):
+"diff-link".
+
+**Location (user decision 2026-10-07): outside the timeline repository**, as
+its own git repository at `~/workspace/vscode-doc-links/` (a sibling of
+`conversation-timeline/`). It is a reading aid for code-server, not part of
+the timeline product. Only the report rewrite (§3d) and this plan change the
+timeline repository. Files in the new repository:
 
 - `package.json` — publisher `telotrope`, name `doc-links`, activation on
   `onUri` and `onLanguage:markdown`, VS Code engine `^1.80.0`; contributes the
@@ -152,7 +158,7 @@ open partly.
 
 ### 3c. Installing it
 
-New script [scripts/install-doc-links.sh](../../scripts/install-doc-links.sh):
+Script `install.sh` at the root of `~/workspace/vscode-doc-links/`:
 packages the folder with `npx @vscode/vsce package` (MIT license) and installs
 the result with `code-server --install-extension`. After installing, the
 browser tab is reloaded once.
@@ -219,7 +225,7 @@ click.
 ## 4. Tests
 
 - **Unit tests, Node's built-in `node:test`** (no new dependency), in
-  `devtools/vscode-doc-links/test/`, through the extension's public entry
+  `~/workspace/vscode-doc-links/test/`, through the extension's public entry
   point: `activate(context)` is called with a stand-in for the `vscode`
   module (substituted through Node's module loader), the registered handler
   is given links, and the test checks which `vscode.diff` call or error
@@ -263,13 +269,15 @@ click.
 - **Q2.** Automatic switch (§3f) on, or only the button? Recommended: both —
   the automatic switch covers the common case (chat link into a report), the
   button covers a document whose preview is already open.
+- **Q3 [DECIDED 2026-10-07].** Where does the extension live? The user:
+  outside the timeline repository (§3a).
 
 ## Self-critique log
 
 ### C1 [OPEN]: The route through the preview is read from minified code, not yet seen working
 The chain preview → `vscode.open` → `code-oss` opener → extension is inferred
 from reading minified source. **Mitigation in plan:** the F2 click test comes
-before any report rewrite ([§3d, line 169](docs/plans/2026-10-07-report-diff-links-in-vs-code.md#L169)).
+before any report rewrite ([§3d, line 175](docs/plans/2026-10-07-report-diff-links-in-vs-code.md#L175)).
 **Open:** if the click does nothing, check the "Doc links" output channel and
 the browser console, and come back with a revised plan.
 
@@ -282,18 +290,18 @@ time.
 ### C3 [RESOLVED]: An empty left side for added files could leave a blank tab
 Original concern: using `untitled:` for the empty side opens an editable
 empty buffer. **Resolution:** the extension provides its own read-only empty
-document ([§3a, line 131](docs/plans/2026-10-07-report-diff-links-in-vs-code.md#L131)).
+document ([§3a, line 137](docs/plans/2026-10-07-report-diff-links-in-vs-code.md#L137)).
 
 ### C4 [RESOLVED]: Link text from a document could make git read an option or another file
 Original concern: `path` or a commit beginning `-`, or containing `..`, would
 be passed to git. **Resolution:** strict parsing of both fields and `execFile`
-with an argument list ([§3b, line 135](docs/plans/2026-10-07-report-diff-links-in-vs-code.md#L135)).
+with an argument list ([§3b, line 141](docs/plans/2026-10-07-report-diff-links-in-vs-code.md#L141)).
 
 ### C6 [RESOLVED]: An automatic switch could flip "Open Source" straight back to the preview
 Original concern: switching every Markdown text tab to the preview would make
 the preview's "Open Source" button useless. **Resolution:** the switch is
 skipped when a preview of that file is already open, and limited to `docs/`
-([§3f, line 205](docs/plans/2026-10-07-report-diff-links-in-vs-code.md#L205)).
+([§3f, line 211](docs/plans/2026-10-07-report-diff-links-in-vs-code.md#L211)).
 
 ### C7 [OPEN]: The chat panel's selection timing is read from minified code
 The automatic switch relies on the chat panel selecting the linked line soon
