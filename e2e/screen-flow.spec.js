@@ -431,7 +431,9 @@ test('a save whose details can\'t be read back stays on Describe and says so', a
   await expect(page.locator('#describeBody .describe-section')).toBeVisible();
   await page.route(`${API_BASE}/conversations`, (route) => route.fulfill({ status: 500, body: 'broken' }));
   await page.click('#describeSaveBtn');
-  await expect(page.locator('#describeStatus')).toContainText("Could not read your files' details");
+  // The read here is of the timeline, after the details were saved (plan
+  // docs/plans/2026-10-06-load-only-what-the-page-shows.md §12.4).
+  await expect(page.locator('#describeStatus')).toHaveText('Could not complete request, please try again.');
   await expect(page.locator('#describePage')).toBeVisible();
 });
 

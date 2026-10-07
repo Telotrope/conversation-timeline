@@ -914,7 +914,9 @@ test('a session that cannot be fetched on reload shows the error in the loading 
   await page.reload();
   const modal = page.locator('#loadingModal');
   await expect(modal).toBeVisible({ timeout: 30_000 });
-  await expect(page.locator('#loadStatus')).toContainText('Is the backend running');
+  // No answer at all: trying again may help (plan
+  // docs/plans/2026-10-06-load-only-what-the-page-shows.md §12.4).
+  await expect(page.locator('#loadStatus')).toHaveText('Could not complete request, please try again.');
   await expect(page.locator('#loadingRetryBtn')).toBeVisible();
   await page.unroute(sessions);
   await page.click('#loadingRetryBtn');
