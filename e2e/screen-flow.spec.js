@@ -167,12 +167,26 @@ test('when every file fails, the Upload page says so and lists each reason', asy
 test('Stop with one file processed and one still sending: Describe for the first, the other named as stopped', async ({ page }) => {
   await page.goto(TIMELINE_HTML);
   await signInToUpload(page, uniqueSub());
-  // The second file's bytes never arrive until Stop cancels them.
-  let puts = 0;
+  // stuck.json's bytes never arrive until Stop cancels them. The files are
+  // sent in whatever order they finish preparing, so stuck.json's upload is
+  // found by name: each upload's start names its file, and its answer gives
+  // the address the bytes go to (plan
+  // docs/plans/2026-10-06-load-only-what-the-page-shows.md §12.5).
+  // The address is noted before the page sees the answer, so it is known
+  // before the page can send to it.
+  const stuckUrls = new Set();
+  await page.route(`${API_BASE}/uploads`, async (route) => {
+    const req = route.request();
+    if (req.method() !== 'POST' || JSON.parse(req.postData() || '{}').file_name !== 'stuck.json') {
+      return route.fallback();
+    }
+    const res = await route.fetch();
+    stuckUrls.add(new URL((await res.json()).upload_url, API_BASE).pathname);
+    return route.fulfill({ response: res });
+  });
   await page.route(/\/_dev\/local-storage\/put\//, (route) => {
-    puts += 1;
-    if (puts === 1) return route.fallback();
-    return new Promise(() => {});
+    if (stuckUrls.has(new URL(route.request().url()).pathname)) return new Promise(() => {});
+    return route.fallback();
   });
   const firstReady = page.waitForResponse((r) => /\/uploads\/[0-9a-f-]{36}$/.test(r.url()) && r.status() === 200);
   await uploadFiles(page, [file('quick.json', [chat('Quick', '2026-01-01')]), file('stuck.json', [chat('Stuck', '2026-01-02')])]);
