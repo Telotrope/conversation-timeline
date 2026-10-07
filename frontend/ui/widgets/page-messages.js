@@ -131,6 +131,11 @@ export const PAGE_MESSAGES = Object.freeze({
   },
   'describe.invalid': { text: () => 'Some answers need fixing first; they are marked.', isError: true },
   'describe.save_failed': { text: ({ detail }) => `Could not save: ${detail}`, isError: true, record: failure },
+  // A failed read of the timeline (opening it, Try again, or after Describe
+  // is saved): stored data that can't be read, or anything else (plan
+  // docs/plans/2026-10-06-load-only-what-the-page-shows.md §12.4).
+  'load.data_integrity': { text: () => 'Data integrity failure', isError: true, record: failure },
+  'load.try_again': { text: () => 'Could not complete request, please try again.', isError: true, record: failure },
   'describe.load_failed': {
     text: ({ detail }) => `Could not read your files' details: ${detail}`, isError: true, record: failure,
   },

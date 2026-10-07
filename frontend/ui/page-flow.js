@@ -215,7 +215,7 @@ function loadFailed(err){
     return toSignIn('signIn.ran_out');
   }
   failLoadProgress();
-  setLoadStatus(...DEPS.describeLoadFailure(err));
+  setLoadStatus(...(readFailure(err) || DEPS.describeLoadFailure(err)));
   offerLoadingModalChoices(() => openTimeline(), () => signOut());
 }
 
@@ -224,7 +224,28 @@ function readBackFailed(err){
   hideLoadProgress();
   closeLoadingModal();
   if(expired(err)) return toSignIn('signIn.ran_out');
-  setDescribeStatus('describe.load_failed', { detail: err.message, status: errorStatusOf(err), error_kind: errorKindOf(err) });
+  setDescribeStatus(...(readFailure(err) || ['load.try_again', failureValues(err)]));
+}
+
+// Kinds of failure that trying again may cure: no answer, a cancelled
+// request, a server error other than damaged data, the page giving up.
+const TRY_AGAIN_KINDS = ['network', 'aborted', 'server_error', 'timed_out'];
+
+// The message for a failed read of the timeline (plan
+// docs/plans/2026-10-06-load-only-what-the-page-shows.md §12.4): "Data
+// integrity failure" when the server's stored data can't be read, "Could
+// not complete request…" when trying again may help, or null for a failure
+// that isn't a request's (an account with no conversations), which keeps
+// its own wording.
+function readFailure(err){
+  const kind = errorKindOf(err);
+  if(kind === 'data_integrity') return ['load.data_integrity', failureValues(err)];
+  if(TRY_AGAIN_KINDS.includes(kind)) return ['load.try_again', failureValues(err)];
+  return null;
+}
+
+function failureValues(err){
+  return { status: errorStatusOf(err), error_kind: errorKindOf(err) };
 }
 
 // Arriving at the timeline: the view the address names, or the Calendar,

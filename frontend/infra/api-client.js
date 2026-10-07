@@ -200,20 +200,32 @@ export async function ensureAuthToken(sub){
 // not silently dropped.
 // A failed answer as an error to throw: describeFailure's message, with the
 // HTTP status and the kind 'server_error' for the activity log.
+// The failure as a PageError: 'data_integrity' when the server says its
+// stored data can't be read (plan
+// docs/plans/2026-10-06-load-only-what-the-page-shows.md §12.4), otherwise
+// 'server_error'.
 export async function requestFailure(what, res){
-  return new PageError(await describeFailure(what, res), 'server_error', res.status);
+  const { text, kind } = await readFailure(what, res);
+  return new PageError(text, kind, res.status);
 }
 
 export async function describeFailure(what, res){
+  return (await readFailure(what, res)).text;
+}
+
+async function readFailure(what, res){
   try{
-    const text = await res.text();
+    const body = await res.text();
     try{
-      const parsed = JSON.parse(text);
-      if(parsed && typeof parsed.error === 'string') return `${what} failed (${res.status}): ${parsed.error}`;
+      const parsed = JSON.parse(body);
+      if(parsed && typeof parsed.error === 'string'){
+        const kind = parsed.error_kind === 'data_integrity' ? 'data_integrity' : 'server_error';
+        return { text: `${what} failed (${res.status}): ${parsed.error}`, kind };
+      }
     } catch(e){ /* not JSON -- fall through to raw text below */ }
-    return `${what} failed (${res.status})${text ? ': ' + text : ''}`;
+    return { text: `${what} failed (${res.status})${body ? ': ' + body : ''}`, kind: 'server_error' };
   } catch(e){
-    return `${what} failed (${res.status}), and the error response itself couldn't be read: ${e.message}`;
+    return { text: `${what} failed (${res.status}), and the error response itself couldn't be read: ${e.message}`, kind: 'server_error' };
   }
 }
 

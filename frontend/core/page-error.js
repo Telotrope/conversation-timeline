@@ -10,6 +10,7 @@ export const ERROR_KINDS = Object.freeze([
   'network',            // no answer at all (fetch's TypeError)
   'aborted',            // the request was cancelled
   'server_error',       // the server answered with a failure status
+  'data_integrity',     // the server's stored data can't be read (error_kind in its answer)
   'processing_failed',  // the server said it couldn't process the upload
   'unknown_status',     // the server answered with an upload status the page doesn't know
   'timed_out',          // the page stopped waiting for the server
