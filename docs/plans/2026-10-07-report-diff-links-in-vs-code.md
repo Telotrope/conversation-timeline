@@ -96,7 +96,11 @@ the timeline product. Only the report rewrite (§3d) and this plan change the
 timeline repository. Files in the new repository:
 
 - `package.json` — publisher `telotrope`, name `doc-links`, activation on
-  `onUri` and `onLanguage:markdown`, VS Code engine `^1.80.0`; contributes the
+  `onUri` and `onStartupFinished` (when code-server finishes loading; changed
+  from `onLanguage:markdown` during coding and confirmed by the user
+  2026-10-07, because an extension started by the first Markdown file opening
+  would start too late to switch that file's tab), VS Code engine `^1.80.0`;
+  contributes the
   preview script (§3e) and the command and editor-title button (§3f). Only
   development dependency: `jsdom` (MIT) for testing the preview script.
 - `extension.js` (plain JavaScript, no build step) — `activate` wires the
