@@ -9,7 +9,7 @@ use timeline_core::conversation_metadata::ConversationSpan;
 use timeline_core::keep::{branch_conversation_id, keep_conversation, Kept};
 use timeline_core::merge::plan_merge;
 use timeline_core::model::{Conversation, ConversationId, ConversationName, MessageId};
-use timeline_core::stored_message::{Entry, EntryKey};
+use timeline_core::stored_message::{Entry, EntryKey, Position};
 
 const ROOT: &str = "00000000-0000-4000-8000-000000000000";
 const CONV: &str = "cccccccc-0000-4000-8000-000000000001";
@@ -169,12 +169,14 @@ fn a_revived_branch_replaces_the_stored_path_after_its_branch_point() {
         (9, 8, "human", Some(50), "newest"),
     ]);
     let plan = plan_merge(&stored.main.entries, Some(&span(0, 6)), &name(), &later);
-    let stored_key = |n: u32, minute: i64| EntryKey {
+    // Stored keys carry each message's place in the first file (plan §12.3).
+    let stored_key = |n: u32, position: i64, minute: i64| EntryKey {
         conversation_id: ConversationId(CONV.parse().unwrap()),
+        position: Position(position),
         at: time(minute),
         id: mid(n),
     };
-    assert_eq!(plan.remove, vec![stored_key(3, 5), stored_key(4, 6)]);
+    assert_eq!(plan.remove, vec![stored_key(3, 2, 5), stored_key(4, 3, 6)]);
     assert_eq!(added_ids(&plan), vec![mid(7), mid(8), mid(9)]);
     let note = plan
         .add
@@ -184,7 +186,16 @@ fn a_revived_branch_replaces_the_stored_path_after_its_branch_point() {
             Entry::Message(_) => None,
         })
         .unwrap();
-    assert_eq!(note.key, stored_key(3, 5));
+    // The note stands where the file lists the replaced branch, numbered
+    // with the new path after every stored position (plan §12.3).
+    assert_eq!(note.key, stored_key(3, 4, 5));
+    assert_eq!(
+        plan.add
+            .iter()
+            .map(|e| (e.key().id, e.key().position.0))
+            .collect::<Vec<_>>(),
+        vec![(mid(3), 4), (mid(7), 5), (mid(8), 6), (mid(9), 7)]
+    );
     assert_eq!(note.last_at, time(6));
     assert_eq!(note.messages, 2);
     // "first try" is on no kept message of the file; "reply" is included in
@@ -339,4 +350,29 @@ fn a_revival_replacing_nothing_only_adds() {
     let plan = plan_merge(&stored.main.entries, Some(&span(0, 5)), &name(), &later);
     assert!(plan.remove.is_empty(), "{plan:?}");
     assert_eq!(added_ids(&plan), vec![mid(7)]);
+}
+
+/// Plan §12.3: what a later file adds before the stored range is numbered
+/// below the first stored position, and what it adds after it above the
+/// last, each in the file's order.
+#[test]
+fn a_later_files_additions_are_numbered_before_or_after_the_stored_ones() {
+    let stored = file(&[
+        (1, 0, "human", Some(10), "a"),
+        (2, 1, "assistant", Some(11), "b"),
+    ]);
+    let later = file(&[
+        (5, 0, "human", Some(0), "earlier"),
+        (6, 5, "assistant", Some(1), "earlier reply"),
+        (1, 6, "human", Some(10), "a"),
+        (2, 1, "assistant", Some(11), "b"),
+        (7, 2, "human", Some(20), "later"),
+    ]);
+    let plan = plan_merge(&stored.main.entries, Some(&span(10, 11)), &name(), &later);
+    let positions: Vec<(MessageId, i64)> = plan
+        .add
+        .iter()
+        .map(|e| (e.key().id, e.key().position.0))
+        .collect();
+    assert_eq!(positions, vec![(mid(5), -2), (mid(6), -1), (mid(7), 2)]);
 }

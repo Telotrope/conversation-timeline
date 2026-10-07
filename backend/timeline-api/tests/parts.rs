@@ -338,9 +338,12 @@ async fn a_cursor_can_stop_anywhere() {
         .is_none_or(|k| k.conversation_id == s.group.conversation_id)));
 }
 
+/// The key of message `n` of `conversation`, numbered from 1 in its file,
+/// so its position is `n - 1` (plan §12.3).
 fn key(conversation: u32, minute: i64, n: u32) -> EntryKey {
     EntryKey {
         conversation_id: ConversationId(conv(conversation).parse().unwrap()),
+        position: timeline_core::stored_message::Position(i64::from(n) - 1),
         at: chrono::DateTime::parse_from_rfc3339(&at(minute))
             .unwrap()
             .with_timezone(&chrono::Utc),

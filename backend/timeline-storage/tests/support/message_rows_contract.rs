@@ -27,7 +27,7 @@ macro_rules! message_rows_contract {
         };
         use timeline_core::stored_message::{
             BranchNote as RowsNote, Citation as RowsCitation, CitedAddress as RowsAddress,
-            Entry as RowsEntry, EntryKey as RowsKey, Piece as RowsPiece,
+            Entry as RowsEntry, EntryKey as RowsKey, Piece as RowsPiece, Position as RowsPosition,
             StoredMessage as RowsMessage,
         };
 
@@ -43,9 +43,12 @@ macro_rules! message_rows_contract {
             chrono::DateTime::from_timestamp(1_700_000_000 + minute * 60, 0).unwrap()
         }
 
+        /// A key placed in the file at `minute`, so these rows sit in the
+        /// file in time order (plan §12.3).
         fn rows_key(conv: u128, minute: i64, id: u128) -> RowsKey {
             RowsKey {
                 conversation_id: rows_conv(conv),
+                position: RowsPosition(minute),
                 at: rows_at(minute),
                 id: RowsMessageId(uuid::Uuid::from_u128(id)),
             }
@@ -126,7 +129,7 @@ macro_rules! message_rows_contract {
         fn whole(conv: u128) -> RowsRange {
             RowsRange {
                 conversation_id: rows_conv(conv),
-                times: None,
+                positions: None,
                 after: None,
             }
         }
@@ -578,12 +581,44 @@ macro_rules! message_rows_contract {
                 vec![mine.clone()]
             );
             let span = RowsRange {
-                times: Some((rows_at(0), rows_at(10))),
+                positions: Some((RowsPosition(0), RowsPosition(10))),
                 ..whole(1)
             };
             assert_eq!(
                 store.read_entries(&rows_user("alice"), span).await.unwrap(),
                 vec![mine]
+            );
+        }
+
+        /// Plan §12.3: rows come back in the file's order, their positions,
+        /// whatever their times, a row of unknown time included.
+        #[tokio::test]
+        async fn rows_are_read_in_position_order_whatever_their_times() {
+            let (store, _keep) = $make().await;
+            let at = |position: i64, minute: i64, id: u128| RowsKey {
+                position: RowsPosition(position),
+                at: rows_at(minute),
+                ..rows_key(1, 0, id)
+            };
+            let late_first = yours(at(0, 30, 2), RowsFlags::default());
+            let unknown = claudes(RowsKey {
+                at: timeline_core::UNKNOWN_TIME,
+                ..at(1, 0, 3)
+            });
+            let early_last = yours(at(2, 5, 4), RowsFlags::default());
+            store
+                .put_entries(
+                    &rows_user("alice"),
+                    &[early_last.clone(), unknown.clone(), late_first.clone()],
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                store
+                    .read_entries(&rows_user("alice"), whole(1))
+                    .await
+                    .unwrap(),
+                vec![late_first, unknown, early_last]
             );
         }
 
@@ -606,7 +641,7 @@ macro_rules! message_rows_contract {
                 .await
                 .unwrap();
             let span = RowsRange {
-                times: Some((rows_at(20), rows_at(30))),
+                positions: Some((RowsPosition(20), RowsPosition(30))),
                 ..whole(1)
             };
             assert_eq!(
@@ -639,7 +674,7 @@ macro_rules! message_rows_contract {
                 entries[2..].to_vec()
             );
             let span_after = RowsRange {
-                times: Some((rows_at(0), rows_at(3))),
+                positions: Some((RowsPosition(0), RowsPosition(3))),
                 after: Some(entries[2].key()),
                 ..whole(1)
             };

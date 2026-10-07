@@ -116,6 +116,7 @@ async fn list_for_user_skips_upload_outcome_rows_in_the_same_table() {
         additions: Vec::new(),
         message_count: 3,
         untimed: 0,
+        out_of_order: 0,
         message_span: None,
         participants: timeline_core::conversation_metadata::Participants::new(vec![
             timeline_core::conversation_metadata::Participant::Claude,
@@ -244,6 +245,7 @@ async fn every_method_reports_a_missing_table_as_a_backend_error() {
         additions: Vec::new(),
         message_count: 1,
         untimed: 0,
+        out_of_order: 0,
         message_span: None,
         participants: timeline_core::conversation_metadata::Participants::new(vec![
             timeline_core::conversation_metadata::Participant::Claude,
@@ -673,6 +675,7 @@ fn full_record() -> ConversationSummary {
         ],
         message_count: 42,
         untimed: 5,
+        out_of_order: 0,
         message_span: Some(
             ConversationSpan::new(
                 at("2026-10-01T10:00:00+00:00"),

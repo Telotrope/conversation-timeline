@@ -22,7 +22,7 @@ use timeline_core::flag_values::{FlagOverrides, FlagSet, MessageFlags};
 use timeline_core::model::{ConversationId, MessageId};
 use timeline_core::ports::errors::ObjectStoreError;
 use timeline_core::ports::ids::{UploadId, UserId};
-use timeline_core::ports::messages::AutoFlagWriter;
+use timeline_core::ports::messages::{AutoFlagWriter, MessageReader};
 use timeline_core::ports::uploads::{raw_object_key, UploadOutcome};
 use timeline_core::stored_message::Entry;
 use timeline_storage::memory::messages::InMemoryMessageStore;
@@ -278,13 +278,15 @@ async fn detection_after_upload_keeps_the_imported_review() {
     h.run().await.unwrap();
 
     let (conv, human, _) = ids();
-    let key = timeline_core::stored_message::EntryKey {
-        conversation_id: conv,
-        at: chrono::DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z")
-            .unwrap()
-            .with_timezone(&chrono::Utc),
-        id: human,
-    };
+    // The row's key as processing stored it (its place in the file, plan
+    // §12.3, and its time).
+    let key = h
+        .messages
+        .find_entry(&h.user_id, conv, human)
+        .await
+        .unwrap()
+        .unwrap()
+        .key();
     h.messages
         .set_auto_flags(
             &h.user_id,

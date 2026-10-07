@@ -50,6 +50,7 @@ fn conversation() -> ConversationId {
 fn key(minute: i64, id: u128) -> EntryKey {
     EntryKey {
         conversation_id: conversation(),
+        position: timeline_core::stored_message::Position(minute),
         at: chrono::DateTime::from_timestamp(1_700_000_000 + minute * 60, 0).unwrap(),
         id: MessageId(uuid::Uuid::from_u128(id)),
     }
@@ -72,7 +73,7 @@ fn yours(key: EntryKey, text: String) -> Entry {
 fn whole() -> EntryRange {
     EntryRange {
         conversation_id: conversation(),
-        times: None,
+        positions: None,
         after: None,
     }
 }
@@ -82,7 +83,7 @@ fn sk(key: EntryKey) -> String {
     format!(
         "MSG#{}#{}#{}",
         key.conversation_id,
-        key.at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
+        key.position.sort_text(),
         key.id
     )
 }
@@ -120,27 +121,28 @@ fn row(k: EntryKey) -> Vec<(&'static str, AttributeValue)> {
 
 /// Replaces `dynamo_message_flags.rs`'s
 /// `a_row_whose_sort_key_is_not_a_message_id_is_a_backend_error_when_listed`:
-/// a message row whose key isn't a conversation, time and id is an error,
+/// a message row whose key isn't a conversation, position and id is an error,
 /// never skipped or given a made-up key.
 #[tokio::test]
-async fn a_message_row_whose_key_is_not_a_conversation_time_and_id_is_a_backend_error() {
+async fn a_message_row_whose_key_is_not_a_conversation_position_and_id_is_a_damaged_data_error() {
     let client = dynamodb_local::client();
     let table = dynamodb_local::create_table(&client).await;
     let store = DynamoMessageStore::new(client.clone(), table.clone());
     for bad in [
         format!(
-            "MSG#{}#not-a-time#{}",
+            "MSG#{}#not-a-position#{}",
             conversation(),
             uuid::Uuid::from_u128(2)
         ),
-        format!("MSG#{}#2026-01-01T00:00:00Z#not-an-id", conversation()),
-        format!("MSG#{}#2026-01-01T00:00:00Z", conversation()),
+        format!("MSG#{}#1000000000000#not-an-id", conversation()),
+        format!("MSG#{}#1000000000000", conversation()),
     ] {
         put_raw(&client, &table, vec![("pk", s("alice")), ("sk", s(&bad))]).await;
         let got = store.read_entries(&alice(), whole()).await;
         match got {
             Err(StoreError::Damaged(e)) => assert!(
-                e.to_string().contains("is not a conversation, time and id"),
+                e.to_string()
+                    .contains("is not a conversation, position and id"),
                 "{e}"
             ),
             other => panic!("expected a backend error for {bad:?}, got {other:?}"),

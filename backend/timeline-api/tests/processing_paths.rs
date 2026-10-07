@@ -74,18 +74,18 @@ async fn a_revived_branch_moves_an_important_replaced_path_with_its_files() {
         .unwrap();
     assert_eq!(old_sessions.len(), 2, "0-1 and 40");
 
+    // The later file lists messages in the order they were written, as an
+    // export does (plan §12.3): the branch 7-9 (minutes 10-30) before 3
+    // (minute 40), then the newest.
     let mut later = first;
-    for (n, parent, minute, text) in [
-        (7, 2, 10, "a"),
-        (8, 7, 20, "b"),
-        (9, 8, 30, "c"),
-        (10, 9, 50, "newest"),
-    ] {
-        later["chat_messages"]
-            .as_array_mut()
-            .unwrap()
-            .push(human(n, parent, minute, text));
+    let list = later["chat_messages"].as_array_mut().unwrap();
+    for (i, (n, parent, minute, text)) in [(7, 2, 10, "a"), (8, 7, 20, "b"), (9, 8, 30, "c")]
+        .into_iter()
+        .enumerate()
+    {
+        list.insert(2 + i, human(n, parent, minute, text));
     }
+    list.push(human(10, 9, 50, "newest"));
     let (result, record) = recording(process(&stores, export(vec![later]))).await;
     result.unwrap();
     assert_eq!(

@@ -30,6 +30,8 @@ macro_rules! session_contract {
                 number,
                 start,
                 end: start + chrono::Duration::minutes(40),
+                first: timeline_core::stored_message::Position(number as i64 * 10),
+                last: timeline_core::stored_message::Position(number as i64 * 10 + 9),
                 placement: SessPlacement::Gaps,
                 message_count: 12,
                 counts: SessCounts {

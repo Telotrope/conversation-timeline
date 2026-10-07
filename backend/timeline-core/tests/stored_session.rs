@@ -257,3 +257,27 @@ fn a_session_knows_its_key_and_what_it_contains() {
     assert!(!session.contains(minute(21)));
     assert!(!session.contains(minute(9)));
 }
+
+/// Plan §12.3: sessions are cut in the file's order, and a time stepping
+/// backwards starts a session too, so no two overlap; each knows its first
+/// and last position.
+#[test]
+fn a_time_stepping_backwards_starts_a_session_so_none_overlap() {
+    let sessions = cut_sessions(
+        conv(1),
+        &[
+            yours(key_at(1, 0, minute(0), 1), auto(false, false, false)),
+            yours(key_at(1, 1, minute(10), 2), auto(false, false, false)),
+            yours(key_at(1, 2, minute(5), 3), auto(false, false, false)),
+            yours(key_at(1, 3, minute(7), 4), auto(false, false, false)),
+        ],
+    );
+    let spans: Vec<_> = sessions
+        .iter()
+        .map(|s| (s.start, s.end, s.first.0, s.last.0))
+        .collect();
+    assert_eq!(
+        spans,
+        vec![(minute(0), minute(10), 0, 1), (minute(5), minute(7), 2, 3)]
+    );
+}

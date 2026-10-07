@@ -38,6 +38,7 @@ macro_rules! conversation_summary_contract {
                 additions: Vec::new(),
                 message_count: message_count,
                 untimed: 0,
+                out_of_order: 0,
                 message_span: None,
                 participants: timeline_core::conversation_metadata::Participants::new(vec![
                     timeline_core::conversation_metadata::Participant::Claude,

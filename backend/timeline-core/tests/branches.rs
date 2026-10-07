@@ -163,11 +163,13 @@ fn a_branch_holds_all_its_descendants_and_one_off_the_end_has_no_replacement() {
     };
     let pruned = prune_replaced_branches(&swapped);
     assert_eq!(ids(&pruned.kept), vec![id(1), id(2), id(3)]);
+    // Branches are listed in the file's order (plan §12.3): 8, moved to the
+    // third place in the list, comes before the branch starting at 4.
     assert_eq!(pruned.branches.len(), 2);
-    assert_eq!(ids(&pruned.branches[0].messages), vec![id(4), id(5), id(6)]);
-    assert_eq!(pruned.branches[0].replaced_by, Some(mid(3)));
-    assert_eq!(ids(&pruned.branches[1].messages), vec![id(8)]);
-    assert_eq!(pruned.branches[1].replaced_by, None);
+    assert_eq!(ids(&pruned.branches[0].messages), vec![id(8)]);
+    assert_eq!(pruned.branches[0].replaced_by, None);
+    assert_eq!(ids(&pruned.branches[1].messages), vec![id(4), id(5), id(6)]);
+    assert_eq!(pruned.branches[1].replaced_by, Some(mid(3)));
 }
 
 #[test]

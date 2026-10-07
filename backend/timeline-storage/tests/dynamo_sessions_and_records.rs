@@ -72,6 +72,8 @@ async fn a_session_row_whose_key_differs_from_its_session_is_a_backend_error() {
         "number": 0,
         "start": "2026-01-01T00:00:00Z",
         "end": "2026-01-01T00:10:00Z",
+        "first": 0,
+        "last": 1,
         "placement": "gaps",
         "message_count": 2,
         "counts": {

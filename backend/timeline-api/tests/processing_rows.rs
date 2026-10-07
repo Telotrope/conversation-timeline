@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use axum::http::StatusCode;
-use exports::{at, claude, conv, conversation, export, msg, you};
+use exports::{at, claude, conv, conversation, export, msg, you, M};
 use serde_json::{json, Value};
 use timeline_api::processing::{process_upload, ProcessingError, LARGEST_ROW};
 use timeline_api::s3_trigger::ProcessingStores;
@@ -180,6 +180,78 @@ async fn messages_of_unknown_time_are_kept_and_counted() {
         .unwrap()
         .clone();
     assert!(untimed.get("created_at").is_none(), "{untimed}");
+}
+
+/// Plan §12.3: messages keep the file's order when stored and read back: a
+/// message of unknown time in the middle stays in the middle, and two at
+/// the same time stay as the file lists them, whatever their ids.
+#[tokio::test]
+async fn messages_keep_the_files_order_when_read_back() {
+    let (router, _, _) = local_app::app();
+    let middle = M {
+        sender: "assistant",
+        minute: None,
+        text: "middle",
+    };
+    let mut same_time = conversation(2, "Same time", &[you(0, "x"), claude(0, "y")]);
+    // The second message gets the smaller id, so id order isn't file order.
+    let list = same_time["chat_messages"].as_array_mut().unwrap();
+    list[0]["uuid"] = json!(msg(2, 9));
+    list[1]["parent_message_uuid"] = json!(msg(2, 9));
+    let token = local_app::signed_in_with(
+        &router,
+        "alice",
+        &export(vec![
+            conversation(
+                1,
+                "Undated middle",
+                &[you(0, "first"), middle, you(5, "third")],
+            ),
+            same_time,
+        ]),
+    )
+    .await;
+    let file = local_app::exported(&router, &token).await;
+    let texts = |name: &str| -> Vec<String> {
+        file["conversations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"] == name)
+            .unwrap()["chat_messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["content"][0]["text"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(texts("Undated middle"), vec!["first", "middle", "third"]);
+    assert_eq!(texts("Same time"), vec!["x", "y"]);
+}
+
+/// Plan §12.3: a time stepping backwards in the file is counted on the
+/// record, for Describe to warn about, and starts a session.
+#[tokio::test]
+async fn times_stepping_backwards_are_counted_and_cut_sessions() {
+    let (router, _, _) = local_app::app();
+    let token = local_app::signed_in_with(
+        &router,
+        "alice",
+        &export(vec![conversation(
+            1,
+            "Backwards",
+            &[you(0, "a"), claude(10, "b"), you(5, "c"), claude(20, "d")],
+        )]),
+    )
+    .await;
+    let records = local_app::conversations(&router, &token).await;
+    assert_eq!(records[0]["out_of_order"], 1);
+    let sessions = local_app::sessions(&router, &token).await;
+    let spans: Vec<(i64, i64)> = sessions
+        .iter()
+        .map(|s| (s["first"].as_i64().unwrap(), s["last"].as_i64().unwrap()))
+        .collect();
+    assert_eq!(spans, vec![(0, 1), (2, 2), (3, 3)], "{sessions:?}");
 }
 
 /// A message too large for one stored row is refused, naming it (§8b).

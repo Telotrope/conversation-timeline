@@ -6,7 +6,7 @@
 use chrono::{DateTime, Utc};
 use timeline_core::flag_values::{FlagOverrides, FlagSet, MessageFlags};
 use timeline_core::model::{ConversationId, MessageId, Sender};
-use timeline_core::stored_message::{BranchNote, Entry, EntryKey, Piece, StoredMessage};
+use timeline_core::stored_message::{BranchNote, Entry, EntryKey, Piece, Position, StoredMessage};
 
 pub fn conv(n: u128) -> ConversationId {
     ConversationId(uuid::Uuid::from_u128(n))
@@ -17,9 +17,16 @@ pub fn minute(m: i64) -> DateTime<Utc> {
     DateTime::from_timestamp(1_700_000_000 + m * 60, 0).unwrap()
 }
 
+/// A key whose position follows its time, so entries built with it sit in
+/// the file in time order; [`key_at`] places one anywhere (plan §12.3).
 pub fn key(conversation: u128, at: DateTime<Utc>, id: u128) -> EntryKey {
+    key_at(conversation, at.timestamp(), at, id)
+}
+
+pub fn key_at(conversation: u128, position: i64, at: DateTime<Utc>, id: u128) -> EntryKey {
     EntryKey {
         conversation_id: conv(conversation),
+        position: Position(position),
         at,
         id: MessageId(uuid::Uuid::from_u128(id)),
     }

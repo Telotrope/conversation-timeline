@@ -557,3 +557,57 @@ fn each_kind_of_file_is_named_by_its_extension() {
         assert_eq!(kind_of(name), kind, "{name}");
     }
 }
+
+/// Plan §12.3: each message stands where the file lists it. A message of
+/// unknown time in the middle stays in the middle (its time used to sort it
+/// first), and the keys follow the file's order.
+#[test]
+fn each_message_is_placed_where_the_file_lists_it() {
+    let mut untimed = message(2, 1, "assistant", 0, vec![text("no time")]);
+    untimed.as_object_mut().unwrap().remove("created_at");
+    let k = kept(vec![
+        message(1, 0, "human", 5, vec![text("first")]),
+        untimed,
+        message(3, 2, "human", 9, vec![text("third")]),
+    ]);
+    let order: Vec<(String, i64)> = k
+        .main
+        .entries
+        .iter()
+        .map(|e| (e.key().id.0.to_string(), e.key().position.0))
+        .collect();
+    assert_eq!(order, vec![(id(1), 0), (id(2), 1), (id(3), 2)]);
+}
+
+/// Plan §12.3: a replaced branch's note stands where the file lists the
+/// branch's first message.
+#[test]
+fn a_note_stands_where_its_branch_began_in_the_file() {
+    let k = kept(vec![
+        message(1, 0, "human", 0, vec![text("start")]),
+        message(2, 1, "assistant", 1, vec![text("ok")]),
+        message(3, 2, "human", 2, vec![text("first try")]),
+        message(4, 2, "human", 3, vec![text("second try")]),
+    ]);
+    let order: Vec<(String, i64, bool)> = k
+        .main
+        .entries
+        .iter()
+        .map(|e| {
+            (
+                e.key().id.0.to_string(),
+                e.key().position.0,
+                e.as_message().is_none(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        order,
+        vec![
+            (id(1), 0, false),
+            (id(2), 1, false),
+            (id(3), 2, true),
+            (id(4), 3, false)
+        ]
+    );
+}

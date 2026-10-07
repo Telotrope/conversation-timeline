@@ -10,10 +10,11 @@ use timeline_core::ports::messages::EntryRange;
 use timeline_core::stored_session::{cut_sessions, sessions_for};
 use timeline_core::UNKNOWN_TIME;
 
-/// A session cut by pauses is read by its range of times; a session placed
-/// by its conversation's start and end reads the whole conversation (§4e).
+/// A session cut by pauses is read by its range of positions (plan §12.3);
+/// a session placed by its conversation's start and end reads the whole
+/// conversation (§4e).
 #[test]
-fn a_sessions_rows_are_its_times_or_its_whole_conversation() {
+fn a_sessions_rows_are_its_positions_or_its_whole_conversation() {
     let timed = cut_sessions(
         conv(1),
         &[yours(key(1, minute(3), 1), auto(false, false, false))],
@@ -22,7 +23,7 @@ fn a_sessions_rows_are_its_times_or_its_whole_conversation() {
         EntryRange::session(&timed[0]),
         EntryRange {
             conversation_id: conv(1),
-            times: Some((minute(3), minute(3))),
+            positions: Some((key(1, minute(3), 1).position, key(1, minute(3), 1).position)),
             after: None,
         }
     );
@@ -36,7 +37,7 @@ fn a_sessions_rows_are_its_times_or_its_whole_conversation() {
         EntryRange::session(&placed[0]),
         EntryRange {
             conversation_id: conv(2),
-            times: None,
+            positions: None,
             after: None,
         }
     );

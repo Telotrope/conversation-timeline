@@ -102,3 +102,22 @@ fn entries_serialize_with_their_kind() {
     let back: Entry = serde_json::from_value(json).unwrap();
     assert_eq!(back, a_note);
 }
+
+/// Plan §12.3: in the file's order, a message timed earlier than the timed
+/// message before it is counted; messages of unknown time and notes are
+/// passed over.
+#[test]
+fn messages_timed_before_the_one_before_them_are_counted() {
+    use timeline_core::stored_message::count_out_of_order;
+    use timeline_core::UNKNOWN_TIME;
+    let entries = [
+        yours(key_at(1, 0, minute(0), 1), auto(false, false, false)),
+        yours(key_at(1, 1, minute(10), 2), auto(false, false, false)),
+        note(key_at(1, 2, minute(1), 3), minute(2)),
+        yours(key_at(1, 3, minute(5), 4), auto(false, false, false)),
+        claudes(key_at(1, 4, UNKNOWN_TIME, 5)),
+        yours(key_at(1, 5, minute(7), 6), auto(false, false, false)),
+    ];
+    assert_eq!(count_out_of_order(&entries), 1, "only the one at minute 5");
+    assert_eq!(count_out_of_order(&entries[..2]), 0);
+}
