@@ -579,16 +579,28 @@ async fn a_revived_branch_becomes_the_path_on_a_later_upload() {
         ],
     );
     local_app::upload(&router, &token, export(vec![first.clone()])).await;
+    // The later file lists messages in the order they were written, as an
+    // export does (plan §12.3): the branch (minutes 5-6) before the old
+    // path (10-11), then the newest.
     let mut later = first;
-    for (n, parent, minute, text) in [
+    for (i, (n, parent, minute, text)) in [
         (7, 2, 5, "the branch"),
         (8, 7, 6, "branch reply"),
         (9, 8, 90, "newest"),
-    ] {
-        later["chat_messages"].as_array_mut().unwrap().push(json!({
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let message = json!({
             "uuid": msg(1, n), "parent_message_uuid": msg(1, parent), "sender": if n == 8 { "assistant" } else { "human" },
             "created_at": at(minute), "content": [{"type": "text", "text": text}],
-        }));
+        });
+        let list = later["chat_messages"].as_array_mut().unwrap();
+        if n == 9 {
+            list.push(message);
+        } else {
+            list.insert(2 + i, message);
+        }
     }
     local_app::upload(&router, &token, export(vec![later])).await;
     let rows = local_app::review_rows(&router, &token, "").await;
@@ -596,8 +608,8 @@ async fn a_revived_branch_becomes_the_path_on_a_later_upload() {
         .iter()
         .map(|r| r["message_id"].as_str().unwrap_or("note").to_string())
         .collect();
-    // Your messages in time order: the start, the note where the old path
-    // began (at 10), the branch (5) and the newest (90).
+    // Your messages in the file's order: the start, the branch (5), the note
+    // where the old path stood (10), and the newest (90).
     assert_eq!(
         shown,
         vec![msg(1, 1), msg(1, 7), "note".to_string(), msg(1, 9)],

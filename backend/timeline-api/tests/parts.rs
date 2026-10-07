@@ -379,17 +379,17 @@ async fn starting_from_a_given_cursor_returns_the_rest_worked_out_in_advance() {
                 .collect::<Vec<_>>()
         }
     };
-    // Review's groups in time order: A's first session with B's (they
-    // overlap), then A's second, then C's.
-    // Mid-group, after B's first message at minute 3: B's thanks (5), A's
-    // WRONG (6), A's back later (60), C (1440).
+    // Review's sessions by start, each one's messages in the file's order
+    // (plan §12.7): A's first (0), B's (3), A's second (60), C's (1440).
+    // Mid-session, after A's first message at minute 0: A's WRONG (6), then
+    // B's two, A's back later, C.
     assert_eq!(
         rest(WalkCursor {
             group: session_key(1, 0),
-            after: Some(key(2, 3, 1))
+            after: Some(key(1, 0, 1))
         })
         .await,
-        vec![msg(2, 3), msg(1, 3), msg(1, 5), msg(3, 1)]
+        vec![msg(1, 3), msg(2, 1), msg(2, 3), msg(1, 5), msg(3, 1)]
     );
     // At the start of a group: A's second session, then C.
     assert_eq!(
@@ -526,13 +526,6 @@ async fn a_bad_cursor_is_refused_naming_why() {
         },
     }
     .to_text();
-    let not_a_group_start = Cursor::Messages {
-        walk: WalkCursor {
-            group: session_key(2, 0),
-            after: None,
-        },
-    }
-    .to_text();
     let not_json = base64_of("not json");
     let too_long = "A".repeat(3000);
     let cases = [
@@ -547,10 +540,6 @@ async fn a_bad_cursor_is_refused_naming_why() {
             "another kind of request, not GET /messages",
         ),
         (&*format!("/messages?cursor={gone}"), "no longer starts"),
-        (
-            &*format!("/messages?cursor={not_a_group_start}"),
-            "no longer starts",
-        ),
         (
             &*format!("/sessions?cursor={scan_cursor}"),
             "not GET /sessions",

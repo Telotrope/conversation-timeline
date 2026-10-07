@@ -59,14 +59,16 @@ fn ids(rows: &[Value]) -> Vec<String> {
         .collect()
 }
 
+/// Plan §12.7: sessions in time order (by start), each one's messages in
+/// the file's order; two conversations' messages are never interleaved.
 #[tokio::test]
-async fn your_messages_come_in_time_order_across_conversations() {
+async fn your_messages_come_session_by_session_in_time_order() {
     let (router, token) = setup().await;
     let rows = local_app::review_rows(&router, &token, "").await;
     assert_eq!(
         ids(&rows),
-        vec![msg(1, 1), msg(2, 1), msg(2, 3), msg(1, 3), msg(3, 1)],
-        "time order, interleaving the overlapping conversations"
+        vec![msg(1, 1), msg(1, 3), msg(2, 1), msg(2, 3), msg(3, 1)],
+        "A's session (from 0), then B's (from 3), then C's; not interleaved"
     );
     let first = &rows[0];
     assert_eq!(first["kind"], "message");
@@ -97,10 +99,10 @@ async fn a_conversation_a_span_and_a_day_each_narrow_the_rows() {
     );
 }
 
-/// A Calendar day (`span=day`) lists its rows grouped by conversation name,
-/// in time within each, as the page always has.
+/// A Calendar day (`span=day`) lists its sessions in time order, each one's
+/// messages in the file's order, like every other view (plan §12.7).
 #[tokio::test]
-async fn a_calendar_day_groups_rows_by_conversation_name() {
+async fn a_calendar_day_lists_its_sessions_in_time_order() {
     let (router, token) = setup().await;
     let day = format!(
         "from={}&to={}&span=day",
@@ -110,8 +112,8 @@ async fn a_calendar_day_groups_rows_by_conversation_name() {
     let rows = local_app::review_rows(&router, &token, &day).await;
     assert_eq!(
         ids(&rows),
-        vec![msg(2, 1), msg(2, 3), msg(1, 1), msg(1, 3)],
-        "Apple before Zebra; Mango is the next day"
+        vec![msg(1, 1), msg(1, 3), msg(2, 1), msg(2, 3)],
+        "Zebra's session starts first; Mango is the next day"
     );
 }
 
@@ -166,9 +168,9 @@ async fn replies_come_with_each_row_when_asked_for() {
         replies,
         vec![
             json!("reply one"),
+            json!("reply two"),
             json!("apple answer"),
             Value::Null,
-            json!("reply two"),
             json!("mango reply")
         ],
         "B's last message has no reply"
@@ -187,10 +189,14 @@ async fn notes_are_listed_in_place_only_without_a_flag_filter_or_search() {
         &[you(0, "question"), claude(1, "answer"), you(5, "thanks")],
     );
     // A resend of the question at minute 2, answering the start: replaced.
-    c["chat_messages"].as_array_mut().unwrap().push(json!({
-        "uuid": msg(1, 9), "parent_message_uuid": exports::ROOT, "sender": "human",
-        "created_at": at(2), "content": [{"type": "text", "text": "question"}],
-    }));
+    // Listed where it was written, as an export lists it (plan §12.3).
+    c["chat_messages"].as_array_mut().unwrap().insert(
+        2,
+        json!({
+            "uuid": msg(1, 9), "parent_message_uuid": exports::ROOT, "sender": "human",
+            "created_at": at(2), "content": [{"type": "text", "text": "question"}],
+        }),
+    );
     let token = local_app::signed_in_with(&router, "alice", &export(vec![c])).await;
     let rows = local_app::review_rows(&router, &token, "").await;
     assert_eq!(ids(&rows), vec![msg(1, 1), "note".to_string(), msg(1, 3)]);
