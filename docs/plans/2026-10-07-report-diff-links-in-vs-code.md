@@ -120,8 +120,8 @@ browser tab is reloaded once.
 A one-off Python run (not kept in the repo; the report is Claude-written, not
 produced by product code) rewrites every row whose "diff" link is a GitHub
 compare address with a `#diff-…` anchor, taking the path from the same row's
-file link. The GitHub compare address is replaced, not kept beside it (open
-question Q1). Row count before and after is printed and must match the
+file link. The GitHub compare address is replaced, not kept beside it (decided by the
+user 2026-10-07, Q1). Row count before and after is printed and must match the
 report's stated 246 files plus any test-change rows that carry diff links.
 
 **Step order:** the extension is installed and the user clicks row F2 in the
@@ -156,9 +156,8 @@ the rewrite does not happen and the failure is reported.
 
 ## 6. Open questions
 
-- **Q1.** Replace the GitHub link, or keep both? Recommended: replace —
-  the user reads the report in code-server, and two links per row is what
-  made the test row unreadable.
+- **Q1 [DECIDED 2026-10-07].** Replace the GitHub link, or keep both?
+  The user: replace every row's GitHub link ("they're useless anyway").
 
 ## Self-critique log
 
