@@ -10,6 +10,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { installPage, StubElement } from './page-stub.js';
 import { state } from '../core/state.js';
+import { PageError } from '../core/page-error.js';
 import { resetState } from './fixtures.js';
 
 const page = installPage();
@@ -122,6 +123,33 @@ test("saved details read the timeline again, then return to the file's or the co
   await flow.leaveDescribe({ kind: 'conversation', conversationId: 'c0' }, true);
   console.error = error;
   assert.equal(page.el('loadingModal').hidden, true, 'a failed reading back closes the modal');
-  assert.match(page.el('describeStatus').textContent, /^Could not read your files' details: nope/);
+  // Plan §12.4: the read is of the timeline, not of your files, so the
+  // words say what can be done about it.
+  assert.equal(page.el('describeStatus').textContent, 'Could not complete request, please try again.');
   assert.equal(window.location.hash, '#conversations/0', 'and stays where it was');
+  loaded = new PageError('reading your sessions failed (500): stored data can\'t be read', 'data_integrity', 500);
+  console.error = () => {};
+  await flow.leaveDescribe({ kind: 'conversation', conversationId: 'c0' }, true);
+  console.error = error;
+  assert.equal(page.el('describeStatus').textContent, 'Data integrity failure');
+});
+
+// Plan §12.4: the loading box says "Data integrity failure" when the
+// server's stored data can't be read, and "Could not complete request,
+// please try again." for a failure trying again may cure.
+test('the loading box names damaged data, and asks to try again otherwise', async () => {
+  const error = console.error;
+  console.error = () => {};
+  loaded = new PageError('reading your sessions failed (500): stored data can\'t be read', 'data_integrity', 500);
+  await flow.openTimeline();
+  assert.equal(page.el('loadStatus').textContent, 'Data integrity failure');
+  for(const failure of [new PageError('reading your sessions failed (503)', 'server_error', 503), new TypeError('Failed to fetch')]){
+    loaded = failure;
+    await flow.openTimeline();
+    assert.equal(page.el('loadStatus').textContent, 'Could not complete request, please try again.');
+  }
+  console.error = error;
+  loaded = true;
+  await page.el('loadingRetryBtn').onclick();
+  assert.equal(page.el('loadingModal').hidden, true);
 });

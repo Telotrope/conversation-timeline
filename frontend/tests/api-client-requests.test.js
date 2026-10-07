@@ -138,3 +138,20 @@ test('a flag save sends the handle and answers with the counted session; refusal
   assert.deepEqual(await api.patchFlagsToBackend(msg, {}),
     { outcome: api.SaveOutcome.SERVER_ERROR, detail: 'Failed to fetch', status: null, errorKind: 'network' });
 });
+
+// Plan §12.4: an answer saying the server's stored data can't be read is a
+// failure of kind 'data_integrity'; any other failure stays 'server_error'.
+test("a failure naming damaged data is of kind data_integrity; others are server errors", async () => {
+  globalThis.fetch = async () => ({
+    ok: false, status: 500, headers: new Headers(),
+    text: async () => JSON.stringify({ error: "stored data can't be read", error_kind: 'data_integrity' }),
+  });
+  await assert.rejects(api.fetchSessionsPart('tok'), (err) => {
+    assert.equal(err.kind, 'data_integrity');
+    assert.equal(err.status, 500);
+    assert.equal(err.message, "reading your sessions failed (500): stored data can't be read");
+    return true;
+  });
+  serve(500);
+  await assert.rejects(api.fetchSessionsPart('tok'), (err) => err.kind === 'server_error');
+});
