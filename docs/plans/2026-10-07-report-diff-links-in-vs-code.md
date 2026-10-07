@@ -1,7 +1,7 @@
 # Report "diff" links that open VS Code's side-by-side comparison, and line links that work in the preview
 
 **Date:** 2026-10-07
-**Status:** proposed, waiting for approval
+**Status:** approved 2026-10-07; extension repository to be pushed to the Telotrope GitHub organization
 
 ## 1. Goal
 
@@ -266,9 +266,9 @@ click.
 
 - **Q1 [DECIDED 2026-10-07].** Replace the GitHub link, or keep both?
   The user: replace every row's GitHub link ("they're useless anyway").
-- **Q2.** Automatic switch (§3f) on, or only the button? Recommended: both —
-  the automatic switch covers the common case (chat link into a report), the
-  button covers a document whose preview is already open.
+- **Q2 [DECIDED 2026-10-07].** Automatic switch (§3f) on, or only the
+  button? Recommended both; the user approved the plan with that
+  recommendation ("Start coding now").
 - **Q3 [DECIDED 2026-10-07].** Where does the extension live? The user:
   outside the timeline repository (§3a).
 
