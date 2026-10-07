@@ -930,7 +930,8 @@ nothing stand out.
   conversations.
 - It has no sessions, so it appears on no Calendar day, in Review, or in Analytics.
 
-**Proposed, pending the user's confirmation** (the user is "inclined to drop these altogether"):
+**Decided by the user (2026-10-07):** drop them during processing, and remove the code that
+handled them.
 - Processing skips a conversation with no messages: no record, no rows, not counted in the totals.
 - The code the download gained to add empty conversations (B4,
   [export.rs:265](../../backend/timeline-api/src/routes/export.rs#L265)) is removed, since none can
@@ -940,8 +941,8 @@ nothing stand out.
 - **Tests:** a new processing test that an empty conversation is not stored and not in the totals.
   - The pre-existing `a_stored_conversation_with_no_messages_takes_every_message_a_later_file_has`
     ([processing_merge.rs:225](../../backend/timeline-api/tests/processing_merge.rs#L225)) sets up
-    a stored empty record directly, so it still passes. It becomes obsolete, and is recommended for
-    removal with the user's approval.
+    a stored empty record directly, so it still passes. It becomes obsolete. It is listed as
+    obsolete in the step's report, and kept unless the user approves its removal.
 
 ### 12.3 FU-B3. Messages keep the order the file gives them
 
@@ -972,15 +973,32 @@ unknown time sorts first, and messages with equal times sort by id.
     because everything the stored path held after that point is removed.
 - **Sessions:** a session's stored range becomes its first and last position, not its first and
   last time. Reading a session reads that position range.
-  - Session cutting walks the conversation in position order and cuts at a pause of 15 minutes or
-    more between consecutive *timed* messages.
+  - Session cutting walks the conversation in position order. It cuts at a pause of 15 minutes or
+    more between consecutive *timed* messages, and also where a time steps backwards, so sessions
+    never overlap.
+  - **Times that step backwards are bad data, and you are told** (the user, 2026-10-07):
+    - processing counts, per conversation, the messages whose time is earlier than the timed
+      message before them in the file, and stores the count on the record (`out_of_order`, beside
+      `untimed`);
+    - Describe shows it the way it shows messages with no time
+      ([describe-form.js:299](../../frontend/ui/describe-form.js#L299)): "N messages in
+      (conversations) have times earlier than the message before them in the file; their order is
+      kept as the file gives it";
+    - the messages are still stored, in file order.
   - A conversation with any message of unknown time stays placed by its start and end, as one
     session (§4e unchanged).
-- **Review:**
-  - Within one conversation, rows are shown in position order.
-  - Across conversations, the time order of O1 (in the report) stays: time, then conversation,
-    then position.
+- **Review (revised 2026-10-07 by the user's direction):** messages of two conversations are never
+  interleaved. Review lists **sessions in time order (by start), and each session's messages in
+  file order**.
+  - **Every view:** a Calendar day, a span, all messages, or a search. The "time, then
+    conversation" order of O1 (in the report) and the Calendar day's order by conversation name
+    both go.
+  - **Ties:** two sessions starting at the same time are ordered by conversation id, then position.
+  - **The walk's cursor:** names the session and the last position done. The "groups of
+    overlapping sessions" of O1 are no longer needed.
   - Messages of unknown time stay matched through their session (O3).
+  - **Tests:** the committed Review tests that expect O1's order across conversations (in
+    `review.rs` and the browser tests) change to session order, approved by this direction.
 - **Pruning ([branches.rs](../../backend/timeline-core/src/branches.rs)):**
   - It still finds "the latest message" by time; position breaks ties, as file order does today.
   - A conversation with any message of unknown time is still left whole (B3).
@@ -1038,9 +1056,15 @@ unknown time sorts first, and messages with equal times sort by id.
     ([screen-flow.spec.js](../../e2e/screen-flow.spec.js)) expects "Could not read your files'
     details". It changes to "Could not complete request, please try again.", approved by the user's
     direction.
-- **Open:** should the loading box (opening the timeline, or Try again) use the same two wordings?
-  It reads the same data and today says "Could not load that file through the backend — …".
-  Trigger: the user's answer.
+- **The loading box uses the same two wordings** (the user, 2026-10-07). It reads the same data,
+  when the timeline opens and on Try again. Today it says "Could not load that file through the
+  backend — …", with "Is the backend running…?" when there was no answer at all.
+  - The upload's own failures keep their wording, since they are about sending a file.
+  - The committed browser test "a session that cannot be fetched on reload shows the error in the
+    loading modal, with Try again" ([views.spec.js:905](../../e2e/views.spec.js#L905)) expects "Is
+    the backend running". It changes to "Could not complete request, please try again.", approved
+    by the user's decision.
+  - A page unit test checks the loading box's two wordings by kind.
 
 **The time limit (the user's question):**
 - Every route that reads in parts answers within about 9 s of work (§8c). The rest do a fixed,
@@ -1205,9 +1229,11 @@ letters in step 4. **Open:** if those tests show a difference that matters, the 
 already lowercased.
 
 ### C19 [OPEN]: Positions across files are only ordered within each file
-FU-B3 ([§12.3](#123-fu-b3-messages-keep-the-order-the-file-gives-them)) gives a later file's added
-messages positions before or after the stored ones. Between two files, order therefore follows the
-time rule (Q18), not one file's list. A later export that inserts a message *inside* the stored range
+"Two files" here means two uploads that both contain the *same* conversation (an earlier export,
+then a later one); it is not about two conversations. FU-B3
+([§12.3](#123-fu-b3-messages-keep-the-order-the-file-gives-them)) gives the later file's added
+messages positions before or after the stored ones. Within that one conversation, order therefore
+follows the time rule (Q18) between the two files' messages, and file order within each. A later export that inserts a message *inside* the stored range
 is not added at all (Q18), so this cannot misorder stored messages. **Open:** if Q18 is ever relaxed
 to add messages inside the stored range, positions would need renumbering. Trigger: any change to
 Q18.
@@ -1228,9 +1254,12 @@ The B7 fix made the page wait so a committed test's assumption held. **Resolutio
 removed and the test identifies the held file by name
 ([§12.5](#125-fu-b7-files-are-sent-as-soon-as-each-is-prepared)).
 
-### C23 [OPEN]: Times out of file order can make a conversation's sessions overlap in time
+### C23 [RESOLVED]: Times out of file order can make a conversation's sessions overlap in time
 FU-B3 cuts sessions in position order. If a file's times run backwards somewhere (not seen yet;
 not checked in the user's export), two sessions of one conversation could cover overlapping times
 on the Calendar. **Mitigation in plan:** none beyond cutting at timed gaps. **Open:** whether to
 cut at a backwards step too. Trigger: overlapping sessions of one conversation seen in a real
 export, or a test file built to show it.
+**Resolution (the user, 2026-10-07):** backwards time steps are bad data the user is told about.
+Processing counts them per conversation, Describe warns, and a session is also cut at a backwards
+step, so sessions never overlap ([§12.3](#123-fu-b3-messages-keep-the-order-the-file-gives-them)).
